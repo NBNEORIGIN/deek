@@ -1,0 +1,26 @@
+{
+  "name": "Project Name",
+  "description": "What this project is",
+  "codebase_path": "/absolute/path/to/codebase",
+  "project_type": "coding",
+
+  "permissions": [
+    "read_file",
+    "search_code",
+    "run_tests",
+    "edit_file",
+    "create_file"
+  ],
+
+  "model_preferences": {
+    "force_model": null,
+    "prefer_local_for": ["fix", "add", "update", "test"],
+    "prefer_api_for": ["architect", "review", "security"]
+  },
+
+  "indexing": {
+    "auto_reindex": false,
+    "exclude_paths": [],
+    "include_extensions": []
+  }
+}

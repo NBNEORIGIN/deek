@@ -1,0 +1,16 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+data/
+node_modules/
+.next/
+out/
+vscode-extension/out/
+*.vsix

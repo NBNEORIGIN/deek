@@ -1,0 +1,68 @@
+{
+  "name": "claw",
+  "displayName": "CLAW — Sovereign AI Agent",
+  "description": "Per-project AI coding agent with permanent context",
+  "version": "0.1.0",
+  "publisher": "nbne",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["AI", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "claw.openPanel",
+        "title": "CLAW: Open Agent Panel"
+      },
+      {
+        "command": "claw.indexProject",
+        "title": "CLAW: Index Current Project"
+      },
+      {
+        "command": "claw.switchProject",
+        "title": "CLAW: Switch Project"
+      },
+      {
+        "command": "claw.newSession",
+        "title": "CLAW: New Session"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "claw.openPanel",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a"
+      }
+    ],
+    "configuration": {
+      "title": "CLAW",
+      "properties": {
+        "claw.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:8765",
+          "description": "CLAW API server URL"
+        },
+        "claw.apiKey": {
+          "type": "string",
+          "default": "claw-dev-key-change-in-production",
+          "description": "CLAW API key (set in CLAW server .env)"
+        },
+        "claw.defaultProject": {
+          "type": "string",
+          "default": "phloe",
+          "description": "Default project ID to use"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,13 @@
+# Files and directories to exclude from CLAW codebase indexing
+# One pattern per line. Matches directory names and file name fragments.
+
+migrations
+node_modules
+.next
+dist
+build
+coverage
+__pycache__
+staticfiles
+mediafiles
+.git
