@@ -1,7 +1,92 @@
 import * as vscode from 'vscode';
 import { ClawPanel } from './panel';
 
+// ─── Inline completion provider ──────────────────────────────────────────────
+
+let _completionDebounce: ReturnType<typeof setTimeout> | undefined;
+
+class ClawInlineCompletionProvider implements vscode.InlineCompletionItemProvider {
+    async provideInlineCompletionItems(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        _context: vscode.InlineCompletionContext,
+        token: vscode.CancellationToken,
+    ): Promise<vscode.InlineCompletionList | undefined> {
+        return new Promise((resolve) => {
+            if (_completionDebounce) {
+                clearTimeout(_completionDebounce);
+            }
+            _completionDebounce = setTimeout(async () => {
+                if (token.isCancellationRequested) {
+                    resolve(undefined);
+                    return;
+                }
+
+                const config = vscode.workspace.getConfiguration('claw');
+                const apiUrl = config.get<string>('apiUrl', 'http://localhost:8765');
+                const apiKey = config.get<string>('apiKey', '');
+                const project = config.get<string>('defaultProject', 'claw');
+
+                const prefix = document.getText(
+                    new vscode.Range(new vscode.Position(0, 0), position)
+                );
+                const suffix = document.getText(
+                    new vscode.Range(position, document.positionAt(document.getText().length))
+                );
+
+                try {
+                    const res = await fetch(`${apiUrl}/complete`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-API-Key': apiKey,
+                        },
+                        body: JSON.stringify({
+                            file_path: document.fileName,
+                            prefix,
+                            suffix,
+                            project,
+                            language: document.languageId,
+                        }),
+                        signal: AbortSignal.timeout(3000),
+                    });
+
+                    if (!res.ok) {
+                        resolve(undefined);
+                        return;
+                    }
+
+                    const data = await res.json() as { completion: string; tier: number };
+                    if (!data.completion || data.tier === 0) {
+                        resolve(undefined);
+                        return;
+                    }
+
+                    resolve(new vscode.InlineCompletionList([
+                        new vscode.InlineCompletionItem(
+                            data.completion,
+                            new vscode.Range(position, position),
+                        ),
+                    ]));
+                } catch {
+                    resolve(undefined);
+                }
+            }, 800);  // 800ms debounce
+        });
+    }
+}
+
+// ─── Extension activation ────────────────────────────────────────────────────
+
 export function activate(context: vscode.ExtensionContext) {
+
+    // Register inline completion provider for all languages
+    context.subscriptions.push(
+        vscode.languages.registerInlineCompletionItemProvider(
+            { pattern: '**' },
+            new ClawInlineCompletionProvider(),
+        )
+    );
 
     context.subscriptions.push(
         vscode.commands.registerCommand('claw.openPanel', () => {

@@ -14,6 +14,8 @@ export async function POST(req: NextRequest) {
         'X-API-Key': CLAW_API_KEY,
       },
       body: JSON.stringify(body),
+      // Video generation can take up to 15 minutes on the local GPU
+      signal: AbortSignal.timeout(15 * 60 * 1000),
     })
 
     const data = await res.json()

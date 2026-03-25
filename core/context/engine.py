@@ -28,8 +28,8 @@ class ContextEngine:
 
     MAX_TIER1_TOKENS = 2000
     MAX_TIER2_TOKENS = 8000
-    SIMILARITY_THRESHOLD = 0.75
-    MAX_TIER2_CHUNKS = 12
+    SIMILARITY_THRESHOLD = 0.65  # Lowered from 0.75 — broader recall
+    MAX_TIER2_CHUNKS = 20        # Increased from 12 — more context per query
 
     def __init__(self, project_id: str, db_url: str):
         self.project_id = project_id
@@ -66,35 +66,92 @@ class ContextEngine:
 
     def retrieve_tier2(self, task: str, embedding_fn: Callable) -> list[dict]:
         """
-        Retrieve relevant code chunks via pgvector similarity search.
-        Returns list of {'file': str, 'content': str, 'score': float}
-        Falls back to empty list if pgvector unavailable.
+        Retrieve relevant chunks. Falls back to keyword search if
+        embedding generation fails (e.g. Ollama unavailable).
         """
         try:
-            task_embedding = embedding_fn(task)
-            conn = self._get_connection()
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT
-                        file_path,
-                        chunk_content,
-                        chunk_type,
-                        1 - (embedding <=> %s::vector) AS similarity
-                    FROM claw_code_chunks
-                    WHERE
-                        project_id = %s
-                        AND 1 - (embedding <=> %s::vector) > %s
-                    ORDER BY similarity DESC
-                    LIMIT %s
-                """, (
-                    task_embedding,
-                    self.project_id,
-                    task_embedding,
-                    self.SIMILARITY_THRESHOLD,
-                    self.MAX_TIER2_CHUNKS,
-                ))
-                rows = cur.fetchall()
+            return self._retrieve_by_embedding(task, embedding_fn)
+        except Exception as e:
+            print(f"Embedding retrieval failed ({e}), "
+                  f"falling back to keyword search")
+            return self._retrieve_by_keyword(task)
 
+    def _retrieve_by_embedding(
+        self, task: str, embedding_fn: Callable
+    ) -> list[dict]:
+        """pgvector similarity search."""
+        task_embedding = embedding_fn(task)
+        conn = self._get_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    file_path,
+                    chunk_content,
+                    chunk_type,
+                    1 - (embedding <=> %s::vector) AS similarity
+                FROM claw_code_chunks
+                WHERE
+                    project_id = %s
+                    AND 1 - (embedding <=> %s::vector) > %s
+                ORDER BY similarity DESC
+                LIMIT %s
+            """, (
+                task_embedding,
+                self.project_id,
+                task_embedding,
+                self.SIMILARITY_THRESHOLD,
+                self.MAX_TIER2_CHUNKS,
+            ))
+            rows = cur.fetchall()
+        return [
+            {
+                'file': row[0],
+                'content': row[1],
+                'chunk_type': row[2],
+                'score': float(row[3]),
+            }
+            for row in rows
+        ]
+
+    def _retrieve_by_keyword(self, task: str) -> list[dict]:
+        """
+        Simple keyword search fallback when embeddings are unavailable.
+        Extracts meaningful words from the task and does ILIKE search.
+        """
+        import re
+        stopwords = {
+            'this', 'that', 'with', 'from', 'have', 'will',
+            'what', 'when', 'where', 'which', 'there', 'their',
+        }
+        words = [
+            w for w in re.findall(r'\b[a-zA-Z]{4,}\b', task.lower())
+            if w not in stopwords
+        ][:5]
+
+        if not words:
+            return []
+
+        try:
+            conn = self._get_connection()
+            conditions = ' OR '.join(
+                [f"chunk_content ILIKE %s" for _ in words]
+            )
+            params = (
+                [self.project_id]
+                + [f'%{w}%' for w in words]
+                + [self.MAX_TIER2_CHUNKS]
+            )
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT file_path, chunk_content, chunk_type,
+                           0.5 AS similarity
+                    FROM claw_code_chunks
+                    WHERE project_id = %s
+                      AND ({conditions})
+                    ORDER BY length(chunk_content) ASC
+                    LIMIT %s
+                """, params)
+                rows = cur.fetchall()
             return [
                 {
                     'file': row[0],
@@ -105,8 +162,7 @@ class ContextEngine:
                 for row in rows
             ]
         except Exception as e:
-            # Tier 2 is best-effort — if pgvector not ready, skip it
-            print(f"Tier 2 retrieval unavailable: {e}")
+            print(f"Keyword fallback also failed: {e}")
             return []
 
     def load_tier3(self, file_path: str) -> str:

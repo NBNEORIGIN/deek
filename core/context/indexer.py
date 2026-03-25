@@ -29,7 +29,6 @@ import hashlib
 from pathlib import Path
 from typing import Generator
 import psycopg2
-from pgvector.psycopg2 import register_vector
 
 INCLUDE_EXTENSIONS = {
     '.py', '.ts', '.tsx', '.js', '.jsx',
@@ -43,10 +42,16 @@ EXCLUDE_PATTERNS = {
     '.codeium', '.windsurf', 'coverage', '.pytest_cache',
 }
 
+# nomic-embed-text context window is 2048 tokens.
+# Code averages ~4 chars/token; minified CSS/HTML can be ~1 char/token.
+# Use 1500 chars as a safe limit for all content types.
+MAX_CHUNK_CHARS = 1500
+
 
 class CodeIndexer:
 
     def __init__(self, project_id: str, codebase_path: str, db_url: str):
+        from pgvector.psycopg2 import register_vector
         self.project_id = project_id
         self.codebase_path = Path(codebase_path)
         self.db_url = db_url
@@ -56,9 +61,10 @@ class CodeIndexer:
 
     def _ensure_schema(self):
         with self.conn.cursor() as cur:
-            cur.execute("""
-                CREATE EXTENSION IF NOT EXISTS vector;
+            cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+            self.conn.commit()
 
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS claw_code_chunks (
                     id SERIAL PRIMARY KEY,
                     project_id VARCHAR(100) NOT NULL,
@@ -71,24 +77,38 @@ class CodeIndexer:
                     last_modified TIMESTAMP,
                     indexed_at TIMESTAMP DEFAULT NOW()
                 );
+            """)
+            self.conn.commit()
 
+            cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_claw_chunks_project
                     ON claw_code_chunks(project_id);
-
-                CREATE INDEX IF NOT EXISTS idx_claw_chunks_embedding
-                    ON claw_code_chunks
-                    USING ivfflat (embedding vector_cosine_ops)
-                    WITH (lists = 100);
             """)
-        self.conn.commit()
+            self.conn.commit()
+
+            # IVFFlat index — only useful once there are rows,
+            # so skip if table is empty to avoid unnecessary blocking.
+            cur.execute("SELECT COUNT(*) FROM claw_code_chunks;")
+            row_count = cur.fetchone()[0]
+            if row_count >= 100:
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_claw_chunks_embedding
+                        ON claw_code_chunks
+                        USING ivfflat (embedding vector_cosine_ops)
+                        WITH (lists = 100);
+                """)
+                self.conn.commit()
 
     def embed(self, text: str) -> list[float]:
         """
         Generate embedding via nomic-embed-text through Ollama.
         nomic-embed-text is designed for code and documents.
         768 dimensions. Runs on CPU — no GPU competition with inference.
+        Truncates to MAX_CHUNK_CHARS as a safety net against 500 errors.
         """
         import httpx
+        if len(text) > MAX_CHUNK_CHARS:
+            text = text[:MAX_CHUNK_CHARS]
         response = httpx.post(
             f"{os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')}"
             f"/api/embeddings",
@@ -98,10 +118,74 @@ class CodeIndexer:
         response.raise_for_status()
         return response.json()['embedding']
 
+    def _reconnect(self):
+        """Reconnect to the database if connection was lost."""
+        from pgvector.psycopg2 import register_vector
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+        self.conn = psycopg2.connect(self.db_url)
+        register_vector(self.conn)
+
+    def index_file(self, file_path: str, force_reindex: bool = True) -> dict:
+        """
+        Reindex a single file by absolute or relative path.
+        Callable from a watchdog event handler for incremental updates.
+
+        Returns {'status': 'indexed'|'skipped'|'error', 'chunks': int, 'error': str}
+        """
+        abs_path = Path(file_path)
+        if not abs_path.is_absolute():
+            abs_path = self.codebase_path / file_path
+        if not abs_path.exists():
+            return {'status': 'error', 'chunks': 0, 'error': 'File not found'}
+
+        ext = abs_path.suffix.lower()
+        if ext not in INCLUDE_EXTENSIONS:
+            return {'status': 'skipped', 'chunks': 0, 'error': ''}
+
+        try:
+            rel_path = str(abs_path.relative_to(self.codebase_path)).replace('\\', '/')
+        except ValueError:
+            rel_path = str(abs_path).replace('\\', '/')
+
+        try:
+            content = abs_path.read_text(encoding='utf-8', errors='replace')
+            content_hash = hashlib.sha256(content.encode()).hexdigest()
+
+            if self.conn.closed:
+                self._reconnect()
+
+            if not force_reindex and self._is_indexed(rel_path, content_hash):
+                return {'status': 'skipped', 'chunks': 0, 'error': ''}
+
+            self._delete_file_chunks(rel_path)
+            chunks = list(self._chunk_file(abs_path, content))
+            for chunk in chunks:
+                embedding = self.embed(chunk['content'])
+                self._store_chunk(
+                    file_path=rel_path,
+                    content=chunk['content'],
+                    chunk_type=chunk['type'],
+                    chunk_name=chunk.get('name'),
+                    content_hash=content_hash,
+                    embedding=embedding,
+                    last_modified=abs_path.stat().st_mtime,
+                )
+            self.conn.commit()
+            return {'status': 'indexed', 'chunks': len(chunks), 'error': ''}
+        except Exception as exc:
+            try:
+                self.conn.rollback()
+            except Exception:
+                self._reconnect()
+            return {'status': 'error', 'chunks': 0, 'error': str(exc)}
+
     def index_project(self, force_reindex: bool = False):
         """
         Index all files in the project codebase.
-        Skips files unchanged since last index (content hash check).
+        Commits after each file so partial progress is preserved.
         """
         indexed = 0
         skipped = 0
@@ -116,6 +200,10 @@ class CodeIndexer:
                     encoding='utf-8', errors='replace'
                 )
                 content_hash = hashlib.sha256(content.encode()).hexdigest()
+
+                # Reconnect if connection dropped
+                if self.conn.closed:
+                    self._reconnect()
 
                 if not force_reindex and self._is_indexed(
                     rel_path, content_hash
@@ -138,17 +226,24 @@ class CodeIndexer:
                         last_modified=file_path.stat().st_mtime,
                     )
 
+                # Commit after each file — preserves progress if conn drops
+                self.conn.commit()
                 indexed += 1
-                print(f"  ✓ {rel_path} ({len(chunks)} chunks)")
+                print(f"  OK {rel_path} ({len(chunks)} chunks)", flush=True)
 
             except Exception as e:
                 errors += 1
-                print(f"  ✗ {file_path}: {e}")
+                print(f"  ERR {file_path}: {e}", flush=True)
+                # Try to rollback and continue
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    self._reconnect()
 
-        self.conn.commit()
         print(
             f"\nIndexing complete: "
-            f"{indexed} indexed, {skipped} skipped, {errors} errors"
+            f"{indexed} indexed, {skipped} skipped, {errors} errors",
+            flush=True,
         )
 
     def _walk_codebase(self) -> Generator[Path, None, None]:
@@ -196,11 +291,15 @@ class CodeIndexer:
                         node_type = 'async_function'
                     elif 'functiondef' in node_type:
                         node_type = 'function'
-                    yield {
-                        'content': chunk_content,
-                        'type': node_type,
-                        'name': node.name,
-                    }
+                    # Large nodes (e.g. huge classes) get windowed instead
+                    if len(chunk_content) > MAX_CHUNK_CHARS:
+                        yield from self._chunk_window(chunk_content)
+                    else:
+                        yield {
+                            'content': chunk_content,
+                            'type': node_type,
+                            'name': node.name,
+                        }
         except SyntaxError:
             yield from self._chunk_window(content)
 
@@ -208,13 +307,16 @@ class CodeIndexer:
         import re
         sections = re.split(r'\n(?=## )', content)
         for section in sections:
-            if section.strip():
-                name_match = re.match(r'## (.+)', section)
-                yield {
-                    'content': section.strip(),
-                    'type': 'section',
-                    'name': name_match.group(1) if name_match else None,
-                }
+            section = section.strip()
+            if not section:
+                continue
+            name_match = re.match(r'## (.+)', section)
+            name = name_match.group(1) if name_match else None
+            # Long sections (e.g. huge README blocks) get windowed
+            if len(section) > MAX_CHUNK_CHARS:
+                yield from self._chunk_window(section)
+            else:
+                yield {'content': section, 'type': 'section', 'name': name}
 
     def _chunk_typescript(
         self, content: str
@@ -241,24 +343,37 @@ class CodeIndexer:
             )
             chunk_lines = lines[start_line:end_line]
             if len(chunk_lines) >= 5:
-                yield {
-                    'content': '\n'.join(chunk_lines),
-                    'type': 'function',
-                    'name': match.group(1),
-                }
+                chunk_content = '\n'.join(chunk_lines)
+                if len(chunk_content) > MAX_CHUNK_CHARS:
+                    yield from self._chunk_window(chunk_content)
+                else:
+                    yield {
+                        'content': chunk_content,
+                        'type': 'function',
+                        'name': match.group(1),
+                    }
 
     def _chunk_window(
-        self, content: str, window: int = 100, overlap: int = 20
+        self, content: str, window: int = 40, overlap: int = 8
     ) -> Generator[dict, None, None]:
+        """
+        40-line windows (down from 100) so dense CSS/HTML lines stay within
+        MAX_CHUNK_CHARS even when minified. The embed() truncation catches
+        any remaining outliers.
+        """
         lines = content.splitlines()
         if not lines:
             return
         step = window - overlap
         for start in range(0, len(lines), step):
             chunk_lines = lines[start:start + window]
-            if len(chunk_lines) < 10:
+            if len(chunk_lines) < 5:
                 break
-            yield {'content': '\n'.join(chunk_lines), 'type': 'window', 'name': None}
+            chunk = '\n'.join(chunk_lines)
+            # Hard cap per window — truncated at embed() too, but be explicit
+            if len(chunk) > MAX_CHUNK_CHARS:
+                chunk = chunk[:MAX_CHUNK_CHARS]
+            yield {'content': chunk, 'type': 'window', 'name': None}
 
     def _is_indexed(self, file_path: str, content_hash: str) -> bool:
         with self.conn.cursor() as cur:

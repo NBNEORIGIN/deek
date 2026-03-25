@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { MessageBubble, Message } from './MessageBubble'
+import { MessageBubble, Message, ToolCallRecord } from './MessageBubble'
 import { PendingToolCall } from './ToolApproval'
 
 interface Project {
@@ -20,16 +20,23 @@ export function ChatWindow() {
   const [loading, setLoading] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [projectId, setProjectId] = useState<string>('')
-  const [sessionId, setSessionId] = useState<string>(generateId())
+  const [sessionId, setSessionId] = useState<string>('')
   const [sessionCost, setSessionCost] = useState(0)
   const [localCalls, setLocalCalls] = useState(0)
   const [apiCalls, setApiCalls] = useState(0)
+  const [pastedImage, setPastedImage] = useState<string | null>(null)
+  const [pastedImageType, setPastedImageType] = useState<string>('image/png')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    // Generate session ID client-side only (avoids SSR hydration mismatch)
+    setSessionId(generateId())
+  }, [])
 
   useEffect(() => {
     // Load project list
@@ -54,8 +61,34 @@ export function ChatWindow() {
     }
   }, [projectId])
 
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items
+      if (!items) return
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault()
+          const blob = item.getAsFile()
+          if (!blob) return
+          const reader = new FileReader()
+          reader.onload = (ev) => {
+            const result = ev.target?.result as string
+            // Strip the data:image/png;base64, prefix — Claude wants raw base64
+            const base64 = result.split(',')[1]
+            setPastedImage(base64)
+            setPastedImageType(['image/jpeg','image/png','image/gif','image/webp'].includes(item.type) ? item.type : 'image/png')
+          }
+          reader.readAsDataURL(blob)
+          break
+        }
+      }
+    }
+    document.addEventListener('paste', handlePaste)
+    return () => document.removeEventListener('paste', handlePaste)
+  }, [])
+
   const newSession = useCallback(() => {
-    setSessionId(generateId())
+    setSessionId(generateId()) // safe — always a client click event
     setSessionCost(0)
     setLocalCalls(0)
     setApiCalls(0)
@@ -70,13 +103,22 @@ export function ChatWindow() {
 
     setLoading(true)
 
+    // Capture the image before clearing it
+    const imgBase64 = pastedImage
+    const imgType = pastedImageType
+    const imgPreview = imgBase64 ? `data:${imgType};base64,${imgBase64}` : undefined
+
     if (content && !toolApproval) {
       setMessages(prev => [...prev, {
         id: generateId(),
         role: 'user',
         content,
+        imagePreview: imgPreview,
       }])
     }
+
+    // Clear pasted image after capturing
+    setPastedImage(null)
 
     try {
       const res = await fetch('/api/chat', {
@@ -88,6 +130,8 @@ export function ChatWindow() {
           session_id: sessionId,
           channel: 'web',
           tool_approval: toolApproval || null,
+          image_base64: imgBase64 || undefined,
+          image_media_type: imgType,
         }),
       })
 
@@ -115,27 +159,39 @@ export function ChatWindow() {
           modelUsed: data.model_used,
           costUsd: data.cost_usd,
           pendingToolCall: data.pending_tool_call || null,
+          toolCalls: (data.tool_calls || []) as ToolCallRecord[],
         }])
       }
     } catch (err) {
-      setMessages(prev => [...prev, {
-        id: generateId(),
-        role: 'assistant',
-        content: `⚠ Network error: ${err}`,
-      }])
+      setMessages(prev => {
+        // Clear any pending tool call from the last assistant message
+        // so the approval card doesn't loop on network failure
+        const updated = [...prev]
+        for (let i = updated.length - 1; i >= 0; i--) {
+          if (updated[i].role === 'assistant' && updated[i].pendingToolCall) {
+            updated[i] = { ...updated[i], pendingToolCall: null }
+            break
+          }
+        }
+        return [...updated, {
+          id: generateId(),
+          role: 'assistant',
+          content: `⚠ Network error — API unreachable. Restart uvicorn and refresh.`,
+        }]
+      })
     } finally {
       setLoading(false)
     }
-  }, [projectId, sessionId])
+  }, [projectId, sessionId, pastedImage, pastedImageType])
 
   const handleSubmit = () => {
     const text = input.trim()
-    if (!text || loading) return
+    if ((!text && !pastedImage) || loading) return
     setInput('')
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
-    sendMessage(text)
+    sendMessage(text || 'What do you see in this screenshot?')
   }
 
   const handleApprove = useCallback((toolCall: PendingToolCall) => {
@@ -234,6 +290,19 @@ export function ChatWindow() {
         </div>
 
         <div className="border-t border-zinc-800 bg-zinc-950 px-4 py-3">
+          {pastedImage && (
+            <div className="relative mb-2 inline-block">
+              <img
+                src={`data:${pastedImageType};base64,${pastedImage}`}
+                alt="Pasted screenshot"
+                className="max-h-28 rounded border border-zinc-600"
+              />
+              <button
+                onClick={() => setPastedImage(null)}
+                className="absolute -top-2 -right-2 bg-zinc-700 hover:bg-zinc-600 rounded-full w-5 h-5 text-xs flex items-center justify-center text-zinc-300 leading-none"
+              >×</button>
+            </div>
+          )}
           <div className="flex gap-3 items-end">
             <textarea
               ref={textareaRef}
@@ -247,7 +316,7 @@ export function ChatWindow() {
             />
             <button
               onClick={handleSubmit}
-              disabled={!input.trim() || loading || !projectId}
+              disabled={(!input.trim() && !pastedImage) || loading || !projectId}
               className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 text-white text-sm rounded-lg transition-colors"
             >
               Send

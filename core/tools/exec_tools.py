@@ -34,6 +34,19 @@ def _run_tests(project_root: str, test_path: str = '') -> str:
         return 'ERROR: pytest not found. Is the virtualenv activated?'
 
 
+_BLOCKED_PATTERNS = [
+    'rm -rf /', 'format c:', 'del /f /s /q c:\\',
+    'shutdown', 'reboot', 'dd if=',
+    # Never let CLAW kill its own web UI or API server
+    'taskkill /pid 1 ', 'stop-process',
+]
+
+
+def _is_dangerous(command: str) -> bool:
+    cmd = command.lower()
+    return any(p in cmd for p in _BLOCKED_PATTERNS)
+
+
 def _run_command(
     project_root: str,
     command: str,
@@ -44,6 +57,9 @@ def _run_command(
     Run a shell command in the project root or specified subdirectory.
     Destructive risk — requires explicit user approval before execution.
     """
+    if _is_dangerous(command):
+        return f"ERROR: command blocked for safety: {command}"
+
     cwd = Path(project_root)
     if working_dir:
         cwd = (cwd / working_dir).resolve()
@@ -124,4 +140,39 @@ run_migration_tool = Tool(
     risk_level=RiskLevel.REVIEW,
     fn=_run_migration,
     required_permission='run_migration',
+)
+
+
+def _check_server(project_root: str) -> str:
+    """Check if Django or Next.js dev server is currently running."""
+    try:
+        import psutil
+    except ImportError:
+        return "psutil not installed — run: pip install psutil"
+
+    servers = []
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            cmdline = ' '.join(proc.info.get('cmdline') or [])
+            if 'manage.py' in cmdline and 'runserver' in cmdline:
+                servers.append(f"Django: PID {proc.info['pid']} — {cmdline[:100]}")
+            elif 'next' in cmdline.lower() and 'dev' in cmdline:
+                servers.append(f"Next.js: PID {proc.info['pid']} — {cmdline[:100]}")
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    if servers:
+        return "Running servers:\n" + '\n'.join(servers)
+    return "No Django or Next.js dev servers detected"
+
+
+check_server_tool = Tool(
+    name='check_server',
+    description=(
+        'Check if Django or Next.js dev server is currently running. '
+        'Returns process info (PID, command line) for any found servers.'
+    ),
+    risk_level=RiskLevel.SAFE,
+    fn=_check_server,
+    required_permission='check_server',
 )

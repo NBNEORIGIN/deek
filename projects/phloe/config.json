@@ -1,8 +1,9 @@
 {
   "name": "Phloe Platform",
   "description": "Multi-tenant Workflow as a Service platform for UK SMBs",
-  "codebase_path": "C:/path/to/phloe/repo",
+  "codebase_path": "D:/nbne_business/nbne_platform",
   "project_type": "coding",
+  "force_model": "api",
 
   "permissions": [
     "read_file",
@@ -10,13 +11,28 @@
     "run_tests",
     "edit_file",
     "create_file",
-    "run_migration"
+    "run_migration",
+    "run_command",
+    "check_server",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "git_add",
+    "git_commit",
+    "git_push",
+    "git_branch",
+    "git_stash",
+    "web_fetch",
+    "web_check_status",
+    "web_search"
   ],
 
   "model_preferences": {
-    "force_model": null,
-    "prefer_local_for": ["fix", "add", "update", "test", "migration"],
-    "prefer_api_for": ["architect", "review", "security", "design"]
+    "force_model": "api",
+    "opus_keywords": [
+      "architect", "architecture", "design decision",
+      "security", "performance", "trade-off", "approach"
+    ]
   },
 
   "indexing": {

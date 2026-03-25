@@ -30,6 +30,10 @@ DEFAULT_PERMISSIONS = {
         'read_file', 'search_code', 'run_command',
         'edit_file', 'create_file',
     ],
+    'creative': [
+        'read_file', 'search_code', 'edit_file', 'create_file',
+        'generate_video', 'generate_image',
+    ],
 }
 
 TOOL_SCHEMAS: dict[str, dict] = {
@@ -113,6 +117,211 @@ TOOL_SCHEMAS: dict[str, dict] = {
             },
         },
         'required': [],
+    },
+    'generate_image': {
+        'type': 'object',
+        'properties': {
+            'prompt': {
+                'type': 'string',
+                'description': 'Detailed description of the image to generate',
+            },
+            'output_path': {
+                'type': 'string',
+                'description': 'Optional: absolute path for the output PNG file',
+            },
+            'width': {
+                'type': 'integer',
+                'description': 'Image width in pixels (multiple of 64, default 1024)',
+                'default': 1024,
+            },
+            'height': {
+                'type': 'integer',
+                'description': 'Image height in pixels (multiple of 64, default 1024)',
+                'default': 1024,
+            },
+            'num_inference_steps': {
+                'type': 'integer',
+                'description': 'Steps — 4 is fast/good, up to 8 for more detail',
+                'default': 4,
+            },
+            'num_images': {
+                'type': 'integer',
+                'description': 'Number of image variations to generate (default 1)',
+                'default': 1,
+            },
+            'seed': {
+                'type': 'integer',
+                'description': 'Random seed for reproducible results',
+            },
+        },
+        'required': ['prompt'],
+    },
+    # ── Git tools ────────────────────────────────────────────────────────────
+    'git_status': {
+        'type': 'object',
+        'properties': {},
+        'required': [],
+    },
+    'git_diff': {
+        'type': 'object',
+        'properties': {
+            'staged': {
+                'type': 'boolean',
+                'description': 'Show staged changes (default: false)',
+            },
+            'file_path': {
+                'type': 'string',
+                'description': 'Specific file to diff (optional)',
+            },
+        },
+        'required': [],
+    },
+    'git_log': {
+        'type': 'object',
+        'properties': {
+            'limit': {
+                'type': 'integer',
+                'description': 'Number of commits to show (default: 10)',
+            },
+        },
+        'required': [],
+    },
+    'git_add': {
+        'type': 'object',
+        'properties': {
+            'file_path': {
+                'type': 'string',
+                'description': 'File or path to stage. Use "." for all changes',
+            },
+        },
+        'required': [],
+    },
+    'git_commit': {
+        'type': 'object',
+        'properties': {
+            'message': {
+                'type': 'string',
+                'description': 'Commit message — follow project convention e.g. feat(scope): description',
+            },
+        },
+        'required': ['message'],
+    },
+    'git_push': {
+        'type': 'object',
+        'properties': {
+            'remote': {
+                'type': 'string',
+                'description': 'Remote name (default: origin)',
+            },
+            'branch': {
+                'type': 'string',
+                'description': 'Branch name (optional, uses current branch)',
+            },
+        },
+        'required': [],
+    },
+    'git_branch': {
+        'type': 'object',
+        'properties': {
+            'action': {
+                'type': 'string',
+                'description': 'list | create | switch (default: list)',
+            },
+            'name': {
+                'type': 'string',
+                'description': 'Branch name (required for create/switch)',
+            },
+        },
+        'required': [],
+    },
+    'git_stash': {
+        'type': 'object',
+        'properties': {
+            'action': {
+                'type': 'string',
+                'description': 'push | pop | list (default: push)',
+            },
+            'message': {
+                'type': 'string',
+                'description': 'Stash description (optional, for push)',
+            },
+        },
+        'required': [],
+    },
+    # ── Web tools ─────────────────────────────────────────────────────────────
+    'web_fetch': {
+        'type': 'object',
+        'properties': {
+            'url': {
+                'type': 'string',
+                'description': 'URL to fetch (http/https only)',
+            },
+        },
+        'required': ['url'],
+    },
+    'web_check_status': {
+        'type': 'object',
+        'properties': {
+            'url': {
+                'type': 'string',
+                'description': 'URL to health-check',
+            },
+        },
+        'required': ['url'],
+    },
+    'web_search': {
+        'type': 'object',
+        'properties': {
+            'query': {
+                'type': 'string',
+                'description': 'Search query — good for docs, error messages, library info',
+            },
+        },
+        'required': ['query'],
+    },
+    # ── Server check ─────────────────────────────────────────────────────────
+    'check_server': {
+        'type': 'object',
+        'properties': {},
+        'required': [],
+    },
+    # ── Video (existing, kept here for reference) ─────────────────────────────
+    'generate_video': {
+        'type': 'object',
+        'properties': {
+            'prompt': {
+                'type': 'string',
+                'description': 'Detailed description of the video to generate',
+            },
+            'output_path': {
+                'type': 'string',
+                'description': 'Optional: absolute path for the output MP4 file',
+            },
+            'negative_prompt': {
+                'type': 'string',
+                'description': 'Things to avoid in the video',
+            },
+            'num_frames': {
+                'type': 'integer',
+                'description': 'Number of frames (17=2s, 33=4s, 49=6s). Must be 4k+1.',
+                'default': 49,
+            },
+            'num_inference_steps': {
+                'type': 'integer',
+                'description': 'Quality/speed trade-off (20–50). Default 25.',
+                'default': 25,
+            },
+            'guidance_scale': {
+                'type': 'number',
+                'description': 'Prompt adherence (4–10). Default 6.',
+                'default': 6.0,
+            },
+            'seed': {
+                'type': 'integer',
+                'description': 'Random seed for reproducible results',
+            },
+        },
+        'required': ['prompt'],
     },
 }
 

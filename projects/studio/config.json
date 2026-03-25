@@ -1,0 +1,34 @@
+{
+  "name": "CLAW Studio",
+  "description": "Local AI video and media generation workspace",
+  "codebase_path": "D:/claw/projects/studio",
+  "project_type": "creative",
+
+  "permissions": [
+    "generate_image",
+    "generate_video",
+    "read_file",
+    "create_file",
+    "search_code"
+  ],
+
+  "model_preferences": {
+    "force_model": null,
+    "prefer_local_for": ["generate", "video", "render"],
+    "prefer_api_for": ["script", "storyboard", "concept", "review"]
+  },
+
+  "video": {
+    "default_output_dir": "D:/claw/projects/studio/outputs/video",
+    "default_frames": 49,
+    "default_steps": 25,
+    "default_fps": 8,
+    "default_guidance": 6.0
+  },
+
+  "indexing": {
+    "auto_reindex": false,
+    "exclude_paths": ["outputs"],
+    "include_extensions": [".md", ".txt", ".json"]
+  }
+}

@@ -2,6 +2,11 @@
 
 import { ToolApproval, PendingToolCall } from './ToolApproval'
 
+export interface ToolCallRecord {
+  tool_name: string
+  result: string
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -9,6 +14,8 @@ export interface Message {
   modelUsed?: string
   costUsd?: number
   pendingToolCall?: PendingToolCall | null
+  toolCalls?: ToolCallRecord[]
+  imagePreview?: string   // data URL for pasted image thumbnail
 }
 
 interface MessageBubbleProps {
@@ -62,6 +69,13 @@ export function MessageBubble({ message, onApprove, onReject }: MessageBubblePro
     return (
       <div className="flex justify-end mb-3">
         <div className="max-w-[85%] bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm text-zinc-100 leading-relaxed">
+          {message.imagePreview && (
+            <img
+              src={message.imagePreview}
+              alt="Attached screenshot"
+              className="max-h-40 rounded mb-2 border border-zinc-600"
+            />
+          )}
           {message.content}
         </div>
       </div>
@@ -85,9 +99,9 @@ export function MessageBubble({ message, onApprove, onReject }: MessageBubblePro
             : 'CLAW'
           }
         </span>
-        {message.costUsd && message.costUsd > 0 && (
+        {(message.costUsd ?? 0) > 0 && (
           <span className="text-xs text-zinc-600">
-            ${message.costUsd.toFixed(4)}
+            ${message.costUsd!.toFixed(4)}
           </span>
         )}
       </div>
@@ -100,6 +114,25 @@ export function MessageBubble({ message, onApprove, onReject }: MessageBubblePro
           onApprove={onApprove}
           onReject={onReject}
         />
+      )}
+      {message.toolCalls && message.toolCalls.length > 0 && (
+        <details className="mt-3 text-xs">
+          <summary className="cursor-pointer text-zinc-500 hover:text-zinc-400 select-none">
+            🔧 {message.toolCalls.length} tool call{message.toolCalls.length > 1 ? 's' : ''}
+          </summary>
+          <div className="mt-2 space-y-2">
+            {message.toolCalls.map((tc, i) => (
+              <div key={i} className="bg-zinc-900 border border-zinc-800 rounded p-2">
+                <div className="font-mono text-blue-400 mb-1">{tc.tool_name}</div>
+                <div className="text-zinc-400 whitespace-pre-wrap break-words">
+                  {tc.result.length > 400
+                    ? tc.result.slice(0, 400) + '…'
+                    : tc.result}
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
       )}
     </div>
   )

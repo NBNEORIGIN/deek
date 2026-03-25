@@ -36,9 +36,29 @@ class MessageEnvelope:
     selected_text: Optional[str] = None
     active_directory: Optional[str] = None
 
+    # Optional image attached to this message (base64-encoded, no data: prefix)
+    image_base64: Optional[str] = None
+    image_media_type: str = 'image/png'
+
     # Tool approval response (when user approves/rejects a tool call)
     tool_approval: Optional[dict] = None
     # {'tool_call_id': str, 'approved': bool, 'modified_input': dict}
+
+    # When True, only SAFE (read-only) tools are exposed to the model.
+    # Used by WiggumOrchestrator for assessment/planning passes so it
+    # cannot accidentally make file changes while just reading state.
+    read_only: bool = False
+
+    # Override the agent's default MAX_TOOL_ROUNDS for this request.
+    # None = use agent default (8). WiggumOrchestrator sets this to 3
+    # for assess/plan passes to keep them fast and cheap.
+    max_tool_rounds: Optional[int] = None
+
+    # When True, REVIEW-level tools (file edits, git add/commit) are executed
+    # automatically without surfacing an approval card.
+    # Used by WiggumOrchestrator execute passes so the loop can run unattended.
+    # DESTRUCTIVE tools (git push, run_command) are NEVER auto-approved.
+    auto_approve_review: bool = False
 
     metadata: dict = field(default_factory=dict)
 
@@ -69,5 +89,9 @@ class AgentResponse:
     model_used: str = ''
     tokens_used: int = 0
     cost_usd: float = 0.0
+
+    # Tool calls that were auto-executed during this response (safe/read-only tools)
+    executed_tool_calls: list = field(default_factory=list)
+    # [{'tool_name': str, 'result': str}, ...]
 
     timestamp: datetime = field(default_factory=datetime.utcnow)

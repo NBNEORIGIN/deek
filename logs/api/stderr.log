@@ -1,0 +1,128 @@
+Fatal Python error: init_stdio_encoding: failed to get the Python codec name of the stdio encoding
+Python runtime state: core initialized
+LookupError: unknown encoding: utf-8 PYTHONUTF8=1
+
+Current thread 0x00005454 (most recent call first):
+  <no Python frame>
+Fatal Python error: init_stdio_encoding: failed to get the Python codec name of the stdio encoding
+Python runtime state: core initialized
+LookupError: unknown encoding: utf-8 PYTHONUTF8=1
+
+Current thread 0x000050f0 (most recent call first):
+  <no Python frame>
+Fatal Python error: init_stdio_encoding: failed to get the Python codec name of the stdio encoding
+Python runtime state: core initialized
+LookupError: unknown encoding: utf-8 PYTHONUTF8=1
+
+Current thread 0x00004c40 (most recent call first):
+  <no Python frame>
+Fatal Python error: init_stdio_encoding: failed to get the Python codec name of the stdio encoding
+Python runtime state: core initialized
+LookupError: unknown encoding: utf-8 PYTHONUTF8=1
+
+Current thread 0x00003594 (most recent call first):
+  <no Python frame>
+Fatal Python error: init_stdio_encoding: failed to get the Python codec name of the stdio encoding
+Python runtime state: core initialized
+LookupError: unknown encoding: utf-8 PYTHONUTF8=1
+
+Current thread 0x00005bf4 (most recent call first):
+  <no Python frame>
+Fatal Python error: init_stdio_encoding: failed to get the Python codec name of the stdio encoding
+Python runtime state: core initialized
+LookupError: unknown encoding: utf-8 PYTHONUTF8=1
+
+Current thread 0x000016b4 (most recent call first):
+  <no Python frame>
+Python 3.11.8 (tags/v3.11.8:db85d51, Feb  6 2024, 22:03:32) [MSC v.1937 64 bit (AMD64)] on win32
+Type "help", "copyright", "credits" or "license" for more information.
+>>> Python 3.11.8 (tags/v3.11.8:db85d51, Feb  6 2024, 22:03:32) [MSC v.1937 64 bit (AMD64)] on win32
+Type "help", "copyright", "credits" or "license" for more information.
+>>> Python 3.11.8 (tags/v3.11.8:db85d51, Feb  6 2024, 22:03:32) [MSC v.1937 64 bit (AMD64)] on win32
+Type "help", "copyright", "credits" or "license" for more information.
+>>> INFO:     Started server process [17884]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [17884]
+INFO:     Started server process [15740]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [15740]
+INFO:     Started server process [20880]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [20880]
+INFO:     Started server process [9384]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [9384]
+INFO:     Started server process [24844]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [24844]
+INFO:     Started server process [26112]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [26112]
+INFO:     Started server process [25040]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [25040]
+INFO:     Started server process [13344]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Finished server process [13344]
+INFO:     Started server process [6012]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
+Exception in callback _ProactorBasePipeTransport._call_connection_lost(None)
+handle: <Handle _ProactorBasePipeTransport._call_connection_lost(None)>
+Traceback (most recent call last):
+  File "C:\Users\zentu\AppData\Local\Programs\Python\Python311\Lib\asyncio\events.py", line 84, in _run
+    self._context.run(self._callback, *self._args)
+  File "C:\Users\zentu\AppData\Local\Programs\Python\Python311\Lib\asyncio\proactor_events.py", line 165, in _call_connection_lost
+    self._sock.shutdown(socket.SHUT_RDWR)
+ConnectionResetError: [WinError 10054] An existing connection was forcibly closed by the remote host
+INFO:     Started server process [5976]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
+INFO:     Started server process [5800]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [5800]

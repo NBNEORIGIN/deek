@@ -2,9 +2,11 @@ import os
 import uuid
 from .channels.envelope import MessageEnvelope, AgentResponse
 from .context.engine import ContextEngine
-from .models.router import route, estimate_tokens, ModelChoice
+from .models.router import route, estimate_tokens, ModelChoice, _deepseek_available
 from .models.ollama_client import OllamaClient
 from .models.claude_client import ClaudeClient
+from .models.openai_client import OpenAIClient
+from .models.deepseek_client import DeepSeekClient
 from .tools.registry import ToolRegistry, RiskLevel
 from .tools.diff_tools import generate_unified_diff, generate_create_diff
 from .memory.store import MemoryStore
@@ -16,7 +18,15 @@ class ClawAgent:
     Receives normalised MessageEnvelope from any channel.
     Returns AgentResponse to any channel.
     All channel-specific logic lives in channel handlers.
+
+    Tool loop: SAFE tools (read_file, search_code, etc.) are executed
+    automatically in a loop of up to MAX_TOOL_ROUNDS, letting the model
+    read files, search code, and reason across multiple sources before
+    giving a final answer — similar to how Cursor/Claude.ai work.
+    REVIEW/DESTRUCTIVE tools still pause for user approval as before.
     """
+
+    MAX_TOOL_ROUNDS = 8  # Max agentic tool-call iterations per request
 
     def __init__(self, project_id: str, config: dict):
         self.project_id = project_id
@@ -34,9 +44,19 @@ class ClawAgent:
             base_url=os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434'),
             model=os.getenv('OLLAMA_MODEL', 'qwen2.5-coder:7b'),
         )
+        # Store preferred/fallback for async resolution at first use
+        self._ollama_preferred = os.getenv('OLLAMA_MODEL_PREFERRED', 'deepseek-coder-v2:16b')
+        self._ollama_fallback = os.getenv('OLLAMA_MODEL', 'qwen2.5-coder:7b')
         self.claude = ClaudeClient(
             api_key=os.getenv('ANTHROPIC_API_KEY', ''),
         )
+        openai_key = os.getenv('OPENAI_API_KEY', '')
+        self.openai = OpenAIClient(api_key=openai_key) if openai_key else None
+        deepseek_key = os.getenv('DEEPSEEK_API_KEY', '')
+        self.deepseek = DeepSeekClient(api_key=deepseek_key) if deepseek_key else None
+        # API_PROVIDER = 'claude' | 'openai' | 'deepseek' | 'auto'
+        # auto: use tier routing; fall back on rate-limit errors
+        self._api_provider = os.getenv('API_PROVIDER', 'auto').lower()
         self.tools = ToolRegistry()
         self._register_tools()
 
@@ -64,6 +84,21 @@ class ClawAgent:
             embedding_fn=self._embed,
         )
 
+        # System instruction prepended to every prompt
+        context_prompt = (
+            "You are CLAW, a sovereign AI coding agent.\n"
+            "Rules:\n"
+            "1. Use your provided tools to answer requests — do not describe "
+            "what you would do, just do it.\n"
+            "2. NEVER invent or hallucinate file contents, tool results, or "
+            "command output. If a tool returns an error, report it exactly.\n"
+            "3. Tool parameter names are exact — use the schema. "
+            "read_file takes 'file_path', edit_file takes 'file_path'/'old_str'/"
+            "'new_str'. Do not use 'path', 'parameters', or other variants.\n"
+            "4. If you are unsure what a file contains, call read_file to find "
+            "out — do not guess.\n\n"
+        ) + context_prompt
+
         # Append active file from VS Code if provided
         if envelope.active_file:
             try:
@@ -85,33 +120,101 @@ class ClawAgent:
         history = self.memory.get_recent_history(session_id, limit=10)
 
         context_tokens = estimate_tokens(context_prompt + envelope.content)
+        # read_only passes are assessment/plan — treat as SAFE for routing
+        routing_risk = 'safe' if envelope.read_only else 'review'
         model_choice = route(
             task=envelope.content,
             context_tokens=context_tokens,
             project_config=self.config,
+            risk_level=routing_risk,
         )
 
-        available_tools = self.tools.describe_for_model(self.config)
+        available_tools = self._get_tools_for_task(
+            envelope.content, read_only=envelope.read_only
+        )
+
+
 
         if model_choice == ModelChoice.LOCAL:
+            # Resolve preferred vs fallback model on first local call
+            await self.ollama.resolve_active_model(
+                self._ollama_preferred, self._ollama_fallback
+            )
             response_text, tool_call, usage = await self.ollama.chat(
                 system=context_prompt,
                 history=history,
                 message=envelope.content,
                 tools=available_tools,
             )
-            model_used = os.getenv('OLLAMA_MODEL', 'qwen2.5-coder:7b')
+            model_used = self.ollama.model
             cost_usd = 0.0
+            client = None
         else:
-            response_text, tool_call, usage = await self.claude.chat(
+            use_opus = self._should_use_opus(envelope.content)
+            client, model_used = await self._get_api_client(
+                use_opus=use_opus,
+                prefer_deepseek=(model_choice == ModelChoice.DEEPSEEK),
+            )
+            response_text, tool_call, usage = await client.chat(
                 system=context_prompt,
                 history=history,
                 message=envelope.content,
                 tools=available_tools,
+                use_opus=use_opus,
+                image_base64=envelope.image_base64,
+                image_media_type=envelope.image_media_type,
             )
-            model_used = 'claude-sonnet-4-5'
-            cost_usd = self._calculate_cost(usage)
+            cost_usd = self._calculate_cost(usage, client)
 
+
+        # --- Tool handling ---
+        if tool_call:
+            tool = self.tools.get(tool_call['name'])
+            if tool and tool.risk_level == RiskLevel.SAFE:
+                # SAFE tool: enter the multi-round tool loop
+                return await self._run_tool_loop(
+                    envelope=envelope,
+                    context_prompt=context_prompt,
+                    history=history,
+                    first_tool_call=tool_call,
+                    first_response_text=response_text,
+                    model_choice=model_choice,
+                    model_used=model_used,
+                    prior_cost=cost_usd,
+                    client=client if model_choice != ModelChoice.LOCAL else None,
+                    available_tools=available_tools,
+                )
+            elif tool:
+                # REVIEW / DESTRUCTIVE tool: surface for approval (unchanged)
+                self.memory.add_message(
+                    session_id=session_id,
+                    role='assistant',
+                    content=response_text or '',
+                    channel=envelope.channel.value,
+                    model_used=model_used,
+                    tokens_used=usage.get('total_tokens', 0),
+                    cost_usd=cost_usd,
+                )
+                pending_tool_call = {
+                    'tool_call_id': str(uuid.uuid4()),
+                    'tool_name': tool_call['name'],
+                    'description': self._describe_tool_call(tool_call),
+                    'diff_preview': self._generate_diff_preview(tool_call),
+                    'input': tool_call['input'],
+                    'risk_level': tool.risk_level.value,
+                    'auto_approve': False,
+                }
+                return AgentResponse(
+                    content=response_text or '',
+                    session_id=session_id,
+                    project_id=self.project_id,
+                    pending_tool_call=pending_tool_call,
+                    model_used=model_used,
+                    tokens_used=usage.get('total_tokens', 0),
+                    cost_usd=cost_usd,
+                )
+
+        # No tool call — plain text response
         self.memory.add_message(
             session_id=session_id,
             role='assistant',
@@ -122,39 +225,149 @@ class ClawAgent:
             cost_usd=cost_usd,
         )
 
-        pending_tool_call = None
-        if tool_call:
-            tool = self.tools.get(tool_call['name'])
-            if tool:
-                diff_preview = self._generate_diff_preview(tool_call)
-
-                pending_tool_call = {
-                    'tool_call_id': str(uuid.uuid4()),
-                    'tool_name': tool_call['name'],
-                    'description': self._describe_tool_call(tool_call),
-                    'diff_preview': diff_preview,
-                    'input': tool_call['input'],
-                    'risk_level': tool.risk_level.value,
-                    'auto_approve': tool.risk_level == RiskLevel.SAFE,
-                }
-
-                # Safe tools (read-only) execute immediately without approval
-                if pending_tool_call['auto_approve']:
-                    result = await self._execute_tool(tool_call)
-                    return await self._continue_with_tool_result(
-                        envelope, context_prompt, history,
-                        tool_call, result, model_choice,
-                        model_used, cost_usd,
-                    )
-
         return AgentResponse(
             content=response_text or '',
             session_id=session_id,
             project_id=self.project_id,
-            pending_tool_call=pending_tool_call,
             model_used=model_used,
             tokens_used=usage.get('total_tokens', 0),
             cost_usd=cost_usd,
+        )
+
+    async def _run_tool_loop(
+        self,
+        envelope: MessageEnvelope,
+        context_prompt: str,
+        history: list[dict],
+        first_tool_call: dict,
+        first_response_text: str,
+        model_choice: ModelChoice,
+        model_used: str,
+        prior_cost: float,
+        client,
+        available_tools: list[dict],
+    ) -> AgentResponse:
+        """
+        Agentic tool loop for SAFE tools.
+
+        Executes read_file / search_code / etc. repeatedly — up to
+        MAX_TOOL_ROUNDS — feeding each result back to the model in the
+        correct native format (Anthropic tool_result / OpenAI tool role).
+
+        Stops when:
+          - The model gives a plain text answer (no more tool calls)
+          - A REVIEW/DESTRUCTIVE tool is requested → surface for approval
+          - MAX_TOOL_ROUNDS is reached → force a final text answer
+        """
+        session_id = envelope.session_id
+        executed_tool_calls: list[dict] = []
+        total_cost = prior_cost
+
+        # Build the initial messages list once, then extend it each round
+        raw_messages = client.build_messages(
+            context_prompt,
+            history,
+            envelope.content,
+            getattr(envelope, 'image_base64', None),
+            getattr(envelope, 'image_media_type', 'image/png'),
+        )
+
+        current_tool_call = first_tool_call
+        current_text = first_response_text
+
+        # Honour per-request round cap (used by WiggumOrchestrator assess/plan)
+        max_rounds = getattr(envelope, 'max_tool_rounds', None) or self.MAX_TOOL_ROUNDS
+
+        for round_num in range(max_rounds):
+            tool_name = current_tool_call['name']
+            tool = self.tools.get(tool_name)
+
+            # Unknown tool — abort
+            if not tool:
+                break
+
+            # Non-safe tool reached mid-loop — surface for approval unless
+            # auto_approve_review is set (WIGGUM execute passes) and the
+            # tool is only REVIEW (never auto-approve DESTRUCTIVE).
+            auto_approve_review = getattr(envelope, 'auto_approve_review', False)
+            if (
+                tool.risk_level != RiskLevel.SAFE
+                and not (auto_approve_review and tool.risk_level == RiskLevel.REVIEW)
+            ):
+                self.memory.add_message(
+                    session_id=session_id, role='assistant',
+                    content=current_text or '',
+                    channel=envelope.channel.value,
+                    model_used=model_used,
+                    tokens_used=0, cost_usd=total_cost,
+                )
+                pending = {
+                    'tool_call_id': str(uuid.uuid4()),
+                    'tool_name': tool_name,
+                    'description': self._describe_tool_call(current_tool_call),
+                    'diff_preview': self._generate_diff_preview(current_tool_call),
+                    'input': current_tool_call['input'],
+                    'risk_level': tool.risk_level.value,
+                    'auto_approve': False,
+                }
+                return AgentResponse(
+                    content=current_text or '',
+                    session_id=session_id,
+                    project_id=self.project_id,
+                    pending_tool_call=pending,
+                    model_used=model_used,
+                    cost_usd=total_cost,
+                    executed_tool_calls=executed_tool_calls,
+                )
+
+            # Execute the safe tool
+            result = await self._execute_tool(current_tool_call)
+            executed_tool_calls.append({
+                'tool_name': tool_name,
+                'result': result,
+            })
+
+            # Extend the messages list with this tool round
+            raw_messages = client.append_tool_round(
+                raw_messages, current_text, current_tool_call, result
+            )
+
+            # On the last allowed round, force a text answer (no tools)
+            force_final = (round_num == max_rounds - 1)
+            next_text, next_tool_call, cont_usage = await client.chat(
+                system=context_prompt,
+                history=history,
+                message=envelope.content,
+                tools=available_tools if not force_final else None,
+                use_opus=self._should_use_opus(envelope.content),
+                raw_messages=raw_messages,
+            )
+            total_cost += self._calculate_cost(cont_usage, client)
+
+            current_text = next_text
+            current_tool_call = next_tool_call  # type: ignore[assignment]
+
+            if not current_tool_call:
+                break  # Model gave a final answer
+
+        # Save the final answer to memory once
+        self.memory.add_message(
+            session_id=session_id,
+            role='assistant',
+            content=current_text or '',
+            channel=envelope.channel.value,
+            model_used=model_used,
+            tokens_used=0,
+            cost_usd=total_cost,
+        )
+
+        return AgentResponse(
+            content=current_text or '',
+            session_id=session_id,
+            project_id=self.project_id,
+            model_used=model_used,
+            cost_usd=total_cost,
+            executed_tool_calls=executed_tool_calls,
         )
 
     async def _handle_tool_approval(
@@ -211,6 +424,7 @@ class ClawAgent:
         model_choice: ModelChoice,
         model_used: str,
         prior_cost: float,
+        executed_tool_calls: list | None = None,
     ) -> AgentResponse:
         """
         Feed a tool result back to the model for a final response.
@@ -219,6 +433,8 @@ class ClawAgent:
         tool_result_message = (
             f"Tool result for {tool_call['name']}:\n{result}"
         )
+
+
 
         if model_choice == ModelChoice.LOCAL:
             response_text, _, usage = await self.ollama.chat(
@@ -229,18 +445,26 @@ class ClawAgent:
             )
             cost_usd = 0.0
         else:
-            response_text, _, usage = await self.claude.chat(
+            use_opus = self._should_use_opus(envelope.content)
+            client, _ = await self._get_api_client(use_opus=use_opus)
+            response_text, _, usage = await client.chat(
                 system=context_prompt,
                 history=history,
                 message=f"{envelope.content}\n\n{tool_result_message}",
                 tools=None,
+                use_opus=use_opus,
             )
-            cost_usd = self._calculate_cost(usage)
+            cost_usd = self._calculate_cost(usage, client)
+
+        # If Claude returned nothing, surface the raw tool result so the
+        # user always sees something rather than a blank message
+        if not response_text:
+            response_text = f"**{tool_call['name']} result:**\n\n{result}"
 
         self.memory.add_message(
             session_id=envelope.session_id,
             role='assistant',
-            content=response_text or '',
+            content=response_text,
             channel=envelope.channel.value,
             model_used=model_used,
             tokens_used=usage.get('total_tokens', 0),
@@ -248,23 +472,36 @@ class ClawAgent:
         )
 
         return AgentResponse(
-            content=response_text or '',
+            content=response_text,
             session_id=envelope.session_id,
             project_id=self.project_id,
             model_used=model_used,
             cost_usd=prior_cost + cost_usd,
+            executed_tool_calls=executed_tool_calls or [],
         )
 
     async def _execute_tool(self, tool_call: dict) -> str:
-        """Execute a tool synchronously and return the result string."""
+        """Execute a tool and return the result string.
+        Long-running tools (e.g. video generation) run in a thread executor
+        so they never block the async event loop."""
         tool = self.tools.get(tool_call['name'])
         if not tool:
             return f"ERROR: Unknown tool: {tool_call['name']}"
 
         inp = tool_call.get('input', {})
+
+        # Tools that are known to be long-running / CPU-bound
+        BLOCKING_TOOLS = {'generate_video', 'generate_image', 'run_command', 'run_tests', 'run_migration'}
+
         try:
-            # All tool functions take project_root as first positional arg
-            return tool.fn(self._project_root, **inp)
+            import asyncio, functools
+            fn = functools.partial(tool.fn, self._project_root, **inp)
+            if tool_call['name'] in BLOCKING_TOOLS:
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(None, fn)
+            else:
+                result = fn()
+            return str(result)
         except Exception as e:
             return f"ERROR: Tool execution failed: {e}"
 
@@ -314,13 +551,145 @@ class ClawAgent:
         )
         return response.json()['embedding']
 
-    def _calculate_cost(self, usage: dict) -> float:
-        """Estimate Claude API cost from token usage."""
-        # Claude Sonnet pricing: $3/M input, $15/M output
+    async def _get_api_client(
+        self,
+        use_opus: bool = False,
+        prefer_deepseek: bool = False,
+    ) -> tuple[object, str]:
+        """
+        Return (client, model_name) using the 5-tier routing logic.
+
+        Explicit providers:
+          'claude'   — always Claude
+          'openai'   — always OpenAI
+          'deepseek' — always DeepSeek
+
+        Auto mode (default):
+          prefer_deepseek=True  → DeepSeek (if available), else Claude
+          prefer_deepseek=False → Claude (Sonnet or Opus)
+          Either way: on Claude 429/529 fall back to DeepSeek → OpenAI
+        """
+        import anthropic
+
+        # ── Explicit provider overrides ──────────────────────────────────────
+        if self._api_provider == 'openai':
+            if not self.openai:
+                raise RuntimeError('API_PROVIDER=openai but OPENAI_API_KEY not set')
+            return self.openai, self.openai.model
+
+        if self._api_provider == 'deepseek':
+            if not self.deepseek:
+                raise RuntimeError('API_PROVIDER=deepseek but DEEPSEEK_API_KEY not set')
+            return self.deepseek, self.deepseek.model
+
+        # ── Auto / Claude mode ────────────────────────────────────────────────
+        # Tier 2: DeepSeek when router selected it and key is available
+        if prefer_deepseek and self.deepseek and not use_opus:
+            return self.deepseek, self.deepseek.model
+
+        # Tier 3/4: Claude (Sonnet or Opus)
+        # On rate-limit: fall back to DeepSeek → OpenAI
+        if self._api_provider in ('auto', 'claude'):
+            try:
+                model = self.claude.opus_model if use_opus else self.claude.model
+                return self.claude, model
+            except Exception:
+                pass  # shouldn't happen at selection time; errors surface in chat()
+
+        # Tier 5 fallbacks (reached when Claude signals rate-limit during chat)
+        if self.deepseek:
+            return self.deepseek, self.deepseek.model
+        if self.openai:
+            return self.openai, self.openai.model
+
+        model = self.claude.opus_model if use_opus else self.claude.model
+        return self.claude, model
+
+    async def _chat_with_fallback(
+        self,
+        client,
+        **kwargs,
+    ) -> tuple[str, object, dict]:
+        """
+        Wrap a client.chat() call with automatic fallback on Claude overload.
+        Falls back: Claude → DeepSeek → OpenAI.
+        """
+        import anthropic
+        try:
+            return await client.chat(**kwargs)
+        except (anthropic.RateLimitError, anthropic.APIStatusError) as exc:
+            status = getattr(exc, 'status_code', None)
+            if status not in (429, 529):
+                raise
+            # Try DeepSeek first
+            if self.deepseek and not isinstance(client, DeepSeekClient):
+                fallback = self.deepseek
+            elif self.openai and not isinstance(client, OpenAIClient):
+                fallback = self.openai
+            else:
+                raise
+            # Strip Claude-only kwargs before retrying
+            safe_kwargs = {
+                k: v for k, v in kwargs.items()
+                if k not in ('use_opus',)
+            }
+            return await fallback.chat(**safe_kwargs)
+
+    def _calculate_cost(self, usage: dict, client=None) -> float:
+        """
+        Estimate API cost from token usage.
+        Claude Sonnet:  $3/M input,    $15/M output
+        Claude Opus:    $15/M input,   $75/M output
+        DeepSeek V3:    $0.27/M input, $1.10/M output
+        GPT-4o:         $2.50/M input, $10/M output
+        """
+        if client is None:
+            return 0.0
+        if isinstance(client, DeepSeekClient):
+            return (
+                usage.get('input_tokens', 0) * DeepSeekClient.PRICE_INPUT_PER_M
+                + usage.get('output_tokens', 0) * DeepSeekClient.PRICE_OUTPUT_PER_M
+            ) / 1_000_000
+        if isinstance(client, OpenAIClient):
+            return (
+                usage.get('input_tokens', 0) * 2.5
+                + usage.get('output_tokens', 0) * 10.0
+            ) / 1_000_000
+        # Claude (default — Sonnet pricing; Opus ~5x but we don't differentiate here)
         return (
-            usage.get('input_tokens', 0) * 3
-            + usage.get('output_tokens', 0) * 15
+            usage.get('input_tokens', 0) * 3.0
+            + usage.get('output_tokens', 0) * 15.0
         ) / 1_000_000
+
+    def _get_tools_for_task(self, task: str, read_only: bool = False) -> list[dict]:
+        """
+        Return permitted tools for the current request.
+        When read_only=True (WiggumOrchestrator assessment/plan passes),
+        only SAFE tools are exposed — no file edits, no commands.
+        """
+        all_tools = self.tools.describe_for_model(self.config)
+        if not read_only:
+            return all_tools
+        safe_names = {
+            name for name, t in self.tools._tools.items()
+            if t.risk_level == RiskLevel.SAFE
+        }
+        return [t for t in all_tools if t['name'] in safe_names]
+
+    def _should_use_opus(self, task: str) -> bool:
+        """
+        Escalate to Opus for tasks where quality matters most.
+        Sonnet handles the majority of coding tasks well.
+        Opus reserved for architecture decisions and complex debugging.
+        """
+        opus_keywords = {
+            'architect', 'architecture', 'design decision',
+            'security review', 'performance review', 'why is this',
+            'root cause', 'fundamentally', 'approach to',
+            'best way to structure', 'trade off', 'trade-off',
+        }
+        task_lower = task.lower()
+        return any(kw in task_lower for kw in opus_keywords)
 
     def _register_tools(self):
         from .tools.file_tools import (
@@ -328,11 +697,34 @@ class ClawAgent:
         )
         from .tools.search_tools import search_code_tool
         from .tools.exec_tools import (
-            run_tests_tool, run_command_tool, run_migration_tool,
+            run_tests_tool, run_command_tool,
+            run_migration_tool, check_server_tool,
         )
+        from .tools.git_tools import (
+            git_status_tool, git_diff_tool, git_log_tool,
+            git_add_tool, git_commit_tool, git_push_tool,
+            git_branch_tool, git_stash_tool,
+        )
+        from .tools.web_tools import (
+            web_fetch_tool, web_check_status_tool, web_search_tool,
+        )
+        from .tools.video_tools import generate_video_tool
+        from .tools.image_tools import generate_image_tool
         for tool in [
+            # File
             read_file_tool, edit_file_tool, create_file_tool,
-            search_code_tool, run_tests_tool,
-            run_command_tool, run_migration_tool,
+            # Search
+            search_code_tool,
+            # Exec
+            run_tests_tool, run_command_tool,
+            run_migration_tool, check_server_tool,
+            # Git
+            git_status_tool, git_diff_tool, git_log_tool,
+            git_add_tool, git_commit_tool, git_push_tool,
+            git_branch_tool, git_stash_tool,
+            # Web
+            web_fetch_tool, web_check_status_tool, web_search_tool,
+            # Media
+            generate_video_tool, generate_image_tool,
         ]:
             self.tools.register(tool)

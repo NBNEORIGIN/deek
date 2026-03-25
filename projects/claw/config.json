@@ -1,17 +1,16 @@
 {
-  "name": "Origin Designed Manufacturing",
-  "description": "Manufacturing management system replacing the Excel/Google Sheets workbook",
-  "codebase_path": "D:/workflow/workflow-app",
+  "name": "CLAW",
+  "description": "CLAW itself — the sovereign AI coding agent platform",
+  "codebase_path": "D:/claw",
   "project_type": "coding",
   "force_model": "api",
 
   "permissions": [
     "read_file",
     "search_code",
-    "run_tests",
     "edit_file",
     "create_file",
-    "run_migration",
+    "run_tests",
     "run_command",
     "check_server",
     "git_status",
@@ -37,7 +36,7 @@
 
   "indexing": {
     "auto_reindex": false,
-    "exclude_paths": ["migrations", "node_modules"],
-    "include_extensions": []
+    "exclude_paths": [".venv", "node_modules", ".next", "__pycache__", "data", "logs"],
+    "include_extensions": [".py", ".ts", ".tsx", ".json", ".md"]
   }
 }

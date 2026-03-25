@@ -283,6 +283,9 @@ export class ClawPanel {
     border-radius:3px;padding:6px;margin-bottom:8px;white-space:pre
   }
   .diff .add{color:#4ec9b0}.diff .del{color:#f44747}
+  .diff .diff-file{color:var(--vscode-textLink-foreground);font-weight:bold}
+  .diff .diff-hunk{color:var(--vscode-descriptionForeground)}
+  .git-status-clean{color:#4ec9b0;padding:4px 0}
   .tool-btns{display:flex;gap:6px}
   button{
     padding:4px 12px;border-radius:3px;border:none;
@@ -359,7 +362,10 @@ function md(text){
 }
 
 function fmtDiff(diff){
+  if(!diff || diff === 'No changes') return '<span class="git-status-clean">✓ No changes</span>';
   return diff.split('\\n').map(l=>{
+    if(l.startsWith('+++') || l.startsWith('---')) return '<span class="diff-file">'+esc(l)+'</span>';
+    if(l.startsWith('@@')) return '<span class="diff-hunk">'+esc(l)+'</span>';
     if(l.startsWith('+')) return '<span class="add">'+esc(l)+'</span>';
     if(l.startsWith('-')) return '<span class="del">'+esc(l)+'</span>';
     return esc(l);
@@ -460,10 +466,21 @@ window.addEventListener('message', e=>{
     case 'agentResponse':
       addResponse(msg.content, msg.pendingToolCall);
       if(msg.modelUsed){
-        const isLocal = msg.modelUsed.toLowerCase().includes('qwen') ||
-                        msg.modelUsed.toLowerCase().includes('local');
-        modelBadge.textContent = isLocal ? '⚡ local' : '☁ claude';
-        if(isLocal){ localCalls++; } else { apiCalls++; sessionCost += msg.costUsd||0; }
+        const mu = msg.modelUsed.toLowerCase();
+        const isLocal = mu.includes('qwen') || mu.includes('ollama') || mu.includes('local');
+        if (isLocal) {
+          modelBadge.textContent = '⚡ local';
+          (modelBadge as HTMLElement).style.color = '#4ec9b0';
+          localCalls++;
+        } else if (mu.includes('opus')) {
+          modelBadge.textContent = '🧠 opus';
+          (modelBadge as HTMLElement).style.color = '#c586c0';
+          apiCalls++; sessionCost += msg.costUsd||0;
+        } else {
+          modelBadge.textContent = '☁ sonnet';
+          (modelBadge as HTMLElement).style.color = '#9cdcfe';
+          apiCalls++; sessionCost += msg.costUsd||0;
+        }
         costRow.textContent = '$'+sessionCost.toFixed(4)+' | local: '+localCalls+' | api: '+apiCalls;
       }
       break;

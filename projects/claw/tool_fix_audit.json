@@ -1,0 +1,31 @@
+{
+  "audit_note": "Tool invocation audit — verifies Claude API receives correctly formatted tool schemas.",
+  "edit_file_schema": {
+    "name": "edit_file",
+    "description": "Edit an existing file by replacing an exact string match",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "file_path": {"type": "string"},
+        "old_str": {"type": "string", "description": "Exact string to replace"},
+        "new_str": {"type": "string", "description": "Replacement string"},
+        "reason": {"type": "string", "description": "Why this change is being made"}
+      },
+      "required": ["file_path", "old_str", "new_str"]
+    }
+  },
+  "claude_client_tool_choice": {"type": "auto"},
+  "verification": {
+    "tools_passed_to_api": true,
+    "tool_choice_suppresses_tool_use": false,
+    "required_array_present": true,
+    "parameter_names_match_file_tools_py": true
+  },
+  "notes": [
+    "claude_client.py passes tools= and tool_choice={'type':'auto'} — verified correct",
+    "registry.py TOOL_SCHEMAS has required[] for edit_file: ['file_path','old_str','new_str']",
+    "file_tools.py edit_file_tool accepts: project_root, file_path, old_str, new_str, reason",
+    "No schema mismatch found. If tool description still occurs, it is model behaviour not API config.",
+    "The system prompt in agent.py includes explicit anti-hallucination rule 1: 'use your provided tools'"
+  ]
+}
