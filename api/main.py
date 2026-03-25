@@ -19,33 +19,41 @@ from core.agent import ClawAgent
 from core.channels.envelope import MessageEnvelope, Channel
 from api.middleware.auth import verify_api_key
 
+# ── Absolute paths — resolved from this file, never from CWD ────────────────
+_API_DIR      = Path(__file__).parent                    # D:\claw\api
+_CLAW_ROOT    = _API_DIR.parent                          # D:\claw
+_PROJECTS_ROOT = _CLAW_ROOT / 'projects'                 # D:\claw\projects
+
+# Module-level test result cache — populated when run_tests tool runs
+_test_cache: dict = {}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan handler to auto-load all projects on startup."""
-    # Load all projects on startup
-    projects_dir = Path('projects')
-    if projects_dir.exists():
-        for project_dir in sorted(projects_dir.iterdir()):
-            if project_dir.is_dir() and not project_dir.name.startswith('_'):
-                config_path = project_dir / 'config.json'
-                if config_path.exists():
-                    try:
-                        config = json.loads(config_path.read_text())
-                        _agents[project_dir.name] = ClawAgent(
-                            project_id=project_dir.name,
-                            config=config,
-                        )
-                        print(f"[CLAW] Auto-loaded project: {project_dir.name}")
-                    except Exception as e:
-                        print(f"[CLAW] Failed to load project {project_dir.name}: {e}")
-    
+    """Lifespan handler — auto-loads every project that has a config.json."""
+    print(f'[CLAW startup] Scanning: {_PROJECTS_ROOT.absolute()}')
+    if _PROJECTS_ROOT.exists():
+        candidates = [
+            d for d in sorted(_PROJECTS_ROOT.iterdir())
+            if d.is_dir() and not d.name.startswith('_')
+        ]
+        print(f'[CLAW startup] Found: {[d.name for d in candidates]}')
+        for project_dir in candidates:
+            config_path = project_dir / 'config.json'
+            if config_path.exists():
+                try:
+                    config = json.loads(config_path.read_text())
+                    _agents[project_dir.name] = ClawAgent(
+                        project_id=project_dir.name,
+                        config=config,
+                    )
+                    print(f'[CLAW startup] Loaded: {project_dir.name}')
+                except Exception as e:
+                    print(f'[CLAW startup] Failed {project_dir.name}: {e}')
+    else:
+        print(f'[CLAW startup] Projects dir not found: {_PROJECTS_ROOT.absolute()}')
+
     yield
-    
-    # Cleanup on shutdown
-    for project_id, agent in _agents.items():
-        # Close any resources if needed
-        pass
 
 
 app = FastAPI(
@@ -79,14 +87,14 @@ _agents: dict[str, ClawAgent] = {}
 
 def get_agent(project_id: str) -> ClawAgent:
     if project_id not in _agents:
-        config_path = Path('projects') / project_id / 'config.json'
+        config_path = _PROJECTS_ROOT / project_id / 'config.json'
         if not config_path.exists():
             raise HTTPException(
                 status_code=404,
                 detail=(
                     f"Project '{project_id}' not found. "
-                    f"Create projects/{project_id}/config.json "
-                    f"and projects/{project_id}/core.md"
+                    f"Create {config_path} "
+                    f"and {_PROJECTS_ROOT / project_id / 'core.md'}"
                 ),
             )
         config = json.loads(config_path.read_text())
@@ -180,12 +188,11 @@ async def chat(
 @app.get("/projects")
 async def list_projects(_: bool = Depends(verify_api_key)):
     """List all configured projects and their readiness state."""
-    projects_dir = Path('projects')
-    if not projects_dir.exists():
+    if not _PROJECTS_ROOT.exists():
         return {'projects': []}
 
     projects = []
-    for p in sorted(projects_dir.iterdir()):
+    for p in sorted(_PROJECTS_ROOT.iterdir()):
         if p.is_dir() and not p.name.startswith('_'):
             config_path = p / 'config.json'
             core_path = p / 'core.md'
@@ -214,7 +221,7 @@ async def index_project(
     """Trigger codebase re-indexing for a project."""
     from core.context.indexer import CodeIndexer
 
-    config_path = Path('projects') / project_id / 'config.json'
+    config_path = _PROJECTS_ROOT / project_id / 'config.json'
     if not config_path.exists():
         raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
 
@@ -320,6 +327,8 @@ async def health():
         'ollama_model': ollama_active_model,
         'ollama_model_ready': ollama_model_ready,
         'anthropic_key_set': bool(os.getenv('ANTHROPIC_API_KEY')),
+        'deepseek_key_set': bool(os.getenv('DEEPSEEK_API_KEY')),
+        'openai_key_set': bool(os.getenv('OPENAI_API_KEY')),
         'projects_loaded': list(_agents.keys()),
     }
 
@@ -475,7 +484,7 @@ async def wiggum_self_test(_: bool = Depends(verify_api_key)):
     checks['projects'] = {
         'status': 'ok',
         'loaded_agents': list(_agents.keys()),
-        'projects_dir_exists': Path('projects').exists(),
+        'projects_dir_exists': _PROJECTS_ROOT.exists(),
     }
 
     overall = 'ok' if all(
@@ -675,6 +684,179 @@ async def batch_approve_wiggum(
         'executed': executed,
         'skipped': skipped,
         'total_approvals': len(approvals),
+    }
+
+
+# ─── GET /status/summary — single-request developer dashboard ───────────────
+
+def _git_info() -> dict:
+    """Return last commit hash, message, and timestamp via git log."""
+    try:
+        import subprocess as _sp
+        result = _sp.run(
+            ['git', 'log', '-1', '--format=%h|%s|%ci'],
+            cwd=str(_CLAW_ROOT),
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and '|' in result.stdout:
+            h, msg, ts = result.stdout.strip().split('|', 2)
+            return {'commit_hash': h.strip(), 'commit_message': msg.strip(),
+                    'commit_time': ts.strip()}
+    except Exception:
+        pass
+    return {'commit_hash': None, 'commit_message': None, 'commit_time': None}
+
+
+def _read_test_cache() -> dict:
+    """Read last pytest result from cache file, or return nulls."""
+    cache_path = _CLAW_ROOT / 'data' / 'test_cache.json'
+    if cache_path.exists():
+        try:
+            return json.loads(cache_path.read_text())
+        except Exception:
+            pass
+    return {'passed': None, 'failed': None, 'errors': None, 'last_run': None}
+
+
+async def _ollama_status_fast() -> dict:
+    """Lightweight Ollama status check (reuses health logic, 3s timeout)."""
+    from core.models.ollama_client import _vram_for, _VRAM_AVAILABLE_GB
+    ollama_base = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
+    preferred = os.getenv('OLLAMA_MODEL_PREFERRED', 'qwen2.5-coder:7b')
+    fallback  = os.getenv('OLLAMA_MODEL', 'qwen2.5-coder:7b')
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=3) as hx:
+            r = await hx.get(f'{ollama_base}/api/tags')
+            if r.status_code == 200:
+                installed = [m['name'] for m in r.json().get('models', [])]
+                def _pulled(n): return any(n in m for m in installed)
+                active = preferred if _pulled(preferred) else fallback
+                return {
+                    'available': True,
+                    'active_model': active,
+                    'installed_models': installed,
+                    'vram_warning': _vram_for(active) > _VRAM_AVAILABLE_GB,
+                }
+    except Exception:
+        pass
+    return {'available': False, 'active_model': None, 'installed_models': [], 'vram_warning': False}
+
+
+async def _project_index_count(project_id: str) -> int | None:
+    """Query pgvector for chunk count — returns None if DB unavailable."""
+    db_url = os.getenv('DATABASE_URL', '')
+    if not db_url:
+        return None
+    try:
+        import asyncio as _asyncio
+        import psycopg2 as _pg
+
+        def _query():
+            conn = _pg.connect(db_url)
+            with conn.cursor() as cur:
+                cur.execute(
+                    'SELECT COUNT(DISTINCT file_path) FROM claw_code_chunks WHERE project_id=%s',
+                    (project_id,),
+                )
+                count = cur.fetchone()[0]
+            conn.close()
+            return count
+
+        return await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(None, _query),
+            timeout=3.0,
+        )
+    except Exception:
+        return None
+
+
+@app.get('/status/summary')
+async def status_summary(_: bool = Depends(verify_api_key)):
+    """
+    Single-endpoint developer dashboard. Aggregates:
+      git info, test results, API keys, Ollama, projects, WIGGUM runs.
+    Frontend calls this once; no fan-out requests needed.
+    """
+    # Run independent queries concurrently
+    git = _git_info()
+    tests = _read_test_cache()
+    ollama, *index_counts = await asyncio.gather(
+        _ollama_status_fast(),
+        *[_project_index_count(pid) for pid in sorted(_agents)],
+    )
+
+    # Projects info
+    projects_info = []
+    for i, (pid, agent) in enumerate(sorted(_agents.items())):
+        codebase_path = agent.config.get('codebase_path', '')
+        watcher = getattr(agent, '_watcher', None)
+        last_reindex = None
+        if watcher and hasattr(watcher, 'last_reindex_at') and watcher.last_reindex_at:
+            last_reindex = watcher.last_reindex_at.isoformat()
+        projects_info.append({
+            'name': pid,
+            'loaded': True,
+            'codebase_exists': bool(codebase_path and Path(codebase_path).exists()),
+            'files_indexed': index_counts[i],
+            'watcher_active': bool(watcher and getattr(watcher, '_active', False)),
+            'last_reindex': last_reindex,
+        })
+
+    # Add any projects with config.json but not yet loaded
+    if _PROJECTS_ROOT.exists():
+        loaded_ids = set(_agents)
+        for d in sorted(_PROJECTS_ROOT.iterdir()):
+            if d.is_dir() and not d.name.startswith('_') and d.name not in loaded_ids:
+                if (d / 'config.json').exists():
+                    projects_info.append({
+                        'name': d.name,
+                        'loaded': False,
+                        'codebase_exists': None,
+                        'files_indexed': None,
+                        'watcher_active': False,
+                        'last_reindex': None,
+                    })
+
+    # WIGGUM runs — most recent 10
+    recent_runs = sorted(
+        _wiggum_runs.values(),
+        key=lambda r: r.get('started_at', ''),
+        reverse=True,
+    )[:10]
+    wiggum_summary = [
+        {
+            'run_id': r.get('run_id', ''),
+            'goal': r.get('goal', '')[:80],
+            'status': r.get('status', 'unknown'),
+            'iterations': r.get('iterations', 0),
+            'started_at': r.get('started_at', ''),
+        }
+        for r in recent_runs
+    ]
+
+    # Count pending approvals across all runs
+    pending = sum(
+        1
+        for r in _wiggum_runs.values()
+        for a in r.get('pending_approvals', [])
+        if a.get('status', 'pending') == 'pending'
+    )
+
+    return {
+        'api_status': 'ok',
+        **git,
+        'test_results': tests,
+        'api_keys': {
+            'anthropic': bool(os.getenv('ANTHROPIC_API_KEY')),
+            'deepseek': bool(os.getenv('DEEPSEEK_API_KEY')),
+            'openai': bool(os.getenv('OPENAI_API_KEY')),
+        },
+        'ollama': ollama,
+        'projects': projects_info,
+        'wiggum_runs': wiggum_summary,
+        'pending_approvals': pending,
+        'generated_at': datetime.utcnow().isoformat(),
     }
 
 
