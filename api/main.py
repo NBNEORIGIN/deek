@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from dotenv import load_dotenv
@@ -230,7 +230,74 @@ async def chat(
     }
 
 
-# ─── Subproject endpoints ────────────────────────────────────────────────────
+# ─── SSE streaming chat endpoint ─────────────────────────────────────────────
+
+@app.get("/chat/stream")
+async def chat_stream(
+    project: str,
+    session_id: str,
+    message: str,
+    mentions: Optional[str] = None,      # JSON-encoded list[MentionedContext]
+    model_override: Optional[str] = None,
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Server-Sent Events stream for real-time agent activity.
+
+    Emits JSON events as the agent works:
+      routing     — tier selected, model name
+      tokens      — estimated context tokens
+      tool_start  — SAFE tool about to run
+      tool_end    — SAFE tool finished (duration_ms, result_chars)
+      tool_queued — REVIEW tool encountered (approval needed via POST /chat)
+      complete    — final response (response, cost_usd, model_used, metadata)
+      error       — unhandled exception
+      done        — stream end sentinel
+
+    Falls back gracefully: if the agent raises, an 'error' event is emitted
+    and the stream closes cleanly.
+    """
+    import json as _json
+
+    parsed_mentions = []
+    if mentions:
+        try:
+            parsed_mentions = _json.loads(mentions)
+        except Exception:
+            pass
+
+    agent = get_agent(project)
+
+    envelope = MessageEnvelope(
+        content=message,
+        channel=Channel.WEB,
+        project_id=project,
+        session_id=session_id,
+        mentions=parsed_mentions,
+        model_override=model_override,
+    )
+
+    async def event_generator():
+        try:
+            async for event in agent.process_streaming(envelope):
+                yield f'data: {_json.dumps(event)}\n\n'
+        except Exception as exc:
+            yield f'data: {_json.dumps({"type": "error", "message": str(exc)})}\n\n'
+        finally:
+            yield 'data: {"type": "done"}\n\n'
+
+    return StreamingResponse(
+        event_generator(),
+        media_type='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+        },
+    )
+
+
+# ─── Subproject endpoints ─────────────────────────────────────────────────────
 
 @app.get("/projects/{project}/subprojects")
 async def get_subprojects(

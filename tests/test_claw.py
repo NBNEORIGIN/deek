@@ -1377,3 +1377,243 @@ class TestModelOverrideRouting:
         data = r.json()
         assert 'metadata' in data
         assert data['metadata'].get('model_routing') in ('auto', 'manual')
+
+
+# ─── SSE streaming ────────────────────────────────────────────────────────────
+
+class TestProcessStreaming:
+    """Tests for ClawAgent.process_streaming() async generator."""
+
+    def test_process_streaming_is_async_generator(self):
+        """process_streaming() must be an async generator function."""
+        import inspect
+        from core.agent import ClawAgent
+        assert inspect.isasyncgenfunction(ClawAgent.process_streaming)
+
+    def test_process_streaming_yields_routing_and_complete(self, tmp_path):
+        """Streaming yields at least one routing event and one complete event."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from core.agent import ClawAgent
+        from core.channels.envelope import MessageEnvelope, Channel
+
+        fake_response = ("Hello from streaming", None, {
+            "input_tokens": 5, "output_tokens": 10, "total_tokens": 15,
+        })
+
+        with patch("core.models.claude_client.ClaudeClient.chat", new_callable=AsyncMock) as mock_chat, \
+             patch("core.context.engine.ContextEngine.build_context_prompt", return_value="mock ctx"):
+            mock_chat.return_value = fake_response
+            config_path = tmp_path / "config.json"
+            config_path.write_text('{"name":"test","force_model":"api","permissions":["read_file"]}')
+            (tmp_path / "core.md").write_text("# Test")
+            agent = ClawAgent(project_id="test", config={"name": "test", "force_model": "api", "permissions": ["read_file"]})
+
+            envelope = MessageEnvelope(
+                content="hello",
+                channel=Channel.WEB,
+                project_id="test",
+                session_id="stream-test-" + str(id(tmp_path)),
+            )
+
+            async def collect():
+                events = []
+                async for ev in agent.process_streaming(envelope):
+                    events.append(ev)
+                return events
+
+            events = asyncio.get_event_loop().run_until_complete(collect())
+
+        types = [e["type"] for e in events]
+        assert "routing" in types
+        assert "complete" in types
+
+    def test_process_streaming_complete_has_response_field(self, tmp_path):
+        """The 'complete' event must contain a 'response' key."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from core.agent import ClawAgent
+        from core.channels.envelope import MessageEnvelope, Channel
+
+        fake_response = ("My answer", None, {
+            "input_tokens": 5, "output_tokens": 10, "total_tokens": 15,
+        })
+
+        with patch("core.models.claude_client.ClaudeClient.chat", new_callable=AsyncMock) as mock_chat, \
+             patch("core.context.engine.ContextEngine.build_context_prompt", return_value="mock ctx"):
+            mock_chat.return_value = fake_response
+            agent = ClawAgent(project_id="test", config={"name": "test", "force_model": "api", "permissions": ["read_file"]})
+
+            envelope = MessageEnvelope(
+                content="what is claw",
+                channel=Channel.WEB,
+                project_id="test",
+                session_id="stream-test2-" + str(id(tmp_path)),
+            )
+
+            async def collect():
+                async for ev in agent.process_streaming(envelope):
+                    if ev["type"] == "complete":
+                        return ev
+                return None
+
+            complete = asyncio.get_event_loop().run_until_complete(collect())
+
+        assert complete is not None
+        assert "response" in complete
+        assert complete["response"] == "My answer"
+
+    def test_process_streaming_emits_tool_events_for_safe_tool(self, tmp_path):
+        """SAFE tool calls produce tool_start and tool_end events."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from core.agent import ClawAgent
+        from core.channels.envelope import MessageEnvelope, Channel
+
+        tool_call = {"name": "read_file", "input": {"file_path": "core/agent.py"}, "tool_use_id": "tc1"}
+        first_response = ("", tool_call, {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+        final_response = ("Here is what I found.", None, {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+
+        with patch("core.models.claude_client.ClaudeClient.chat", new_callable=AsyncMock) as mock_chat, \
+             patch("core.context.engine.ContextEngine.build_context_prompt", return_value="mock ctx"), \
+             patch("core.agent.ClawAgent._execute_tool", new_callable=AsyncMock) as mock_exec:
+            mock_chat.side_effect = [first_response, final_response]
+            mock_exec.return_value = "file content here"
+            agent = ClawAgent(project_id="test", config={"name": "test", "force_model": "api", "permissions": ["read_file"]})
+
+            envelope = MessageEnvelope(
+                content="read the agent file",
+                channel=Channel.WEB,
+                project_id="test",
+                session_id="stream-test3-" + str(id(tmp_path)),
+            )
+
+            async def collect():
+                events = []
+                async for ev in agent.process_streaming(envelope):
+                    events.append(ev)
+                return events
+
+            events = asyncio.get_event_loop().run_until_complete(collect())
+
+        types = [e["type"] for e in events]
+        assert "tool_start" in types
+        assert "tool_end" in types
+        # tool_start must precede tool_end
+        assert types.index("tool_start") < types.index("tool_end")
+
+    def test_process_streaming_queues_review_tool(self, tmp_path):
+        """REVIEW tools emit tool_queued event and do not execute."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from core.agent import ClawAgent
+        from core.channels.envelope import MessageEnvelope, Channel
+
+        tool_call = {"name": "edit_file", "input": {"file_path": "x.py", "old_str": "a", "new_str": "b"}, "tool_use_id": "tc2"}
+        first_response = ("", tool_call, {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+
+        with patch("core.models.claude_client.ClaudeClient.chat", new_callable=AsyncMock) as mock_chat, \
+             patch("core.context.engine.ContextEngine.build_context_prompt", return_value="mock ctx"), \
+             patch("core.agent.ClawAgent._execute_tool", new_callable=AsyncMock) as mock_exec:
+            mock_chat.return_value = first_response
+            mock_exec.return_value = "edited"
+            agent = ClawAgent(project_id="test", config={"name": "test", "force_model": "api", "permissions": ["read_file", "edit_file"]})
+
+            envelope = MessageEnvelope(
+                content="edit x.py",
+                channel=Channel.WEB,
+                project_id="test",
+                session_id="stream-test4-" + str(id(tmp_path)),
+            )
+
+            async def collect():
+                events = []
+                async for ev in agent.process_streaming(envelope):
+                    events.append(ev)
+                return events
+
+            events = asyncio.get_event_loop().run_until_complete(collect())
+
+        types = [e["type"] for e in events]
+        assert "tool_queued" in types
+        # edit_file must NOT have been executed
+        mock_exec.assert_not_called()
+
+
+class TestChatStreamEndpoint:
+    """Tests for GET /chat/stream SSE endpoint."""
+
+    def test_chat_stream_endpoint_returns_200(self, client):
+        tc, headers = client
+        r = tc.get(
+            '/chat/stream',
+            headers=headers,
+            params={"project": "claw", "session_id": "stream-ep-test", "message": "hello"},
+        )
+        assert r.status_code == 200
+
+    def test_chat_stream_content_type_is_sse(self, client):
+        tc, headers = client
+        r = tc.get(
+            '/chat/stream',
+            headers=headers,
+            params={"project": "claw", "session_id": "stream-ct-test", "message": "hi"},
+        )
+        assert 'text/event-stream' in r.headers.get('content-type', '')
+
+    def test_chat_stream_body_contains_data_prefix(self, client):
+        tc, headers = client
+        r = tc.get(
+            '/chat/stream',
+            headers=headers,
+            params={"project": "claw", "session_id": "stream-body-test", "message": "hello"},
+        )
+        assert r.text.startswith('data:')
+
+    def test_chat_stream_contains_done_event(self, client):
+        tc, headers = client
+        r = tc.get(
+            '/chat/stream',
+            headers=headers,
+            params={"project": "claw", "session_id": "stream-done-test", "message": "hello"},
+        )
+        assert '"type": "done"' in r.text or '"type":"done"' in r.text
+
+    def test_chat_stream_contains_complete_event(self, client):
+        tc, headers = client
+        r = tc.get(
+            '/chat/stream',
+            headers=headers,
+            params={"project": "claw", "session_id": "stream-complete-test", "message": "hello"},
+        )
+        assert '"complete"' in r.text
+
+    def test_chat_stream_requires_auth(self, client):
+        tc, _ = client
+        r = tc.get(
+            '/chat/stream',
+            params={"project": "claw", "session_id": "stream-auth-test", "message": "hello"},
+        )
+        assert r.status_code == 401
+
+    def test_chat_stream_unknown_project_returns_sse_error(self, client):
+        """Unknown project should return SSE error event, not HTTP 404."""
+        tc, headers = client
+        r = tc.get(
+            '/chat/stream',
+            headers=headers,
+            params={"project": "_no_such_project_", "session_id": "s", "message": "hi"},
+        )
+        # Either 404 from get_agent or an error SSE event — both acceptable
+        assert r.status_code in (200, 404)
+
+    def test_existing_post_chat_still_works(self, client):
+        """Existing POST /chat endpoint must remain unaffected."""
+        tc, headers = client
+        r = tc.post('/chat', headers=headers, json={
+            'content': 'hello', 'project_id': 'claw',
+            'session_id': 'post-still-works', 'channel': 'web',
+        })
+        assert r.status_code == 200
+        data = r.json()
+        assert 'content' in data

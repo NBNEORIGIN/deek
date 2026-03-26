@@ -1,6 +1,8 @@
 import logging
 import os
+import time
 import uuid
+from typing import AsyncGenerator
 from .channels.envelope import MessageEnvelope, AgentResponse
 from .context.engine import ContextEngine
 from .models.router import route, estimate_tokens, ModelChoice, _deepseek_available
@@ -276,6 +278,338 @@ class ClawAgent:
             cost_usd=cost_usd,
             metadata=metadata,
         )
+
+    async def process_streaming(
+        self,
+        envelope: MessageEnvelope,
+    ) -> AsyncGenerator[dict, None]:
+        """
+        Async generator version of process() for the SSE /chat/stream endpoint.
+
+        Yields SSE event dicts as the agent works:
+          routing       — model tier selected
+          tokens        — context token estimate
+          tool_start    — SAFE tool about to execute
+          tool_end      — SAFE tool finished (duration + chars)
+          tool_queued   — REVIEW/DESTRUCTIVE tool encountered (not executed)
+          complete      — final response ready (mirrors AgentResponse fields)
+          error         — unhandled exception
+
+        REVIEW tool approvals remain on the POST /chat path.
+        The streaming endpoint executes SAFE tools and stops at REVIEW tools.
+        """
+        session_id = envelope.session_id
+
+        try:
+            # ── Memory ───────────────────────────────────────────────────────
+            if envelope.subproject_id:
+                self.memory.set_session_subproject(session_id, envelope.subproject_id)
+            self.memory.add_message(
+                session_id=session_id,
+                role='user',
+                content=envelope.content,
+                channel=envelope.channel.value,
+            )
+
+            # Tool approvals are not streamed — delegate and yield complete
+            if envelope.tool_approval:
+                response = await self._handle_tool_approval(envelope)
+                yield {
+                    'type': 'complete',
+                    'response': response.content,
+                    'cost_usd': response.cost_usd,
+                    'model_used': response.model_used,
+                    'metadata': response.metadata,
+                    'executed_tool_calls': response.executed_tool_calls,
+                    'pending_tool_call': response.pending_tool_call,
+                }
+                return
+
+            # ── @ mention resolution ─────────────────────────────────────────
+            resolved_mentions: list[dict] = []
+            if envelope.mentions:
+                try:
+                    resolved_mentions = await self.context.resolve_mentions(
+                        mentions=envelope.mentions,
+                        project_id=self.project_id,
+                        config=self.config,
+                    )
+                except Exception as exc:
+                    logger.warning(f'[stream] mention resolution failed: {exc}')
+
+            # ── Context ───────────────────────────────────────────────────────
+            context_prompt = self.context.build_context_prompt(
+                task=envelope.content,
+                embedding_fn=self._embed,
+                subproject_id=envelope.subproject_id,
+                resolved_mentions=resolved_mentions or None,
+            )
+            context_prompt = (
+                "You are CLAW, a sovereign AI coding agent.\n"
+                "Rules:\n"
+                "1. Use your provided tools to answer requests — do not describe "
+                "what you would do, just do it.\n"
+                "2. NEVER invent or hallucinate file contents, tool results, or "
+                "command output. If a tool returns an error, report it exactly.\n"
+                "3. Tool parameter names are exact — use the schema. "
+                "read_file takes 'file_path', edit_file takes 'file_path'/'old_str'/"
+                "'new_str'. Do not use 'path', 'parameters', or other variants.\n"
+                "4. If you are unsure what a file contains, call read_file to find "
+                "out — do not guess.\n\n"
+            ) + context_prompt
+
+            if envelope.active_file:
+                try:
+                    fc = self.context.load_tier3(envelope.active_file)
+                    context_prompt += (
+                        f'\n\n# CURRENTLY OPEN FILE\n## {envelope.active_file}\n'
+                        f'```\n{fc}\n```\n'
+                    )
+                except (FileNotFoundError, PermissionError):
+                    pass
+
+            if envelope.selected_text:
+                context_prompt += f'\n\n# SELECTED CODE\n```\n{envelope.selected_text}\n```\n'
+
+            history = self.memory.get_recent_history(session_id, limit=10)
+            context_tokens = estimate_tokens(context_prompt + envelope.content)
+
+            # ── Routing ───────────────────────────────────────────────────────
+            routing_risk = 'safe' if envelope.read_only else 'review'
+            _OVERRIDE_MAP = {'auto': None, 'local': 1, 'deepseek': 2, 'sonnet': 3, 'opus': 4}
+            force_tier = _OVERRIDE_MAP.get(envelope.model_override or '', None)
+            model_choice = route(
+                task=envelope.content,
+                context_tokens=context_tokens,
+                project_config=self.config,
+                risk_level=routing_risk,
+                force_tier=force_tier,
+            )
+            _model_was_manual = envelope.model_override not in (None, 'auto', '')
+            _tier_map = {ModelChoice.LOCAL: 1, ModelChoice.DEEPSEEK: 2, ModelChoice.API: 3}
+
+            yield {
+                'type': 'routing',
+                'tier': _tier_map.get(model_choice, 3),
+                'manual': _model_was_manual,
+            }
+            yield {'type': 'tokens', 'estimated': context_tokens, 'limit': 40_000}
+
+            available_tools = self._get_tools_for_task(
+                envelope.content, read_only=envelope.read_only
+            )
+
+            # ── First model call ──────────────────────────────────────────────
+            if model_choice == ModelChoice.LOCAL:
+                await self.ollama.resolve_active_model(
+                    self._ollama_preferred, self._ollama_fallback
+                )
+                response_text, tool_call, usage = await self.ollama.chat(
+                    system=context_prompt,
+                    history=history,
+                    message=envelope.content,
+                    tools=available_tools,
+                )
+                model_used = self.ollama.model
+                total_cost = 0.0
+                client = None
+            else:
+                use_opus = self._should_use_opus(envelope.content)
+                client, model_used = await self._get_api_client(
+                    use_opus=use_opus,
+                    prefer_deepseek=(model_choice == ModelChoice.DEEPSEEK),
+                )
+                response_text, tool_call, usage = await client.chat(
+                    system=context_prompt,
+                    history=history,
+                    message=envelope.content,
+                    tools=available_tools,
+                    use_opus=use_opus,
+                    image_base64=envelope.image_base64,
+                    image_media_type=envelope.image_media_type,
+                )
+                total_cost = self._calculate_cost(usage, client)
+
+            yield {
+                'type': 'routing',
+                'tier': _tier_map.get(model_choice, 3),
+                'model': model_used,
+                'manual': _model_was_manual,
+            }
+
+            executed_tool_calls: list[dict] = []
+            _seen_read_paths: set[str] = set()
+            max_rounds = getattr(envelope, 'max_tool_rounds', None) or self.MAX_TOOL_ROUNDS
+
+            raw_messages = (
+                client.build_messages(
+                    context_prompt, history, envelope.content,
+                    getattr(envelope, 'image_base64', None),
+                    getattr(envelope, 'image_media_type', 'image/png'),
+                )
+                if client else []
+            )
+
+            current_text = response_text
+            current_tool_call = tool_call
+
+            # ── Streaming tool loop ───────────────────────────────────────────
+            for round_num in range(max_rounds):
+                if not current_tool_call:
+                    break
+
+                tool_name = current_tool_call['name']
+                tool = self.tools.get(tool_name)
+
+                if not tool:
+                    break
+
+                auto_approve_review = getattr(envelope, 'auto_approve_review', False)
+                if (
+                    tool.risk_level != RiskLevel.SAFE
+                    and not (auto_approve_review and tool.risk_level == RiskLevel.REVIEW)
+                ):
+                    # REVIEW/DESTRUCTIVE — emit queued event, stop loop
+                    yield {
+                        'type': 'tool_queued',
+                        'tool': tool_name,
+                        'params': current_tool_call['input'],
+                        'diff': self._generate_diff_preview(current_tool_call),
+                        'risk': tool.risk_level.value,
+                    }
+                    # Save current text and surface pending_tool_call
+                    self.memory.add_message(
+                        session_id=session_id,
+                        role='assistant',
+                        content=current_text or '',
+                        channel=envelope.channel.value,
+                        model_used=model_used,
+                        tokens_used=0,
+                        cost_usd=total_cost,
+                    )
+                    pending = {
+                        'tool_call_id': str(uuid.uuid4()),
+                        'tool_name': tool_name,
+                        'description': self._describe_tool_call(current_tool_call),
+                        'diff_preview': self._generate_diff_preview(current_tool_call),
+                        'input': current_tool_call['input'],
+                        'risk_level': tool.risk_level.value,
+                        'auto_approve': False,
+                    }
+                    yield {
+                        'type': 'complete',
+                        'response': current_text or '',
+                        'cost_usd': total_cost,
+                        'model_used': model_used,
+                        'metadata': {'model_routing': 'manual' if _model_was_manual else 'auto'},
+                        'executed_tool_calls': executed_tool_calls,
+                        'pending_tool_call': pending,
+                    }
+                    return
+
+                # SAFE tool — emit start, execute, emit end
+                yield {
+                    'type': 'tool_start',
+                    'tool': tool_name,
+                    'params': current_tool_call['input'],
+                    'risk': 'safe',
+                }
+                t0 = time.time()
+
+                # Dedup read_file
+                fp = current_tool_call.get('input', {}).get('file_path', '')
+                if tool_name == 'read_file' and fp in _seen_read_paths:
+                    result = f'[already read {fp} — contents available above]'
+                else:
+                    if tool_name == 'read_file' and fp:
+                        _seen_read_paths.add(fp)
+                    try:
+                        result = await self._execute_tool(current_tool_call)
+                    except Exception as exc:
+                        result = f'Tool error: {exc}'
+
+                duration_ms = int((time.time() - t0) * 1000)
+                yield {
+                    'type': 'tool_end',
+                    'tool': tool_name,
+                    'duration_ms': duration_ms,
+                    'result_chars': len(result),
+                }
+                executed_tool_calls.append({'tool_name': tool_name, 'result': result})
+
+                if client:
+                    raw_messages = client.append_tool_round(
+                        raw_messages, current_text, current_tool_call, result
+                    )
+
+                # Next model call
+                force_final = (round_num == max_rounds - 1)
+                if client:
+                    next_text, next_tool_call, cont_usage = await client.chat(
+                        system=context_prompt,
+                        history=history,
+                        message=envelope.content,
+                        tools=available_tools if not force_final else None,
+                        use_opus=self._should_use_opus(envelope.content),
+                        raw_messages=raw_messages,
+                    )
+                    total_cost += self._calculate_cost(cont_usage, client)
+                else:
+                    next_text, next_tool_call, _ = await self.ollama.chat(
+                        system=context_prompt,
+                        history=history,
+                        message=f"{envelope.content}\n\nTool result ({tool_name}):\n{result}",
+                        tools=available_tools if not force_final else None,
+                    )
+
+                current_text = next_text
+                current_tool_call = next_tool_call
+
+            # ── Synthesis fallback ────────────────────────────────────────────
+            if not (current_text or '').strip():
+                logger.info('[stream] tool loop produced empty response — synthesising')
+                synthesis_msg = (
+                    f'Based on the information you just retrieved, please answer '
+                    f'the original question: {envelope.content}'
+                )
+                if client:
+                    synth_text, _, synth_usage = await client.chat(
+                        system=context_prompt,
+                        history=history,
+                        message=synthesis_msg,
+                        tools=None,
+                        use_opus=self._should_use_opus(envelope.content),
+                        raw_messages=raw_messages,
+                    )
+                    total_cost += self._calculate_cost(synth_usage, client)
+                    current_text = synth_text
+
+            # ── Save to memory ────────────────────────────────────────────────
+            self.memory.add_message(
+                session_id=session_id,
+                role='assistant',
+                content=current_text or '',
+                channel=envelope.channel.value,
+                model_used=model_used,
+                tokens_used=0,
+                cost_usd=total_cost,
+            )
+            metadata = await self._check_trim_archive(session_id)
+            metadata['model_routing'] = 'manual' if _model_was_manual else 'auto'
+
+            yield {
+                'type': 'complete',
+                'response': current_text or '',
+                'cost_usd': total_cost,
+                'model_used': model_used,
+                'metadata': metadata,
+                'executed_tool_calls': executed_tool_calls,
+                'pending_tool_call': None,
+            }
+
+        except Exception as exc:
+            logger.exception(f'[stream] unhandled error: {exc}')
+            yield {'type': 'error', 'message': str(exc)}
 
     async def _run_tool_loop(
         self,

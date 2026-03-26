@@ -13,10 +13,11 @@ export interface Message {
   content: string
   modelUsed?: string
   costUsd?: number
-  modelRouting?: string   // 'auto' | 'manual'
+  modelRouting?: string    // 'auto' | 'manual'
   pendingToolCall?: PendingToolCall | null
   toolCalls?: ToolCallRecord[]
-  imagePreview?: string   // data URL for pasted image thumbnail
+  activityLog?: unknown[]  // ActivityEvent[] — rendered by ChatWindow's ActivityLog
+  imagePreview?: string    // data URL for pasted image thumbnail
 }
 
 interface MessageBubbleProps {
