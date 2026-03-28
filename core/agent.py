@@ -19,6 +19,7 @@ from .memory.cache_manager import CacheManager
 from .memory.store import MemoryStore
 from .memory.summariser import SessionSummariser
 from .skills.manager import SkillManager
+from .models.message_normaliser import MessageNormaliser
 
 logger = logging.getLogger(__name__)
 
@@ -1978,6 +1979,22 @@ class ClawAgent:
             safe_kwargs = dict(request_kwargs)
             if not isinstance(fallback, ClaudeClient):
                 safe_kwargs.pop('use_opus', None)
+
+            # Normalise message history for the target provider
+            normaliser = MessageNormaliser()
+            if isinstance(fallback, (OpenAIClient, DeepSeekClient)) and not isinstance(client, (OpenAIClient, DeepSeekClient)):
+                for key in ('raw_messages',):
+                    if key in safe_kwargs and safe_kwargs[key]:
+                        safe_kwargs[key] = normaliser.to_openai(safe_kwargs[key])
+                if 'history' in safe_kwargs and safe_kwargs['history']:
+                    safe_kwargs['history'] = normaliser.to_openai(safe_kwargs['history'])
+            elif isinstance(fallback, ClaudeClient) and not isinstance(client, ClaudeClient):
+                for key in ('raw_messages',):
+                    if key in safe_kwargs and safe_kwargs[key]:
+                        safe_kwargs[key] = normaliser.to_anthropic(safe_kwargs[key])
+                if 'history' in safe_kwargs and safe_kwargs['history']:
+                    safe_kwargs['history'] = normaliser.to_anthropic(safe_kwargs['history'])
+
             try:
                 response_text, tool_call, usage = await asyncio.wait_for(
                     fallback.chat(**safe_kwargs),
