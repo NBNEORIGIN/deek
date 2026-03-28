@@ -1,13 +1,30 @@
 skill_id: theminddepartment
 project_id: phloe
 display_name: The Mind Department
-description: Therapy practice booking and CRM tenant
-triggers:
-  - the mind department
-  - mind department
-  - aly harwood
-  - therapy practice
+description: Aly Harwood — therapy practice booking and CRM at theminddepartment.co.uk
 subproject_id: theminddepartment.co.uk
+triggers:
+  - mind department
+  - theminddepartment
+  - aly harwood
+  - therapy booking
+  - therapy practice
+  - theminddepartment.co.uk
+  - counselling booking
+tools_allowed:
+  - read_file
+  - edit_file
+  - create_file
+  - run_tests
+  - git_commit
 key_rules:
-  - Keep therapy-client data within the tenant boundary
-prompt_hint: Use when prompts mention The Mind Department or Aly Harwood
+  - Every queryset must filter by tenant — theminddepartment tenant only
+  - Client data is sensitive — therapy notes never exposed via API
+  - GDPR applies — no client PII in logs
+escalate_to_opus_keywords:
+  - therapy notes
+  - client records
+  - GDPR
+  - data breach
+  - delete client
+context_budget_override: null

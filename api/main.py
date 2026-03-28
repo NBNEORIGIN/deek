@@ -18,6 +18,8 @@ load_dotenv()
 
 from core.agent import ClawAgent, GenerationStopped, GenerationTimedOut
 from core.channels.envelope import MessageEnvelope, Channel
+from core.skills.skill_loader import SkillLoader
+from core.skills.skill_classifier import SkillClassifier
 from api.middleware.auth import verify_api_key
 
 # ── Absolute paths — resolved from this file, never from CWD ────────────────
@@ -102,6 +104,43 @@ async def lifespan(app: FastAPI):
                     print(f'[CLAW startup] Failed {project_dir.name}: {e}')
     else:
         print(f'[CLAW startup] Projects dir not found: {_PROJECTS_ROOT.absolute()}')
+
+    # ── Skill system init ────────────────────────────────────────────────
+    try:
+        skill_loader = SkillLoader(projects_root=str(_PROJECTS_ROOT))
+        all_skills = skill_loader.load_all_skills()
+        app.state.skill_loader = skill_loader
+        app.state.skill_classifier_ready = False
+
+        # Try to initialise classifier with Ollama embedder
+        try:
+            from core.models.ollama_client import OllamaClient
+            embedder = OllamaClient(
+                base_url=os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434'),
+                model='nomic-embed-text',
+            )
+            classifier = SkillClassifier(skill_loader, embedder)
+            await classifier.initialise()
+            app.state.skill_classifier = classifier
+            app.state.skill_classifier_ready = True
+            print(f'[CLAW startup] Skill classifier ready — {len(all_skills)} skills')
+        except Exception as cls_err:
+            print(f'[CLAW startup] Skill classifier unavailable (exact-match only): {cls_err}')
+            app.state.skill_classifier = None
+
+        # Upgrade agents to use the shared loader + classifier
+        from core.skills.manager import SkillManager
+        for pid, agent in _agents.items():
+            agent.skills = SkillManager(
+                skill_loader=skill_loader,
+                skill_classifier=app.state.skill_classifier,
+                project_id=pid,
+            )
+    except Exception as skill_err:
+        print(f'[CLAW startup] Skill system failed: {skill_err}')
+        app.state.skill_loader = None
+        app.state.skill_classifier = None
+        app.state.skill_classifier_ready = False
 
     yield
 
@@ -798,6 +837,7 @@ async def health():
         'openai_key_set': bool(os.getenv('OPENAI_API_KEY')),
         'projects_loaded': list(_agents.keys()),
         'skills_loaded': sum(len(agent.skills.list_skills()) for agent in _agents.values()),
+        'skill_classifier_ready': getattr(app.state, 'skill_classifier_ready', False),
     }
 
 
@@ -1434,6 +1474,19 @@ async def status_summary(_: bool = Depends(verify_api_key)):
         if a.get('status', 'pending') == 'pending'
     )
 
+    # Skills summary
+    skill_loader = getattr(app.state, 'skill_loader', None)
+    skills_info = []
+    if skill_loader:
+        for s in skill_loader.all_skills():
+            skills_info.append({
+                'skill_id': s.skill_id,
+                'project_id': s.project_id,
+                'display_name': s.display_name,
+                'triggers': s.triggers[:5],
+                'subproject_id': s.subproject_id,
+            })
+
     payload = {
         'api_status': 'ok',
         **git,
@@ -1446,6 +1499,8 @@ async def status_summary(_: bool = Depends(verify_api_key)):
         },
         'ollama': ollama,
         'projects': projects_info,
+        'skills': skills_info,
+        'skill_classifier_ready': getattr(app.state, 'skill_classifier_ready', False),
         'wiggum_runs': wiggum_summary,
         'pending_approvals': pending,
         'generated_at': datetime.utcnow().isoformat(),

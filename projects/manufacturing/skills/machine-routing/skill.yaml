@@ -1,13 +1,28 @@
 skill_id: machine-routing
 project_id: manufacturing
 display_name: Machine Routing
-description: Machine routing and production-floor constraints across ROLF, MIMAKI, and MUTOH
+description: Print machine assignment — ROLF, MIMAKI, MUTOH routing logic
+subproject_id: null
 triggers:
-  - machine routing
+  - rolf
   - mimaki
   - mutoh
-  - rolf
-subproject_id:
+  - machine routing
+  - print queue
+  - which machine
+  - machine assignment
+  - flatbed print
+tools_allowed:
+  - read_file
+  - edit_file
+  - run_tests
 key_rules:
-  - Keep machine names and routing rules explicit
-prompt_hint: Use for machine-specific production questions
+  - ROLF is the Roland — vinyl/wide format
+  - MIMAKI is UV flatbed — rigid substrates
+  - MUTOH is the XPJ-461UF flatbed UV — small format rigid
+  - Machine routing is based on substrate type and size
+  - Never route jobs exceeding machine bed size
+escalate_to_opus_keywords:
+  - change routing logic
+  - update machine spec
+context_budget_override: null

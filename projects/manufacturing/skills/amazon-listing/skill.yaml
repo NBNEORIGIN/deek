@@ -1,0 +1,33 @@
+skill_id: amazon-listing
+project_id: manufacturing
+display_name: Amazon Listing
+description: SP-API integration, SVG templates, flatfile bulk upload, origin-designed
+subproject_id: null
+triggers:
+  - amazon listing
+  - sp-api
+  - flatfile
+  - asin
+  - origin designed
+  - bulk listing
+  - amazon upload
+  - product listing
+  - ean barcode
+  - amazon automation
+tools_allowed:
+  - read_file
+  - edit_file
+  - run_tests
+  - web_search
+  - web_fetch
+key_rules:
+  - GS1 EAN numbers are pre-allocated — never invent barcodes
+  - Flatfile format must match Amazon category template exactly
+  - SVG templates use exact dimensions — never approximate
+  - SP-API rate limits — always implement backoff
+  - Brand registered on Amazon — use registered brand name exactly
+escalate_to_opus_keywords:
+  - delete listings
+  - suspend account
+  - bulk delete
+context_budget_override: null

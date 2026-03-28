@@ -1,0 +1,31 @@
+skill_id: phloe-deployment
+project_id: phloe
+display_name: Phloe Deployment
+description: Deployment, infrastructure, Hetzner server, Nginx, Django migrations
+subproject_id: null
+triggers:
+  - deploy phloe
+  - hetzner
+  - nginx phloe
+  - django migration
+  - phloe staging
+  - phloe production
+  - phloe server
+  - gunicorn
+  - phloe deploy
+tools_allowed:
+  - read_file
+  - edit_file
+  - run_migration
+  - run_command
+  - git_push
+key_rules:
+  - Always run migrations on staging before production
+  - Nginx config changes require reload — never restart without backup
+  - Multi-tenant migrations must not lock tables — use atomic=False
+escalate_to_opus_keywords:
+  - production migration
+  - drop table
+  - delete tenant
+  - nginx restart
+context_budget_override: null

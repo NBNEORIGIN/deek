@@ -1,0 +1,33 @@
+skill_id: server-management
+project_id: claw
+display_name: Server Management
+description: Sovereign Ubuntu server 192.168.1.228, Ollama, Nextcloud, Nginx
+subproject_id: null
+triggers:
+  - sovereign server
+  - 192.168.1.228
+  - ubuntu server
+  - nextcloud
+  - ollama server
+  - nginx config
+  - server management
+  - nbne1
+  - ssh server
+  - docker compose
+tools_allowed:
+  - read_file
+  - web_fetch
+  - web_check_status
+  - run_command
+key_rules:
+  - SSH: toby@192.168.1.228
+  - RAID 1 — never touch mdadm config without backup
+  - Nextcloud data at /mnt/data/nextcloud — never delete
+  - Ollama models at /mnt/data/ollama
+  - Always verify service status after any change
+escalate_to_opus_keywords:
+  - format drive
+  - delete raid
+  - rm -rf
+  - drop database
+context_budget_override: null

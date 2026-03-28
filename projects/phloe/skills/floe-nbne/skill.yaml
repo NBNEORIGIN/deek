@@ -1,12 +1,26 @@
 skill_id: floe-nbne
 project_id: phloe
 display_name: Floe NBNE
-description: NBNE internal Phloe tenant
-triggers:
-  - floe nbne
-  - nbne internal tenant
-  - floe.nbne.uk
+description: NBNE internal Phloe tenant at floe.nbne.uk
 subproject_id: floe.nbne.uk
+triggers:
+  - floe
+  - floe.nbne.uk
+  - nbne booking
+  - internal booking
+  - nbne internal
+tools_allowed:
+  - read_file
+  - edit_file
+  - create_file
+  - run_tests
+  - git_commit
+  - git_push
 key_rules:
-  - Keep internal NBNE flows scoped to the Floe tenant
-prompt_hint: Use internal Floe tenant context when referenced explicitly
+  - Every queryset must filter by tenant — floe tenant only
+  - This is NBNE internal — higher trust than client tenants
+  - Can use git_push — other skills cannot
+escalate_to_opus_keywords:
+  - production deploy
+  - database migration
+context_budget_override: null

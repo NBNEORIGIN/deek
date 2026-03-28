@@ -1,13 +1,30 @@
 skill_id: stock-management
 project_id: manufacturing
 display_name: Stock Management
-description: Stock levels, M-numbers, blanks, and shipment sheet replacement flows
+description: M-number inventory, blank naming, stock levels, FBA channels
+subproject_id: null
 triggers:
   - stock level
   - m-number
-  - shipment sheet
-  - what should we make today
-subproject_id:
+  - blank inventory
+  - donald blank
+  - saville blank
+  - dick blank
+  - stalin blank
+  - fba stock
+  - inventory check
+  - what should we make
+tools_allowed:
+  - read_file
+  - edit_file
+  - search_code
+  - run_tests
 key_rules:
-  - Preserve NBNE manufacturing naming conventions
-prompt_hint: Focus on stock and production-planning context
+  - M-numbers are the canonical product identifier — never change format
+  - Blank names are fixed: DONALD, SAVILLE, DICK, STALIN etc
+  - FBA channels: UK, US, CA, AU, EBAY, ETSY, FR
+  - Stock levels update daily — always fetch fresh before reporting
+escalate_to_opus_keywords:
+  - delete stock records
+  - reset inventory
+context_budget_override: null

@@ -1,12 +1,27 @@
 skill_id: ganbarukai
 project_id: phloe
 display_name: Ganbarukai
-description: Martial arts school booking and membership tenant
+description: Martial arts school — class booking and membership at ganbarukai.co.uk
+subproject_id: ganbarukai.co.uk
 triggers:
   - ganbarukai
-  - martial arts booking
+  - martial arts
+  - ganbarukai.co.uk
+  - class booking
+  - membership martial
   - dojo booking
-subproject_id: ganbarukai.co.uk
+tools_allowed:
+  - read_file
+  - edit_file
+  - create_file
+  - run_tests
+  - git_commit
 key_rules:
-  - Keep Ganbarukai changes tenant-scoped
-prompt_hint: Match prompts about Ganbarukai bookings and membership flows
+  - Every queryset must filter by tenant — ganbarukai tenant only
+  - Class capacity limits are hard — never exceed max_students
+  - Belt grades are ordered — do not change grade ordering logic
+escalate_to_opus_keywords:
+  - delete all members
+  - production database
+  - payment data
+context_budget_override: null

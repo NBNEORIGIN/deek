@@ -166,17 +166,34 @@ class ClawAgent:
             4: 'opus',
         }.get(tier, 'sonnet')
 
-    def _resolve_request_skills(
+    async def _resolve_request_skills(
         self,
         envelope: MessageEnvelope,
     ) -> tuple[list, list[str], str | None]:
-        active_skills = self.skills.resolve_for_request(
-            query=envelope.content,
-            subproject_id=envelope.subproject_id,
-            manual_skill_ids=envelope.skill_ids,
-        )
-        active_skill_ids = [skill.skill_id for skill in active_skills]
-        effective_subproject_id = envelope.subproject_id or self.skills.primary_subproject_id(active_skills)
+        # Try async classifier first, fall back to legacy sync path
+        try:
+            active_skill_ids = await self.skills.get_active_skills(
+                query=envelope.content,
+                project_id=self.project_id,
+                manual_skill_ids=envelope.skill_ids,
+            )
+            active_skills = self.skills.get_skills(active_skill_ids)
+            effective_subproject_id = (
+                envelope.subproject_id
+                or self.skills.get_skill_subproject_id(active_skill_ids)
+            )
+        except Exception as exc:
+            logger.debug('[CLAW] Async skill resolution failed, using legacy: %s', exc)
+            active_skills = self.skills.resolve_for_request(
+                query=envelope.content,
+                subproject_id=envelope.subproject_id,
+                manual_skill_ids=envelope.skill_ids,
+            )
+            active_skill_ids = [skill.skill_id for skill in active_skills]
+            effective_subproject_id = (
+                envelope.subproject_id
+                or self.skills.primary_subproject_id(active_skills)
+            )
         return active_skills, active_skill_ids, effective_subproject_id
 
     def _assemble_context_prompt(
@@ -220,8 +237,17 @@ class ClawAgent:
         self._initialise_request_deadline(envelope)
 
         active_skills, active_skill_ids, effective_subproject_id = (
-            self._resolve_request_skills(envelope)
+            await self._resolve_request_skills(envelope)
         )
+
+        # Check Opus escalation from skill keywords
+        if (
+            active_skill_ids
+            and not envelope.model_override
+            and self.skills.should_escalate_to_opus(envelope.content, active_skill_ids)
+        ):
+            envelope.model_override = 'opus'
+            logger.info('[CLAW] Opus escalation from skill keywords')
 
         # Bind subproject to this session on first set
         if effective_subproject_id:
@@ -553,8 +579,18 @@ class ClawAgent:
             self.clear_stop(session_id)
             self._initialise_request_deadline(envelope)
             active_skills, active_skill_ids, effective_subproject_id = (
-                self._resolve_request_skills(envelope)
+                await self._resolve_request_skills(envelope)
             )
+
+            # Check Opus escalation from skill keywords
+            if (
+                active_skill_ids
+                and not envelope.model_override
+                and self.skills.should_escalate_to_opus(envelope.content, active_skill_ids)
+            ):
+                envelope.model_override = 'opus'
+                logger.info('[stream] Opus escalation from skill keywords')
+
             # ── Memory ───────────────────────────────────────────────────────
             if effective_subproject_id:
                 self.memory.set_session_subproject(session_id, effective_subproject_id)

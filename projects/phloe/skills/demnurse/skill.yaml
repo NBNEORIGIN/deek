@@ -1,14 +1,34 @@
 skill_id: demnurse
 project_id: phloe
 display_name: DemNurse
-description: Amy Law / The Alncom Group nurse compliance tenant
+description: Amy Law / The Alncom Group — nurse compliance platform at demnurse.nbne.uk
+subproject_id: demnurse.nbne.uk
 triggers:
   - demnurse
+  - nurse compliance
   - amy law
   - alncom
-  - nurse compliance
-subproject_id: demnurse.nbne.uk
+  - demnurse booking
+  - demnurse login
+  - demnurse calendar
+  - demnurse 500
+  - nurse portal
+  - demnurse.nbne.uk
+tools_allowed:
+  - read_file
+  - edit_file
+  - create_file
+  - run_tests
+  - git_commit
 key_rules:
-  - Keep changes scoped to the DemNurse tenant
-  - Preserve tenant-aware booking behavior
-prompt_hint: Use DemNurse context when the prompt mentions the tenant directly
+  - Every queryset must filter by tenant — demnurse tenant only
+  - Booking model uses soft deletes — never hard delete
+  - Calendar uses fullcalendar.io v6 — do not upgrade
+  - Amy Law is the client contact — changes need sign-off
+escalate_to_opus_keywords:
+  - patient data
+  - GDPR
+  - data breach
+  - delete all records
+  - production database
+context_budget_override: null
