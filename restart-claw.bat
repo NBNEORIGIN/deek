@@ -1,7 +1,7 @@
 @echo off
-title CLAW Restart
+title Cairn Restart
 cd /d D:\claw
-echo [CLAW] Restarting...
+echo [Cairn] Restarting...
 call stop-claw.bat
-timeout /t 2 /nobreak >nul
+timeout /t 3 /nobreak >nul
 call start-claw.bat
