@@ -142,13 +142,127 @@ async def lifespan(app: FastAPI):
         app.state.skill_classifier = None
         app.state.skill_classifier_ready = False
 
+    # ── Auto-index empty projects ───────────────────────────────────────
+    skip_auto_index = os.getenv('CAIRN_SKIP_AUTO_INDEX', '').lower() in {
+        '1', 'true', 'yes',
+    }
+    if not skip_auto_index:
+        db_url = os.getenv('DATABASE_URL', '')
+        if db_url:
+            for pid, agent in _agents.items():
+                await _auto_index_if_empty(pid, agent, db_url)
+
+    # ── Scheduled reindex background task ───────────────────────────────
+    reindex_hours = int(os.getenv('CAIRN_REINDEX_INTERVAL_HOURS', '24'))
+    _reindex_task = None
+    if reindex_hours > 0 and _agents:
+        _reindex_task = asyncio.create_task(
+            _scheduled_reindex_loop(_agents, interval_hours=reindex_hours)
+        )
+
     yield
+
+    if _reindex_task and not _reindex_task.done():
+        _reindex_task.cancel()
 
     for watcher in active_watchers:
         try:
             watcher.stop()
         except Exception:
             pass
+
+
+async def _auto_index_if_empty(
+    project_id: str,
+    agent: ClawAgent,
+    db_url: str,
+) -> None:
+    """
+    Check chunk count for this project.
+    If zero: run full index automatically.
+    If > 0: skip — FileWatcher handles incremental.
+    Never blocks startup — logs and continues on error.
+    """
+    try:
+        count = await _project_index_count(project_id)
+        if count is None:
+            print(f'[Cairn] Project {project_id} — DB unavailable, skipping auto-index')
+            return
+
+        if count > 0:
+            print(f'[Cairn] Project {project_id} already indexed — {count} files')
+            return
+
+        codebase_path = agent.config.get('codebase_path', '')
+        if not codebase_path or not Path(codebase_path).exists():
+            print(f'[Cairn] Project {project_id} — no codebase_path, skipping auto-index')
+            return
+
+        print(f'[Cairn] Project {project_id} has no indexed content — auto-indexing now...')
+
+        from core.context.indexer import CodeIndexer, IndexerError
+
+        indexer = CodeIndexer(
+            project_id=project_id,
+            codebase_path=codebase_path,
+            db_url=db_url,
+        )
+
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: indexer.index_project(force_reindex=True),
+        )
+
+        print(
+            f'[Cairn] Auto-index complete: {project_id} — '
+            f'{result["chunks_created"]} chunks from {result["indexed"]} files'
+        )
+    except Exception as e:
+        print(f'[Cairn] Auto-index failed for {project_id}: {e}')
+
+
+async def _scheduled_reindex_loop(
+    agents: dict[str, ClawAgent],
+    interval_hours: int = 24,
+) -> None:
+    """
+    Background task started in lifespan handler.
+    Runs full reindex for all projects every interval_hours.
+    """
+    while True:
+        await asyncio.sleep(interval_hours * 3600)
+        for project_id, agent in agents.items():
+            try:
+                codebase_path = agent.config.get('codebase_path', '')
+                db_url = os.getenv('DATABASE_URL', '')
+                if not codebase_path or not db_url:
+                    continue
+
+                print(f'[Cairn] Scheduled reindex: {project_id}')
+
+                from core.context.indexer import CodeIndexer
+
+                indexer = CodeIndexer(
+                    project_id=project_id,
+                    codebase_path=codebase_path,
+                    db_url=db_url,
+                )
+
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda pid=project_id, idx=indexer: idx.index_project(force_reindex=False),
+                )
+
+                print(
+                    f'[Cairn] Scheduled reindex complete: {project_id} — '
+                    f'{result["chunks_created"]} chunks'
+                )
+            except Exception as e:
+                print(f'[Cairn] Scheduled reindex failed {project_id}: {e}')
+
+
+# In-memory index run registry — tracks manual and auto index operations
+_index_runs: dict[str, dict] = {}
 
 
 app = FastAPI(
@@ -725,7 +839,7 @@ async def index_project(
     body: IndexRequest = IndexRequest(),
     _: bool = Depends(verify_api_key),
 ):
-    """Trigger codebase re-indexing for a project."""
+    """Trigger codebase re-indexing for a project. Returns immediately with run_id."""
     from core.context.indexer import CodeIndexer
 
     config_path = _PROJECTS_ROOT / project_id / 'config.json'
@@ -741,17 +855,71 @@ async def index_project(
         )
 
     db_url = os.getenv('DATABASE_URL', '')
+    run_id = f'idx_{uuid.uuid4().hex[:12]}'
+    run_record = {
+        'run_id': run_id,
+        'project': project_id,
+        'status': 'running',
+        'files_processed': 0,
+        'files_total': 0,
+        'chunks_created': 0,
+        'started_at': datetime.utcnow().isoformat(),
+        'completed_at': None,
+        'error': None,
+    }
+    _index_runs[run_id] = run_record
 
     async def _run_index():
-        indexer = CodeIndexer(
-            project_id=project_id,
-            codebase_path=codebase_path,
-            db_url=db_url,
-        )
-        await asyncio.to_thread(indexer.index_project, body.force)
+        try:
+            indexer = CodeIndexer(
+                project_id=project_id,
+                codebase_path=codebase_path,
+                db_url=db_url,
+            )
+
+            def _progress(processed, total, chunks):
+                run_record['files_processed'] = processed
+                run_record['files_total'] = total
+                run_record['chunks_created'] = chunks
+
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: indexer.index_project(
+                    force_reindex=body.force,
+                    progress_callback=_progress,
+                ),
+            )
+
+            run_record['status'] = 'complete'
+            run_record['files_processed'] = result['indexed'] + result['skipped']
+            run_record['files_total'] = result['total_files']
+            run_record['chunks_created'] = result['chunks_created']
+            run_record['completed_at'] = datetime.utcnow().isoformat()
+        except Exception as e:
+            run_record['status'] = 'failed'
+            run_record['error'] = str(e)
+            run_record['completed_at'] = datetime.utcnow().isoformat()
 
     asyncio.create_task(_run_index())
-    return {'status': 'indexing started', 'project_id': project_id}
+    return {
+        'run_id': run_id,
+        'project': project_id,
+        'status': 'started',
+        'message': 'Reindex started in background',
+    }
+
+
+@app.get("/projects/{project_id}/index/{run_id}")
+async def index_status(
+    project_id: str,
+    run_id: str,
+    _: bool = Depends(verify_api_key),
+):
+    """Check status of a reindex run."""
+    record = _index_runs.get(run_id)
+    if not record or record['project'] != project_id:
+        raise HTTPException(status_code=404, detail=f"Index run '{run_id}' not found")
+    return record
 
 
 @app.get("/projects/{project_id}/cost")
@@ -786,6 +954,32 @@ async def debug_tools(project_id: str):
         }
     except Exception as e:
         return {'error': str(e)}
+
+
+async def _all_project_chunk_counts() -> dict[str, int]:
+    """Query pgvector for chunk counts grouped by project_id."""
+    db_url = os.getenv('DATABASE_URL', '')
+    if not db_url:
+        return {}
+    try:
+        import psycopg2 as _pg
+
+        def _query():
+            conn = _pg.connect(db_url, connect_timeout=1)
+            with conn.cursor() as cur:
+                cur.execute(
+                    'SELECT project_id, COUNT(*) FROM claw_code_chunks GROUP BY project_id'
+                )
+                rows = cur.fetchall()
+            conn.close()
+            return {row[0]: row[1] for row in rows}
+
+        return await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(None, _query),
+            timeout=2.0,
+        )
+    except Exception:
+        return {}
 
 
 @app.get("/health")
@@ -823,6 +1017,22 @@ async def health():
     except Exception:
         pass
 
+    # ── Per-project index status ──────────────────────────────────────────
+    index_status = {}
+    chunk_counts = await _all_project_chunk_counts()
+    for pid, agent in _agents.items():
+        watcher = getattr(agent, '_watcher', None)
+        chunks = chunk_counts.get(pid, 0)
+        last_reindex = None
+        if watcher and hasattr(watcher, 'last_reindex_at') and watcher.last_reindex_at:
+            last_reindex = watcher.last_reindex_at.isoformat()
+        index_status[pid] = {
+            'chunks': chunks,
+            'indexed': chunks > 0,
+            'watcher_active': bool(watcher and getattr(watcher, '_active', False)),
+            'last_reindex': last_reindex,
+        }
+
     return {
         'status': 'ok',
         'retrieval_mode': _default_retrieval_mode(),
@@ -841,6 +1051,7 @@ async def health():
         'projects_loaded': list(_agents.keys()),
         'skills_loaded': sum(len(agent.skills.list_skills()) for agent in _agents.values()),
         'skill_classifier_ready': getattr(app.state, 'skill_classifier_ready', False),
+        'index_status': index_status,
     }
 
 

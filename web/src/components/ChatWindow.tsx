@@ -265,6 +265,10 @@ export function ChatWindow() {
   const [sessionTokens, setSessionTokens] = useState(0)
   const [archiveBanner, setArchiveBanner] = useState<string | null>(null)
 
+  // Index warning
+  const [indexWarning, setIndexWarning] = useState<{ project: string; message: string } | null>(null)
+  const [indexDismissed, setIndexDismissed] = useState(false)
+
   // @ mention
   const [mentions, setMentions] = useState<Mention[]>([])
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
@@ -387,6 +391,33 @@ export function ChatWindow() {
     document.addEventListener('paste', handlePaste)
     return () => document.removeEventListener('paste', handlePaste)
   }, [])
+
+  // ── Index warning — poll /health every 30s ────────────────────────────────
+  useEffect(() => {
+    if (!projectId || indexDismissed) return
+    let cancelled = false
+    const check = async () => {
+      try {
+        const r = await fetch('http://localhost:8765/health')
+        const data = await r.json()
+        const status = data.index_status?.[projectId]
+        if (!status) return
+        if (status.indexed) {
+          setIndexWarning(null)
+        } else {
+          setIndexWarning({
+            project: projectId,
+            message: status.watcher_active
+              ? 'Indexing automatically in background...'
+              : 'Run: python scripts/index_project.py --project ' + projectId + ' --force',
+          })
+        }
+      } catch { /* ignore */ }
+    }
+    check()
+    const timer = setInterval(() => { if (!cancelled) check() }, 30_000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [projectId, indexDismissed])
 
   // ── @ mention dropdown ──────────────────────────────────────────────────────
 
@@ -919,6 +950,17 @@ export function ChatWindow() {
           <div className="flex items-center justify-between border-b border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">
             <span>Session archived — summary added to context</span>
             <button onClick={() => setArchiveBanner(null)} className="ml-4 text-emerald-500 hover:text-emerald-700">✕</button>
+          </div>
+        )}
+
+        {indexWarning && !indexDismissed && (
+          <div className="flex items-center justify-between border-b border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-800">
+            <div>
+              <span className="font-semibold">Project {indexWarning.project} has no indexed content.</span>{' '}
+              <span className="text-amber-700">Responses may be less accurate.</span>{' '}
+              <span className="text-amber-600">{indexWarning.message}</span>
+            </div>
+            <button onClick={() => setIndexDismissed(true)} className="ml-4 text-amber-500 hover:text-amber-700" aria-label="Dismiss">✕</button>
           </div>
         )}
 

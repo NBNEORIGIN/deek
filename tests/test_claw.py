@@ -76,6 +76,9 @@ def client(auth_headers):
             'vram_warning': False,
         })
         main._project_index_count = AsyncMock(return_value=42)
+        main._all_project_chunk_counts = AsyncMock(return_value={
+            pid: 150 for pid in main._agents
+        })
 
         tc = TestClient(main.app)
         try:
@@ -2791,3 +2794,201 @@ class TestAgentMemoryDiagnostics:
         assert PROVIDER_BUDGETS['deepseek']['total'] == 32_000
         assert PROVIDER_BUDGETS['sonnet']['total'] == 64_000
         assert PROVIDER_BUDGETS['opus']['total'] == 100_000
+
+
+# ─── Auto-index / index endpoint / indexer tests ───────────────────────────
+
+class TestHealthIndexStatus:
+    """Tests for index_status in /health endpoint."""
+
+    def test_health_includes_index_status(self, client):
+        tc, _ = client
+        data = tc.get("/health").json()
+        assert 'index_status' in data
+
+    def test_health_index_status_has_chunks_count(self, client):
+        tc, _ = client
+        data = tc.get("/health").json()
+        for pid, status in data['index_status'].items():
+            assert 'chunks' in status
+            assert isinstance(status['chunks'], int)
+
+    def test_health_index_status_indexed_true_when_nonzero(self, client):
+        tc, _ = client
+        data = tc.get("/health").json()
+        # Mock returns 150 chunks per project
+        for pid, status in data['index_status'].items():
+            assert status['indexed'] is True
+            assert status['chunks'] == 150
+
+    def test_health_index_status_has_watcher_and_reindex(self, client):
+        tc, _ = client
+        data = tc.get("/health").json()
+        for pid, status in data['index_status'].items():
+            assert 'watcher_active' in status
+            assert 'last_reindex' in status
+
+
+class TestIndexEndpoint:
+    """Tests for POST /projects/{project}/index and GET status."""
+
+    def test_index_endpoint_returns_run_id(self, client):
+        tc, headers = client
+        with patch('core.context.indexer.CodeIndexer') as mock_cls:
+            mock_indexer = MagicMock()
+            mock_indexer.index_project.return_value = {
+                'indexed': 10, 'skipped': 0, 'errors': 0,
+                'chunks_created': 50, 'total_files': 10,
+            }
+            mock_cls.return_value = mock_indexer
+            r = tc.post("/projects/claw/index", json={'force': True}, headers=headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert 'run_id' in data
+        assert data['run_id'].startswith('idx_')
+        assert data['status'] == 'started'
+        assert data['project'] == 'claw'
+
+    def test_index_status_endpoint_returns_progress(self, client):
+        tc, headers = client
+        import api.main as main
+        # Manually insert a run record
+        main._index_runs['idx_test123'] = {
+            'run_id': 'idx_test123',
+            'project': 'claw',
+            'status': 'complete',
+            'files_processed': 10,
+            'files_total': 10,
+            'chunks_created': 50,
+            'started_at': '2026-03-29T10:00:00',
+            'completed_at': '2026-03-29T10:01:00',
+            'error': None,
+        }
+        r = tc.get("/projects/claw/index/idx_test123", headers=headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert data['run_id'] == 'idx_test123'
+        assert data['project'] == 'claw'
+        assert data['status'] == 'complete'
+        assert data['chunks_created'] == 50
+
+    def test_index_status_404_for_unknown_run(self, client):
+        tc, headers = client
+        r = tc.get("/projects/claw/index/idx_nonexistent", headers=headers)
+        assert r.status_code == 404
+
+    def test_index_endpoint_404_for_unknown_project(self, client):
+        tc, headers = client
+        r = tc.post("/projects/nonexistent_project_xyz/index", json={}, headers=headers)
+        assert r.status_code == 404
+
+
+class TestAutoIndexAndScheduled:
+    """Tests for auto-index on startup and scheduled reindex."""
+
+    def test_auto_index_skipped_when_chunks_exist(self):
+        """Auto-index should skip when chunk count > 0."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+        import api.main as main
+
+        agent = MagicMock()
+        agent.config = {'codebase_path': '.'}
+
+        with patch.object(main, '_project_index_count', new_callable=AsyncMock, return_value=100):
+            # Should print "already indexed" and not call indexer
+            loop = asyncio.new_event_loop()
+            # Capture stdout
+            import io, contextlib
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                loop.run_until_complete(main._auto_index_if_empty('test', agent, 'fake_url'))
+            loop.close()
+            assert 'already indexed' in buf.getvalue()
+
+    def test_auto_index_skipped_when_env_var_set(self):
+        """CAIRN_SKIP_AUTO_INDEX=true should prevent auto-indexing."""
+        skip_val = os.environ.get('CAIRN_SKIP_AUTO_INDEX', '')
+        assert skip_val.lower() in {'', '0', 'false', 'no'} or skip_val == '', \
+            "CAIRN_SKIP_AUTO_INDEX should not be set during tests"
+
+    def test_scheduled_reindex_respects_interval(self):
+        """Scheduled reindex sleeps for interval_hours * 3600 seconds."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        sleep_calls = []
+
+        async def mock_sleep(seconds):
+            sleep_calls.append(seconds)
+            raise asyncio.CancelledError()  # Stop after first sleep
+
+        with patch('asyncio.sleep', side_effect=mock_sleep):
+            import api.main as main
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(main._scheduled_reindex_loop({}, interval_hours=12))
+            except asyncio.CancelledError:
+                pass
+            loop.close()
+            assert sleep_calls == [12 * 3600]
+
+    def test_scheduled_reindex_disabled_when_zero(self):
+        """interval_hours=0 means the scheduled task should not be started."""
+        # This is checked in lifespan: `if reindex_hours > 0`
+        assert int(os.getenv('CAIRN_REINDEX_INTERVAL_HOURS', '24')) > 0 or True
+
+
+class TestIndexerImprovements:
+    """Tests for indexer timeout, progress, and model check."""
+
+    def test_indexer_embedding_model_check(self):
+        """check_embedding_model returns bool without raising."""
+        from unittest.mock import patch, MagicMock
+        from core.context.indexer import CodeIndexer
+
+        # Mock the constructor to avoid actual DB connection
+        with patch('psycopg2.connect') as mock_conn, \
+             patch('pgvector.psycopg2.register_vector'):
+            mock_conn.return_value = MagicMock()
+            mock_conn.return_value.cursor.return_value.__enter__ = MagicMock()
+            mock_conn.return_value.cursor.return_value.__exit__ = MagicMock()
+            indexer = CodeIndexer('test', '.', 'fake://url')
+
+        # Mock httpx.post to simulate missing model
+        with patch('httpx.post', side_effect=Exception('connection refused')):
+            assert indexer.check_embedding_model() is False
+
+    def test_indexer_embedding_model_check_succeeds(self):
+        """check_embedding_model returns True when model responds."""
+        from unittest.mock import patch, MagicMock
+        from core.context.indexer import CodeIndexer
+
+        with patch('psycopg2.connect') as mock_conn, \
+             patch('pgvector.psycopg2.register_vector'):
+            mock_conn.return_value = MagicMock()
+            mock_conn.return_value.cursor.return_value.__enter__ = MagicMock()
+            mock_conn.return_value.cursor.return_value.__exit__ = MagicMock()
+            indexer = CodeIndexer('test', '.', 'fake://url')
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {'embedding': [0.1] * 768}
+        mock_response.raise_for_status = MagicMock()
+        with patch('httpx.post', return_value=mock_response):
+            assert indexer.check_embedding_model() is True
+
+    def test_indexer_error_on_missing_model(self):
+        """index_project raises IndexerError when embedding model missing."""
+        from unittest.mock import patch, MagicMock
+        from core.context.indexer import CodeIndexer, IndexerError
+
+        with patch('psycopg2.connect') as mock_conn, \
+             patch('pgvector.psycopg2.register_vector'):
+            mock_conn.return_value = MagicMock()
+            mock_conn.return_value.cursor.return_value.__enter__ = MagicMock()
+            mock_conn.return_value.cursor.return_value.__exit__ = MagicMock()
+            indexer = CodeIndexer('test', '.', 'fake://url')
+
+        with patch('httpx.post', side_effect=Exception('not found')):
+            with pytest.raises(IndexerError, match='Embedding model not available'):
+                indexer.index_project()

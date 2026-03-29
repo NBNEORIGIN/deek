@@ -26,9 +26,14 @@ Each chunk stored with:
 """
 import os
 import hashlib
+import threading
 from pathlib import Path
 from typing import Generator
 import psycopg2
+
+
+class IndexerError(Exception):
+    """Raised when the indexer cannot proceed (e.g. embedding model missing)."""
 
 INCLUDE_EXTENSIONS = {
     '.py', '.ts', '.tsx', '.js', '.jsx',
@@ -106,6 +111,25 @@ class CodeIndexer:
                         WITH (lists = 100);
                 """)
                 self.conn.commit()
+
+    def check_embedding_model(self) -> bool:
+        """
+        Verify the embedding model is available by embedding a short test string.
+        Returns True if successful, False otherwise.
+        """
+        try:
+            import httpx
+            response = httpx.post(
+                f"{os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')}"
+                f"/api/embeddings",
+                json={'model': 'nomic-embed-text', 'prompt': 'test'},
+                timeout=10,
+            )
+            response.raise_for_status()
+            embedding = response.json().get('embedding', [])
+            return len(embedding) > 0
+        except Exception:
+            return False
 
     def embed(self, text: str) -> list[float]:
         """
@@ -190,16 +214,46 @@ class CodeIndexer:
                 self._reconnect()
             return {'status': 'error', 'chunks': 0, 'error': str(exc)}
 
-    def index_project(self, force_reindex: bool = False):
+    def index_project(
+        self,
+        force_reindex: bool = False,
+        cancel_event: threading.Event | None = None,
+        progress_callback=None,
+    ) -> dict:
         """
         Index all files in the project codebase.
         Commits after each file so partial progress is preserved.
+
+        Args:
+            force_reindex: Re-index even if content hash matches.
+            cancel_event: If set, check between files and stop early.
+            progress_callback: Called with (files_processed, files_total, chunks_created).
+
+        Returns dict with 'indexed', 'skipped', 'errors', 'chunks_created' counts.
+
+        Raises IndexerError if the embedding model is not available.
         """
+        if not self.check_embedding_model():
+            raise IndexerError(
+                "Embedding model not available. Run: ollama pull nomic-embed-text"
+            )
+
+        all_files = list(self._walk_codebase())
+        total = len(all_files)
         indexed = 0
         skipped = 0
         errors = 0
+        chunks_created = 0
 
-        for file_path in self._walk_codebase():
+        for i, file_path in enumerate(all_files):
+            # Graceful cancellation
+            if cancel_event and cancel_event.is_set():
+                print(
+                    f"[indexer] Indexing cancelled at {i}/{total} files",
+                    flush=True,
+                )
+                break
+
             try:
                 rel_path = str(
                     file_path.relative_to(self.codebase_path)
@@ -222,8 +276,17 @@ class CodeIndexer:
                 self._delete_file_chunks(rel_path)
 
                 chunks = list(self._chunk_file(file_path, content))
+                file_ok = True
                 for chunk in chunks:
-                    embedding = self.embed(chunk['content'])
+                    try:
+                        embedding = self.embed(chunk['content'])
+                    except Exception as embed_err:
+                        print(
+                            f"  WARN embed timeout for {rel_path}: {embed_err}",
+                            flush=True,
+                        )
+                        file_ok = False
+                        break
                     self._store_chunk(
                         file_path=rel_path,
                         content=chunk['content'],
@@ -234,10 +297,32 @@ class CodeIndexer:
                         last_modified=file_path.stat().st_mtime,
                     )
 
+                if not file_ok:
+                    try:
+                        self.conn.rollback()
+                    except Exception:
+                        self._reconnect()
+                    errors += 1
+                    continue
+
                 # Commit after each file — preserves progress if conn drops
                 self.conn.commit()
                 indexed += 1
-                print(f"  OK {rel_path} ({len(chunks)} chunks)", flush=True)
+                chunks_created += len(chunks)
+
+                # Progress logging every 10 files
+                if indexed % 10 == 0:
+                    print(
+                        f"[indexer] Progress: {i + 1}/{total} files "
+                        f"({indexed} indexed, {skipped} skipped)",
+                        flush=True,
+                    )
+
+                if progress_callback:
+                    try:
+                        progress_callback(i + 1, total, chunks_created)
+                    except Exception:
+                        pass
 
             except Exception as e:
                 errors += 1
@@ -249,10 +334,18 @@ class CodeIndexer:
                     self._reconnect()
 
         print(
-            f"\nIndexing complete: "
-            f"{indexed} indexed, {skipped} skipped, {errors} errors",
+            f"\n[indexer] Complete: "
+            f"{indexed} indexed, {skipped} skipped, {errors} errors, "
+            f"{chunks_created} chunks created",
             flush=True,
         )
+        return {
+            'indexed': indexed,
+            'skipped': skipped,
+            'errors': errors,
+            'chunks_created': chunks_created,
+            'total_files': total,
+        }
 
     def _walk_codebase(self) -> Generator[Path, None, None]:
         clawignore = self._load_clawignore()

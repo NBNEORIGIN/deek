@@ -253,6 +253,20 @@ function EvalCard({ results }: { results: EvalResults }) {
 }
 
 function ProjectsCard({ projects }: { projects: ProjectInfo[] }) {
+  const [indexingProject, setIndexingProject] = useState<string | null>(null)
+
+  const triggerIndex = async (projectName: string) => {
+    setIndexingProject(projectName)
+    try {
+      await fetch(`http://localhost:8765/projects/${projectName}/index`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      })
+    } catch { /* ignore */ }
+    setTimeout(() => setIndexingProject(null), 3000)
+  }
+
   return (
     <Card title="Projects">
       {projects.length === 0 ? (
@@ -260,32 +274,48 @@ function ProjectsCard({ projects }: { projects: ProjectInfo[] }) {
       ) : (
         <table className="w-full text-sm">
           <tbody className="divide-y divide-gray-800">
-            {projects.map(p => (
-              <tr key={p.name} className="text-gray-300">
-                <td className="py-1.5 pr-4 font-mono text-gray-100 w-36">{p.name}</td>
-                <td className="py-1.5 pr-4">
-                  <span className="flex items-center gap-1">
-                    <Dot on={p.loaded} />
-                    <span className="text-gray-500 text-xs">{p.loaded ? 'loaded' : 'not loaded'}</span>
-                  </span>
-                </td>
-                <td className="py-1.5 pr-4 text-gray-400 text-xs">
-                  {p.files_indexed !== null
-                    ? <>{p.files_indexed} files indexed</>
-                    : <span className="text-gray-600">not indexed</span>
-                  }
-                </td>
-                <td className="py-1.5 pr-4">
-                  <span className="flex items-center gap-1 text-xs">
-                    <Dot on={p.watcher_active} />
-                    <span className="text-gray-500">watcher</span>
-                  </span>
-                </td>
-                <td className="py-1.5 text-gray-600 text-xs text-right">
-                  {p.last_reindex ? relativeTime(p.last_reindex) : '—'}
-                </td>
-              </tr>
-            ))}
+            {projects.map(p => {
+              const hasIndex = p.files_indexed !== null && p.files_indexed > 0
+              return (
+                <tr key={p.name} className="text-gray-300">
+                  <td className="py-1.5 pr-4 font-mono text-gray-100 w-36">{p.name}</td>
+                  <td className="py-1.5 pr-4">
+                    <span className="flex items-center gap-1">
+                      <Dot on={p.loaded} />
+                      <span className="text-gray-500 text-xs">{p.loaded ? 'loaded' : 'not loaded'}</span>
+                    </span>
+                  </td>
+                  <td className="py-1.5 pr-4 text-xs">
+                    {p.files_indexed !== null
+                      ? <span className={hasIndex ? 'text-gray-400' : 'text-amber-400'}>{p.files_indexed} files indexed</span>
+                      : <span className="text-gray-600">not indexed</span>
+                    }
+                  </td>
+                  <td className="py-1.5 pr-4">
+                    <span className="flex items-center gap-1 text-xs">
+                      <Dot on={p.watcher_active} />
+                      <span className="text-gray-500">watcher</span>
+                    </span>
+                  </td>
+                  <td className="py-1.5 pr-2 text-gray-600 text-xs">
+                    {p.last_reindex ? relativeTime(p.last_reindex) : 'never'}
+                  </td>
+                  <td className="py-1.5 text-right">
+                    {!hasIndex && p.loaded ? (
+                      <button
+                        onClick={() => triggerIndex(p.name)}
+                        disabled={indexingProject === p.name}
+                        className="text-xs px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50"
+                      >
+                        {indexingProject === p.name ? 'Starting...' : 'Index now'}
+                      </button>
+                    ) : hasIndex ? (
+                      <span className="text-green-500 text-xs">&#10003;</span>
+                    ) : null}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       )}
