@@ -2,6 +2,7 @@
 Command execution tools — run tests, Django management commands.
 All execution is sandboxed to the project root.
 """
+import os
 import subprocess
 from pathlib import Path
 from .registry import Tool, RiskLevel
@@ -63,7 +64,7 @@ def _run_command(
     cwd = Path(project_root)
     if working_dir:
         cwd = (cwd / working_dir).resolve()
-        if not str(cwd).startswith(str(Path(project_root).resolve())):
+        if not os.path.normcase(str(cwd)).startswith(os.path.normcase(str(Path(project_root).resolve()))):
             return 'ERROR: working_dir is outside project root — rejected.'
 
     try:

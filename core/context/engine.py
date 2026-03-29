@@ -488,9 +488,13 @@ class ContextEngine:
         """
         config = self._load_config()
         project_root = Path(config.get('codebase_path', '.')).resolve()
-        target = (project_root / file_path).resolve()
+        candidate = Path(file_path)
+        if candidate.is_absolute():
+            target = candidate.resolve()
+        else:
+            target = (project_root / file_path).resolve()
 
-        if not str(target).startswith(str(project_root)):
+        if not os.path.normcase(str(target)).startswith(os.path.normcase(str(project_root))):
             raise PermissionError(
                 f"File '{file_path}' is outside the project root. "
                 f"Agents cannot access files outside their project."

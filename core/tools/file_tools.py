@@ -2,16 +2,30 @@
 File read, write, and create tools.
 All paths are validated against the project root before execution.
 """
+import os
 from pathlib import Path
 from .registry import Tool, RiskLevel
 
 
 def _resolve_safe(project_root: Path, file_path: str) -> Path:
-    """Resolve file_path relative to project_root, blocking traversal."""
-    resolved = (project_root / file_path).resolve()
-    if not str(resolved).startswith(str(project_root.resolve())):
+    """Resolve file_path against project_root, blocking traversal.
+
+    Accepts both relative paths (``backend/urls.py``) and absolute paths
+    (``D:/nbne_business/nbne_platform/backend/urls.py``) as long as the
+    resolved result lives under ``project_root``.  Uses
+    ``os.path.normcase`` so drive-letter case and separator differences
+    on Windows don't cause false rejections.
+    """
+    candidate = Path(file_path)
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        resolved = (project_root / file_path).resolve()
+    root = project_root.resolve()
+    if not os.path.normcase(str(resolved)).startswith(os.path.normcase(str(root))):
         raise PermissionError(
-            f"Path '{file_path}' is outside project root — rejected."
+            f"Path '{file_path}' is outside project root "
+            f"'{root}' — rejected."
         )
     return resolved
 
