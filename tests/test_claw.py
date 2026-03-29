@@ -3043,3 +3043,161 @@ class TestEmbeddingModelStatus:
         tc, _ = client
         r = tc.post("/admin/test-embedding")
         assert r.status_code in (401, 403)
+
+
+class TestActivityEventsAndSummary:
+    """Tests for activity event emission and tool-call data for the UI summary footer."""
+
+    def test_tool_start_includes_tool_name(self, tmp_path):
+        """tool_start events must include the tool name for icon mapping."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from core.agent import ClawAgent
+        from core.channels.envelope import MessageEnvelope, Channel
+
+        tool_call = {"name": "read_file", "input": {"file_path": "x.py"}, "tool_use_id": "tc1"}
+        first = ("", tool_call, {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+        final = ("Done.", None, {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+
+        with patch("core.models.claude_client.ClaudeClient.chat", new_callable=AsyncMock) as mc, \
+             patch("core.context.engine.ContextEngine.build_context_prompt",
+                   return_value=("ctx", {"context_files": [], "context_file_count": 0})), \
+             patch("core.agent.ClawAgent._execute_tool", new_callable=AsyncMock) as me:
+            mc.side_effect = [first, final]
+            me.return_value = "content"
+            agent = ClawAgent(project_id="test", config={"name": "test", "force_model": "api", "permissions": ["read_file"]})
+            envelope = MessageEnvelope(content="read", channel=Channel.WEB, project_id="test",
+                                       session_id="act-1-" + str(id(tmp_path)))
+
+            async def collect():
+                return [e async for e in agent.process_streaming(envelope)]
+
+            events = asyncio.run(collect())
+
+        starts = [e for e in events if e["type"] == "tool_start"]
+        assert len(starts) >= 1
+        assert starts[0]["tool"] == "read_file"
+
+    def test_tool_end_includes_duration_and_result_chars(self, tmp_path):
+        """tool_end events must include duration_ms and result_chars for the footer."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from core.agent import ClawAgent
+        from core.channels.envelope import MessageEnvelope, Channel
+
+        tool_call = {"name": "read_file", "input": {"file_path": "x.py"}, "tool_use_id": "tc1"}
+        first = ("", tool_call, {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+        final = ("Done.", None, {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+
+        with patch("core.models.claude_client.ClaudeClient.chat", new_callable=AsyncMock) as mc, \
+             patch("core.context.engine.ContextEngine.build_context_prompt",
+                   return_value=("ctx", {"context_files": [], "context_file_count": 0})), \
+             patch("core.agent.ClawAgent._execute_tool", new_callable=AsyncMock) as me:
+            mc.side_effect = [first, final]
+            me.return_value = "x" * 200
+            agent = ClawAgent(project_id="test", config={"name": "test", "force_model": "api", "permissions": ["read_file"]})
+            envelope = MessageEnvelope(content="read", channel=Channel.WEB, project_id="test",
+                                       session_id="act-2-" + str(id(tmp_path)))
+
+            async def collect():
+                return [e async for e in agent.process_streaming(envelope)]
+
+            events = asyncio.run(collect())
+
+        ends = [e for e in events if e["type"] == "tool_end"]
+        assert len(ends) >= 1
+        assert "duration_ms" in ends[0]
+        assert ends[0]["result_chars"] == 200
+
+    def test_complete_event_has_tool_calls_list(self, tmp_path):
+        """The complete event must include executed_tool_calls for the summary footer."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from core.agent import ClawAgent
+        from core.channels.envelope import MessageEnvelope, Channel
+
+        tool_call = {"name": "read_file", "input": {"file_path": "x.py"}, "tool_use_id": "tc1"}
+        first = ("", tool_call, {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+        final = ("Found it.", None, {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+
+        with patch("core.models.claude_client.ClaudeClient.chat", new_callable=AsyncMock) as mc, \
+             patch("core.context.engine.ContextEngine.build_context_prompt",
+                   return_value=("ctx", {"context_files": [], "context_file_count": 0})), \
+             patch("core.agent.ClawAgent._execute_tool", new_callable=AsyncMock) as me:
+            mc.side_effect = [first, final]
+            me.return_value = "file content"
+            agent = ClawAgent(project_id="test", config={"name": "test", "force_model": "api", "permissions": ["read_file"]})
+            envelope = MessageEnvelope(content="read", channel=Channel.WEB, project_id="test",
+                                       session_id="act-3-" + str(id(tmp_path)))
+
+            async def collect():
+                return [e async for e in agent.process_streaming(envelope)]
+
+            events = asyncio.run(collect())
+
+        complete = [e for e in events if e["type"] == "complete"][0]
+        assert "executed_tool_calls" in complete
+        assert len(complete["executed_tool_calls"]) >= 1
+        assert complete["executed_tool_calls"][0]["tool_name"] == "read_file"
+
+    def test_complete_tool_calls_contain_result_text(self, tmp_path):
+        """Each tool call in executed_tool_calls must have a result string."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from core.agent import ClawAgent
+        from core.channels.envelope import MessageEnvelope, Channel
+
+        tool_call = {"name": "read_file", "input": {"file_path": "x.py"}, "tool_use_id": "tc1"}
+        first = ("", tool_call, {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+        final = ("OK.", None, {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+
+        with patch("core.models.claude_client.ClaudeClient.chat", new_callable=AsyncMock) as mc, \
+             patch("core.context.engine.ContextEngine.build_context_prompt",
+                   return_value=("ctx", {"context_files": [], "context_file_count": 0})), \
+             patch("core.agent.ClawAgent._execute_tool", new_callable=AsyncMock) as me:
+            mc.side_effect = [first, final]
+            me.return_value = "file content here"
+            agent = ClawAgent(project_id="test", config={"name": "test", "force_model": "api", "permissions": ["read_file"]})
+            envelope = MessageEnvelope(content="read", channel=Channel.WEB, project_id="test",
+                                       session_id="act-4-" + str(id(tmp_path)))
+
+            async def collect():
+                return [e async for e in agent.process_streaming(envelope)]
+
+            events = asyncio.run(collect())
+
+        complete = [e for e in events if e["type"] == "complete"][0]
+        tc_record = complete["executed_tool_calls"][0]
+        assert "result" in tc_record
+        assert "file content here" in tc_record["result"]
+
+    def test_multiple_tool_calls_all_appear_in_complete(self, tmp_path):
+        """When multiple tools are called, all appear in executed_tool_calls."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from core.agent import ClawAgent
+        from core.channels.envelope import MessageEnvelope, Channel
+
+        tc1 = {"name": "read_file", "input": {"file_path": "a.py"}, "tool_use_id": "tc1"}
+        tc2 = {"name": "read_file", "input": {"file_path": "b.py"}, "tool_use_id": "tc2"}
+        resp1 = ("", tc1, {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+        resp2 = ("", tc2, {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+        resp3 = ("Both read.", None, {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10})
+
+        with patch("core.models.claude_client.ClaudeClient.chat", new_callable=AsyncMock) as mc, \
+             patch("core.context.engine.ContextEngine.build_context_prompt",
+                   return_value=("ctx", {"context_files": [], "context_file_count": 0})), \
+             patch("core.agent.ClawAgent._execute_tool", new_callable=AsyncMock) as me:
+            mc.side_effect = [resp1, resp2, resp3]
+            me.side_effect = ["content a", "content b"]
+            agent = ClawAgent(project_id="test", config={"name": "test", "force_model": "api", "permissions": ["read_file"]})
+            envelope = MessageEnvelope(content="read both", channel=Channel.WEB, project_id="test",
+                                       session_id="act-5-" + str(id(tmp_path)))
+
+            async def collect():
+                return [e async for e in agent.process_streaming(envelope)]
+
+            events = asyncio.run(collect())
+
+        complete = [e for e in events if e["type"] == "complete"][0]
+        assert len(complete["executed_tool_calls"]) == 2

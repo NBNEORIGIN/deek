@@ -241,6 +241,47 @@ function MemorySummary({ metadata }: { metadata?: MessageMetadata }) {
   )
 }
 
+function AccomplishmentFooter({ toolCalls, costUsd }: { toolCalls?: ToolCallRecord[]; costUsd?: number }) {
+  if (!toolCalls || toolCalls.length === 0) return null
+
+  let filesRead = 0
+  let filesEdited = 0
+  let testsRun = false
+  let testsPassed = 0
+  let commitMsg = ''
+
+  for (const tc of toolCalls) {
+    if (tc.tool_name === 'read_file') filesRead++
+    if (tc.tool_name === 'edit_file' || tc.tool_name === 'create_file') filesEdited++
+    if (tc.tool_name === 'run_tests') {
+      testsRun = true
+      const m = tc.result.match(/(\d+)\s+passed/)
+      if (m) testsPassed = parseInt(m[1], 10)
+    }
+    if (tc.tool_name === 'git_commit') {
+      const m = tc.result.match(/\[[\w/-]+\s+[\da-f]+\]\s+(.+)/)
+      if (m) commitMsg = m[1]
+    }
+  }
+
+  const parts: string[] = []
+  if (filesRead > 0) parts.push(`${filesRead} file${filesRead > 1 ? 's' : ''} read`)
+  if (filesEdited > 0) parts.push(`${filesEdited} file${filesEdited > 1 ? 's' : ''} edited`)
+  if (testsRun) parts.push(testsPassed > 0 ? `${testsPassed} tests passed` : 'tests run')
+  if (commitMsg) parts.push(`committed: ${commitMsg}`)
+
+  if (parts.length === 0) return null
+
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-2 text-[11px] text-slate-400">
+      <div>{parts.join(' · ')}</div>
+      {(costUsd ?? 0) > 0 && (
+        <div className="mt-0.5">${costUsd!.toFixed(4)} total</div>
+      )}
+    </div>
+  )
+}
+
 function ValidationBanner({ metadata }: { metadata?: MessageMetadata }) {
   if (!metadata) return null
   if (metadata.stopped) {
@@ -326,6 +367,7 @@ export function MessageBubble({ message, onApprove, onReject }: MessageBubblePro
           {renderMarkdown(message.content)}
           <ValidationBanner metadata={message.metadata} />
           <MemorySummary metadata={message.metadata} />
+          <AccomplishmentFooter toolCalls={message.toolCalls} costUsd={message.costUsd} />
         </div>
       </div>
 

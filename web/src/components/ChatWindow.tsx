@@ -107,17 +107,25 @@ function MentionPill({ mention, onRemove }: { mention: Mention; onRemove: () => 
   )
 }
 
+function toolIcon(tool: string): string {
+  if (tool === 'read_file') return '📖'
+  if (tool === 'search_code') return '🔍'
+  if (tool === 'edit_file' || tool === 'create_file') return '✏️'
+  if (tool === 'run_tests') return '🧪'
+  if (tool === 'run_command' || tool === 'run_migration') return '⚡'
+  if (tool === 'git_add' || tool === 'git_commit' || tool === 'git_push' || tool === 'git_branch' || tool === 'git_stash') return '📦'
+  if (tool === 'git_status' || tool === 'git_diff' || tool === 'git_log') return '📖'
+  if (tool === 'web_fetch' || tool === 'web_check_status') return '🌐'
+  if (tool === 'web_search') return '🔍'
+  return '🔧'
+}
+
 function activityIcon(event: ActivityEvent): string {
   if (event.type === 'status') return '·'
   if (event.type === 'routing') return '→'
   if (event.type === 'tokens') return '📊'
-  if (event.type === 'tool_start' || event.type === 'tool_end') {
-    const t = event.tool || ''
-    if (t === 'read_file' || t === 'search_code') return '📖'
-    if (t === 'edit_file' || t === 'create_file') return '✏️'
-    return '🔧'
-  }
-  if (event.type === 'tool_queued') return '✏️'
+  if (event.type === 'tool_start' || event.type === 'tool_end') return toolIcon(event.tool || '')
+  if (event.type === 'tool_queued') return toolIcon(event.tool || '')
   if (event.type === 'validation') return '✓'
   if (event.type === 'escalation') return '⚡'
   if (event.type === 'wiggum_iteration') return '↑'
