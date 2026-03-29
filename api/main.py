@@ -619,11 +619,14 @@ def get_project_files(
             codebase = config.get('codebase_path', '')
             if codebase:
                 base = Path(codebase)
-                SKIP = {'.git', '__pycache__', 'node_modules', '.venv', '.next', 'dist'}
+                SKIP = {'.git', '__pycache__', 'node_modules', '.venv', '.next', 'dist', 'build', 'coverage'}
                 EXTS = {'.py', '.ts', '.tsx', '.js', '.jsx', '.json', '.md', '.yaml', '.yml'}
+                MAX_WALK = 2000  # Safety cap to prevent hangs on huge codebases
                 stack = [base]
-                while stack:
+                dirs_visited = 0
+                while stack and dirs_visited < MAX_WALK:
                     current = stack.pop()
+                    dirs_visited += 1
                     try:
                         entries = sorted(current.iterdir(), key=lambda p: p.name.lower())
                     except Exception:

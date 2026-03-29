@@ -55,7 +55,7 @@ class CodeIndexer:
         self.project_id = project_id
         self.codebase_path = Path(codebase_path)
         self.db_url = db_url
-        self.conn = psycopg2.connect(db_url)
+        self.conn = psycopg2.connect(db_url, connect_timeout=5)
         register_vector(self.conn)
         self._ensure_schema()
 
@@ -133,7 +133,7 @@ class CodeIndexer:
             self.conn.close()
         except Exception:
             pass
-        self.conn = psycopg2.connect(self.db_url)
+        self.conn = psycopg2.connect(self.db_url, connect_timeout=5)
         register_vector(self.conn)
 
     def index_file(self, file_path: str, force_reindex: bool = True) -> dict:

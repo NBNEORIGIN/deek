@@ -1,71 +1,108 @@
 """
-Cross-provider message normaliser.
+Cross-provider message normalisation.
 
-When a model call fails mid-conversation and falls back to a different
-provider (e.g. Claude → OpenAI), the accumulated message history contains
-tool-use blocks in the original provider's format. The target provider
-rejects these with a 400.
+Anthropic and OpenAI use incompatible message formats
+for tool calls. When the fallback path switches providers
+mid-conversation, messages must be normalised to the
+target provider's format before the API call.
 
-This module converts messages between Anthropic and OpenAI formats so
-fallback works cleanly.
+Anthropic format:
+  Assistant message with tool_use:
+  {
+    "role": "assistant",
+    "content": [
+      {"type": "text", "text": "..."},
+      {
+        "type": "tool_use",
+        "id": "toolu_abc",
+        "name": "read_file",
+        "input": {"file_path": "core/agent.py"}
+      }
+    ]
+  }
+
+  Tool result (user turn):
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "tool_result",
+        "tool_use_id": "toolu_abc",
+        "content": "file contents here"
+      }
+    ]
+  }
+
+OpenAI format:
+  Assistant message with tool_calls:
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "call_abc",
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "arguments": "{\"file_path\": \"core/agent.py\"}"
+        }
+      }
+    ]
+  }
+
+  Tool result:
+  {
+    "role": "tool",
+    "tool_call_id": "call_abc",
+    "content": "file contents here"
+  }
 """
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class MessageNormaliser:
+    """
+    Normalises message lists between provider formats.
+    All methods are pure — no side effects, no API calls.
+    Input messages are never mutated — always returns new list.
+    """
 
     def to_openai(self, messages: list[dict]) -> list[dict]:
         """
-        Convert Anthropic-format messages to OpenAI format.
-
-        Key conversions:
-          - tool_use blocks in assistant content → tool_calls array
-          - tool_result blocks in user content → role:tool messages
-          - content as list of text blocks → content as string
+        Convert message list to OpenAI format.
+        Safe to call on already-OpenAI-format messages.
+        Safe to call on mixed-format messages.
         """
-        result: list[dict] = []
+        normalised: list[dict] = []
         for msg in messages:
-            role = msg.get('role', '')
-            content = msg.get('content')
-
-            if role == 'assistant' and isinstance(content, list):
-                converted = self._convert_assistant_anthropic_to_openai(msg)
-                result.append(converted)
-
-            elif role == 'user' and isinstance(content, list):
-                tool_msgs, user_msg = self._convert_user_anthropic_to_openai(msg)
-                result.extend(tool_msgs)
-                if user_msg is not None:
-                    result.append(user_msg)
-
+            converted = self._convert_message_to_openai(msg)
+            if isinstance(converted, list):
+                normalised.extend(converted)
             else:
-                result.append(msg)
-
-        return result
+                normalised.append(converted)
+        return normalised
 
     def to_anthropic(self, messages: list[dict]) -> list[dict]:
         """
-        Convert OpenAI-format messages to Anthropic format.
-
-        Key conversions:
-          - tool_calls array on assistant → tool_use content blocks
-          - role:tool messages → tool_result content blocks on a user turn
-          - system messages are passed through (caller handles separately)
+        Convert message list to Anthropic format.
+        Safe to call on already-Anthropic-format messages.
+        Safe to call on mixed-format messages.
         """
-        result: list[dict] = []
+        normalised: list[dict] = []
         i = 0
         while i < len(messages):
             msg = messages[i]
-            role = msg.get('role', '')
-
-            if role == 'assistant' and 'tool_calls' in msg:
-                result.append(self._convert_assistant_openai_to_anthropic(msg))
+            converted = self._convert_message_to_anthropic(msg)
+            if isinstance(converted, list):
+                normalised.extend(converted)
                 i += 1
-
-            elif role == 'tool':
+            elif msg.get('role') == 'tool':
                 # Collect consecutive tool messages into one user turn
                 tool_results: list[dict] = []
                 while i < len(messages) and messages[i].get('role') == 'tool':
@@ -73,155 +110,194 @@ class MessageNormaliser:
                         self._openai_tool_to_anthropic_result(messages[i])
                     )
                     i += 1
-                result.append({'role': 'user', 'content': tool_results})
-
+                normalised.append({'role': 'user', 'content': tool_results})
             else:
-                result.append(msg)
+                normalised.append(converted)
                 i += 1
-
-        return result
+        return normalised
 
     def to_deepseek(self, messages: list[dict]) -> list[dict]:
         """DeepSeek is OpenAI-compatible."""
         return self.to_openai(messages)
 
+    def detect_format(self, messages: list[dict]) -> str:
+        """
+        Detect which format the message list is in.
+        Returns: 'anthropic' | 'openai' | 'mixed' | 'plain'
+        """
+        has_anthropic = False
+        has_openai = False
+
+        for msg in messages:
+            content = msg.get('content', '')
+
+            # Anthropic indicators
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get('type') in ('tool_use', 'tool_result'):
+                            has_anthropic = True
+
+            # OpenAI indicators
+            if msg.get('tool_calls'):
+                has_openai = True
+            if msg.get('role') == 'tool':
+                has_openai = True
+
+        if has_anthropic and has_openai:
+            return 'mixed'
+        elif has_anthropic:
+            return 'anthropic'
+        elif has_openai:
+            return 'openai'
+        return 'plain'
+
+    # ------------------------------------------------------------------
+    # Single-message converters
+    # ------------------------------------------------------------------
+
+    def _convert_message_to_openai(self, msg: dict) -> dict | list[dict]:
+        """
+        Convert a single message to OpenAI format.
+        May return a list if one message expands to multiple
+        (e.g. Anthropic tool_result in user turn).
+        """
+        role = msg.get('role', '')
+        content = msg.get('content')
+
+        # Already OpenAI format — pass through
+        if msg.get('tool_calls') or role == 'tool':
+            return msg
+
+        # Plain string content — pass through
+        if isinstance(content, str) or content is None:
+            return msg
+
+        # Anthropic content list
+        if isinstance(content, list):
+            return self._anthropic_content_to_openai(role, content, msg)
+
+        return msg
+
+    def _convert_message_to_anthropic(self, msg: dict) -> dict | list[dict]:
+        """
+        Convert a single message to Anthropic format.
+        Returns the message unchanged if already Anthropic format.
+        """
+        role = msg.get('role', '')
+        content = msg.get('content')
+
+        # Already Anthropic format (content is list) — pass through
+        if isinstance(content, list):
+            return msg
+
+        # OpenAI tool message → handled by caller (consecutive grouping)
+        if role == 'tool':
+            # Signal to caller — don't convert here, let caller group
+            return msg
+
+        # OpenAI assistant with tool_calls → Anthropic tool_use blocks
+        if msg.get('tool_calls'):
+            content_blocks: list[dict] = []
+            text = msg.get('content')
+            if text:
+                content_blocks.append({'type': 'text', 'text': str(text)})
+            for tc in msg['tool_calls']:
+                fn = tc.get('function', {})
+                args = fn.get('arguments', '{}')
+                try:
+                    input_data = json.loads(args)
+                except (json.JSONDecodeError, TypeError):
+                    input_data = {'raw': args}
+                content_blocks.append({
+                    'type': 'tool_use',
+                    'id': tc.get('id', ''),
+                    'name': fn.get('name', ''),
+                    'input': input_data,
+                })
+            return {'role': 'assistant', 'content': content_blocks}
+
+        # Plain string — pass through as-is (Anthropic accepts strings)
+        return msg
+
     # ------------------------------------------------------------------
     # Anthropic → OpenAI helpers
     # ------------------------------------------------------------------
 
-    def _convert_assistant_anthropic_to_openai(self, msg: dict) -> dict:
+    def _anthropic_content_to_openai(
+        self,
+        role: str,
+        content: list,
+        original: dict,
+    ) -> dict | list[dict]:
         """
-        Convert assistant message with Anthropic content blocks to OpenAI format.
+        Convert Anthropic content block list to OpenAI format.
 
-        {role: assistant, content: [{type: text, ...}, {type: tool_use, ...}]}
-        →
-        {role: assistant, content: "text", tool_calls: [...]}
+        Assistant messages with tool_use blocks become
+        OpenAI assistant messages with tool_calls.
+
+        User messages with tool_result blocks become
+        OpenAI tool messages (one per tool result).
         """
-        content = msg.get('content', [])
-        text_parts: list[str] = []
-        tool_calls: list[dict] = []
+        text_blocks: list[str] = []
+        tool_use_blocks: list[dict] = []
+        tool_result_blocks: list[dict] = []
 
         for block in content:
             if not isinstance(block, dict):
-                text_parts.append(str(block))
                 continue
-            btype = block.get('type', '')
-            if btype == 'text':
-                text_parts.append(block.get('text', ''))
-            elif btype == 'tool_use':
-                tool_calls.append(self._anthropic_tool_use_to_openai(block))
+            block_type = block.get('type', '')
+            if block_type == 'text':
+                text_blocks.append(block.get('text', ''))
+            elif block_type == 'tool_use':
+                tool_use_blocks.append(block)
+            elif block_type == 'tool_result':
+                tool_result_blocks.append(block)
 
-        result: dict[str, Any] = {
-            'role': 'assistant',
-            'content': '\n'.join(text_parts) if text_parts else '',
-        }
-        if tool_calls:
-            result['tool_calls'] = tool_calls
-        return result
+        # Tool results → OpenAI tool messages
+        if tool_result_blocks:
+            result_messages: list[dict] = []
+            for tr in tool_result_blocks:
+                tool_content = tr.get('content', '')
+                if isinstance(tool_content, list):
+                    tool_content = ' '.join(
+                        b.get('text', '')
+                        for b in tool_content
+                        if isinstance(b, dict)
+                    )
+                result_messages.append({
+                    'role': 'tool',
+                    'tool_call_id': tr.get('tool_use_id', 'unknown'),
+                    'content': str(tool_content),
+                })
+            return result_messages
 
-    def _convert_user_anthropic_to_openai(
-        self, msg: dict,
-    ) -> tuple[list[dict], dict | None]:
-        """
-        Convert user message containing tool_result blocks.
+        # Tool use → OpenAI tool_calls
+        if tool_use_blocks:
+            tool_calls: list[dict] = []
+            for tu in tool_use_blocks:
+                tool_calls.append({
+                    'id': tu.get('id', 'unknown'),
+                    'type': 'function',
+                    'function': {
+                        'name': tu.get('name', ''),
+                        'arguments': json.dumps(tu.get('input', {})),
+                    },
+                })
+            text_content = ' '.join(text_blocks).strip()
+            return {
+                'role': 'assistant',
+                'content': text_content or None,
+                'tool_calls': tool_calls,
+            }
 
-        {role: user, content: [{type: tool_result, tool_use_id: X, content: Y}]}
-        →
-        [{role: tool, tool_call_id: X, content: Y}]
-
-        Any non-tool_result blocks are kept as a separate user message.
-        """
-        content = msg.get('content', [])
-        tool_msgs: list[dict] = []
-        text_parts: list[str] = []
-
-        for block in content:
-            if not isinstance(block, dict):
-                text_parts.append(str(block))
-                continue
-            btype = block.get('type', '')
-            if btype == 'tool_result':
-                tool_msgs.append(self._anthropic_tool_result_to_openai(block))
-            elif btype == 'text':
-                text_parts.append(block.get('text', ''))
-            else:
-                text_parts.append(str(block))
-
-        user_msg = None
-        if text_parts:
-            joined = '\n'.join(text_parts).strip()
-            if joined:
-                user_msg = {'role': 'user', 'content': joined}
-
-        return tool_msgs, user_msg
-
-    def _anthropic_tool_use_to_openai(self, block: dict) -> dict:
-        """
-        {type: tool_use, id: X, name: Y, input: Z}
-        →
-        {id: X, type: function, function: {name: Y, arguments: json.dumps(Z)}}
-        """
-        return {
-            'id': block.get('id', ''),
-            'type': 'function',
-            'function': {
-                'name': block.get('name', ''),
-                'arguments': json.dumps(block.get('input', {})),
-            },
-        }
-
-    def _anthropic_tool_result_to_openai(self, block: dict) -> dict:
-        """
-        {type: tool_result, tool_use_id: X, content: Y}
-        →
-        {role: tool, tool_call_id: X, content: Y}
-        """
-        content = block.get('content', '')
-        if isinstance(content, list):
-            # tool_result content can be a list of blocks
-            parts = []
-            for c in content:
-                if isinstance(c, dict) and c.get('type') == 'text':
-                    parts.append(c.get('text', ''))
-                else:
-                    parts.append(str(c))
-            content = '\n'.join(parts)
-        return {
-            'role': 'tool',
-            'tool_call_id': block.get('tool_use_id', ''),
-            'content': str(content),
-        }
+        # Plain text content blocks — collapse to string
+        text = ' '.join(text_blocks).strip()
+        return {'role': role, 'content': text}
 
     # ------------------------------------------------------------------
     # OpenAI → Anthropic helpers
     # ------------------------------------------------------------------
-
-    def _convert_assistant_openai_to_anthropic(self, msg: dict) -> dict:
-        """
-        {role: assistant, content: "text", tool_calls: [...]}
-        →
-        {role: assistant, content: [{type: text, ...}, {type: tool_use, ...}]}
-        """
-        content_blocks: list[dict] = []
-        text = msg.get('content', '') or ''
-        if text:
-            content_blocks.append({'type': 'text', 'text': text})
-
-        for tc in msg.get('tool_calls', []):
-            func = tc.get('function', {})
-            args = func.get('arguments', '{}')
-            try:
-                parsed_args = json.loads(args)
-            except (json.JSONDecodeError, TypeError):
-                parsed_args = {'raw': args}
-            content_blocks.append({
-                'type': 'tool_use',
-                'id': tc.get('id', ''),
-                'name': func.get('name', ''),
-                'input': parsed_args,
-            })
-
-        return {'role': 'assistant', 'content': content_blocks}
 
     def _openai_tool_to_anthropic_result(self, msg: dict) -> dict:
         """

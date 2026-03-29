@@ -22,6 +22,10 @@ import re
 import uuid
 from typing import Optional
 
+from .message_normaliser import MessageNormaliser
+
+_normaliser = MessageNormaliser()
+
 # Full-width pipe used by DeepSeek's DSML format
 _DSML_PIPE = '\uff5c'
 _DSML_START = f'<{_DSML_PIPE}DSML{_DSML_PIPE}function_calls>'
@@ -124,6 +128,10 @@ class DeepSeekClient:
                 raw_messages if raw_messages is not None
                 else self._build_messages(system, history, message)
             )
+
+        # Belt-and-braces: normalise messages to OpenAI format
+        # in case they arrived in Anthropic format from a fallback path
+        messages = _normaliser.to_openai(messages)
 
         kwargs: dict = {
             'model': self.model,

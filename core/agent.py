@@ -88,6 +88,7 @@ class ClawAgent:
             project_configs=config,
         )
         self.skills = SkillManager(project_id=project_id)
+        self.normaliser = MessageNormaliser()
         self._stop_requests: set[str] = set()
 
         # Cache project root for tool execution
@@ -1981,19 +1982,17 @@ class ClawAgent:
                 safe_kwargs.pop('use_opus', None)
 
             # Normalise message history for the target provider
-            normaliser = MessageNormaliser()
-            if isinstance(fallback, (OpenAIClient, DeepSeekClient)) and not isinstance(client, (OpenAIClient, DeepSeekClient)):
-                for key in ('raw_messages',):
+            target_is_openai = isinstance(fallback, (OpenAIClient, DeepSeekClient))
+            target_is_anthropic = isinstance(fallback, ClaudeClient)
+            convert = (
+                self.normaliser.to_openai if target_is_openai
+                else self.normaliser.to_anthropic if target_is_anthropic
+                else None
+            )
+            if convert is not None:
+                for key in ('raw_messages', 'history', 'pre_assembled'):
                     if key in safe_kwargs and safe_kwargs[key]:
-                        safe_kwargs[key] = normaliser.to_openai(safe_kwargs[key])
-                if 'history' in safe_kwargs and safe_kwargs['history']:
-                    safe_kwargs['history'] = normaliser.to_openai(safe_kwargs['history'])
-            elif isinstance(fallback, ClaudeClient) and not isinstance(client, ClaudeClient):
-                for key in ('raw_messages',):
-                    if key in safe_kwargs and safe_kwargs[key]:
-                        safe_kwargs[key] = normaliser.to_anthropic(safe_kwargs[key])
-                if 'history' in safe_kwargs and safe_kwargs['history']:
-                    safe_kwargs['history'] = normaliser.to_anthropic(safe_kwargs['history'])
+                        safe_kwargs[key] = convert(safe_kwargs[key])
 
             try:
                 response_text, tool_call, usage = await asyncio.wait_for(

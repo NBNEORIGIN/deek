@@ -2,6 +2,10 @@ import json
 import os
 from typing import Optional
 
+from .message_normaliser import MessageNormaliser
+
+_normaliser = MessageNormaliser()
+
 
 class OpenAIClient:
     """
@@ -49,6 +53,10 @@ class OpenAIClient:
                 raw_messages if raw_messages is not None
                 else self._build_messages(system, history, message, image_base64, image_media_type)
             )
+
+        # Belt-and-braces: normalise messages to OpenAI format
+        # in case they arrived in Anthropic format from a fallback path
+        messages = _normaliser.to_openai(messages)
 
         kwargs: dict = {
             'model': self.model,

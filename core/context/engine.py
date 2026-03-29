@@ -69,7 +69,7 @@ class ContextEngine:
         if not self._conn or self._conn.closed:
             import psycopg2
             from pgvector.psycopg2 import register_vector
-            self._conn = psycopg2.connect(self.db_url)
+            self._conn = psycopg2.connect(self.db_url, connect_timeout=5)
             register_vector(self._conn)
         return self._conn
 

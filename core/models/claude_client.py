@@ -2,10 +2,13 @@ import os
 import anthropic
 from typing import Optional
 
+from .message_normaliser import MessageNormaliser
 
 # Pricing per million tokens (update if Anthropic changes pricing)
 PRICE_INPUT_PER_M = 3.0
 PRICE_OUTPUT_PER_M = 15.0
+
+_normaliser = MessageNormaliser()
 
 
 class ClaudeClient:
@@ -65,6 +68,10 @@ class ClaudeClient:
                 raw_messages if raw_messages is not None
                 else self._build_messages(history, message, image_base64, image_media_type)
             )
+
+        # Belt-and-braces: normalise messages to Anthropic format
+        # in case they arrived in OpenAI format from a fallback path
+        messages = _normaliser.to_anthropic(messages)
 
         kwargs: dict = {
             'model': model,
