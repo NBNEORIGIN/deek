@@ -213,6 +213,31 @@ class ClawAgent:
         )
         return self._system_prompt_prefix() + assembly.prompt, assembly.metadata
 
+    @staticmethod
+    def _truncate_to_sentence(text: str) -> str:
+        """Truncate text at the last complete sentence boundary.
+
+        Returns the input up to the last '.', '!', or '?' that ends a
+        sentence (followed by whitespace or end-of-string).  If no
+        sentence boundary is found the full text is returned as-is so
+        we never return an empty string when content exists.
+        """
+        if not text:
+            return text
+        text = text.rstrip()
+        # Already ends at a sentence boundary
+        if text and text[-1] in '.!?':
+            return text
+        # Find the last sentence-ending punctuation
+        best = -1
+        for ch in '.!?':
+            idx = text.rfind(ch)
+            if idx > best:
+                best = idx
+        if best > 0:
+            return text[: best + 1]
+        return text
+
     def _chunk_response_text(self, text: str, chunk_size: int = 180) -> list[str]:
         if not text:
             return []
@@ -1032,13 +1057,19 @@ class ClawAgent:
 
         except GenerationStopped:
             logger.info('[stream] generation stopped for %s', session_id)
+            # Return whatever partial text was accumulated, truncated
+            # at the last complete sentence so the response reads cleanly.
+            partial = locals().get('current_text', '') or ''
+            partial = self._truncate_to_sentence(partial)
+            if not partial.strip():
+                partial = '_Generation stopped._'
             yield {
                 'type': 'complete',
-                'response': '',
-                'cost_usd': 0.0,
-                'model_used': '',
+                'response': partial,
+                'cost_usd': locals().get('total_cost', 0.0) or 0.0,
+                'model_used': locals().get('model_used', '') or '',
                 'metadata': {'stopped': True},
-                'executed_tool_calls': [],
+                'executed_tool_calls': locals().get('executed_tool_calls', []) or [],
                 'pending_tool_call': None,
             }
         except GenerationTimedOut as exc:

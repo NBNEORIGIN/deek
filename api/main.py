@@ -90,6 +90,7 @@ async def lifespan(app: FastAPI):
                                 ),
                                 loop=asyncio.get_running_loop(),
                                 context_engine=agent.context,
+                                project_id=project_dir.name,
                             )
                             watcher.start()
                             agent._watcher = watcher
@@ -445,7 +446,7 @@ async def chat(
     except GenerationStopped:
         agent.clear_stop(request.session_id)
         return {
-            'content': '',
+            'content': '_Generation stopped._',
             'session_id': request.session_id,
             'pending_tool_call': None,
             'model_used': '',

@@ -16,6 +16,7 @@ Debounce:
 """
 import asyncio
 import logging
+import platform
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,11 +68,13 @@ class FileWatcher:
         indexer,                              # CodeIndexer instance
         loop: asyncio.AbstractEventLoop,
         context_engine=None,
+        project_id: str = '',
     ):
         self.path = path
         self.indexer = indexer
         self.loop = loop
         self.context_engine = context_engine
+        self._project_id = project_id
         self._observer = None
         self._timers: dict[str, threading.Timer] = {}
         self._lock = threading.Lock()
@@ -109,7 +112,6 @@ class FileWatcher:
         if self._active:
             return
         try:
-            from watchdog.observers import Observer
             from watchdog.events import FileSystemEventHandler
 
             class _Handler(FileSystemEventHandler):
@@ -124,11 +126,24 @@ class FileWatcher:
                     if not event.is_directory:
                         self_._watcher._schedule(event.src_path)
 
-            self._observer = Observer()
+            # Use PollingObserver on Windows — the default
+            # ReadDirectoryChangesW observer silently fails on
+            # some Windows configurations and network drives.
+            if platform.system() == 'Windows':
+                from watchdog.observers.polling import PollingObserver
+                self._observer = PollingObserver()
+            else:
+                from watchdog.observers import Observer
+                self._observer = Observer()
+
             self._observer.schedule(_Handler(self), self.path, recursive=True)
             self._observer.start()
             self._active = True
-            logger.info(f'[watcher] monitoring {self.path}')
+            logger.info(
+                '[Cairn] FileWatcher started: %s watching %s',
+                getattr(self, '_project_id', '?'),
+                self.path,
+            )
         except ImportError:
             logger.warning(
                 '[watcher] watchdog not installed — file watching disabled. '
