@@ -16,6 +16,7 @@ import ast
 import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
@@ -133,6 +134,22 @@ def _looks_like_file_reference(raw_path: str) -> bool:
     )
 
 
+def _file_exists_anywhere(filename: str, project_root: str) -> bool:
+    """
+    Search for a bare filename (e.g. 'task_classifier.py') anywhere
+    under the project root. Returns True if at least one match is found.
+    Only recurses when the filename has no directory component — paths
+    like 'core/agent.py' are already handled by the os.path.exists()
+    check in check_hallucinated_file().
+    """
+    if os.sep in filename or '/' in filename:
+        return False  # has directory component — already checked above
+    root = Path(project_root)
+    if not root.is_dir():
+        return False
+    return any(root.rglob(filename))
+
+
 def check_hallucinated_file(
     response_text: str,
     files_in_context: list[str],
@@ -162,6 +179,8 @@ def check_hallucinated_file(
             continue
         abs_path = os.path.join(project_root, raw_path)
         if os.path.exists(abs_path) or os.path.exists(raw_path):
+            continue
+        if _file_exists_anywhere(raw_path, project_root):
             continue
         return f'CHECK 3: hallucinated file path "{raw_path}"'
     return None

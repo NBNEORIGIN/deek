@@ -859,6 +859,36 @@ class TestOutputValidator:
         )
         assert not any('CHECK 3' in f for f in r.failures)
 
+    def test_check3_passes_for_short_filename_that_exists(self):
+        """Bare filename like 'task_classifier.py' should pass when the file exists under project root."""
+        from core.models.output_validator import validate
+        r = validate(
+            "The routing logic lives in task_classifier.py which classifies requests.",
+            files_in_context=[],
+            project_root='D:/claw',
+        )
+        assert not any('CHECK 3' in f for f in r.failures)
+
+    def test_check3_fails_for_genuinely_missing_file(self):
+        """A bare filename that doesn't exist anywhere should still be flagged."""
+        from core.models.output_validator import validate
+        r = validate(
+            "See totally_nonexistent_module.py for the implementation.",
+            files_in_context=[],
+            project_root='D:/claw',
+        )
+        assert any('CHECK 3' in f for f in r.failures)
+
+    def test_check3_passes_for_full_path_that_exists(self):
+        """A full relative path like 'core/models/task_classifier.py' should pass."""
+        from core.models.output_validator import validate
+        r = validate(
+            "See core/models/task_classifier.py for the classification logic.",
+            files_in_context=[],
+            project_root='D:/claw',
+        )
+        assert not any('CHECK 3' in f for f in r.failures)
+
     def test_check4_phloe_tenant_isolation_fails(self):
         from core.models.output_validator import validate
         r = validate("Use Invoice.objects.filter(date=today)", project='phloe')
