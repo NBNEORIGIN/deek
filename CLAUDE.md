@@ -43,11 +43,26 @@ Fallback: OpenAI GPT (on Claude rate limits)
 - manufacturing: not yet built (replaces Excel sheet)
 - origin-designed: Amazon/eBay/Etsy generic sign products
 
+## Primary Interface
+Cairn's primary interface is the VS Code extension.
+  Install: code --install-extension vscode-extension/cairn-0.2.0.vsix
+  Open panel: Ctrl+Shift+A
+  Status bar: bottom left shows connection status
+  Commands: Ctrl+Shift+P → "Cairn:"
+
+The web UI (localhost:3000) is secondary —
+use it for the status dashboard and approval queue.
+
 ## Frontend builds
 Frontend runs as a production build (npm start), not dev server.
 After any frontend code change run build-cairn.bat then
 restart-claw.bat to apply changes.
 Never use npm run dev — it's unstable for daily use.
+
+## After extension changes
+Rebuild and reinstall the VS Code extension:
+  cd vscode-extension && npm run compile && npx vsce package
+  code --install-extension cairn-*.vsix
 
 ## Test suite
 295 tests across tests/

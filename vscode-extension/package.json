@@ -1,56 +1,81 @@
 {
-  "name": "claw",
-  "displayName": "CLAW — Sovereign AI Agent",
+  "name": "cairn",
+  "displayName": "Cairn — Sovereign AI Agent",
   "description": "Per-project AI coding agent with permanent context",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "nbne",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["AI", "Other"],
-  "activationEvents": ["onStartupFinished"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "claw.openPanel",
-        "title": "CLAW: Open Agent Panel"
+        "command": "cairn.openPanel",
+        "title": "Cairn: Open Agent Panel"
       },
       {
-        "command": "claw.indexProject",
-        "title": "CLAW: Index Current Project"
+        "command": "cairn.indexProject",
+        "title": "Cairn: Index Current Project"
       },
       {
-        "command": "claw.switchProject",
-        "title": "CLAW: Switch Project"
+        "command": "cairn.selectProject",
+        "title": "Cairn: Switch Project"
       },
       {
-        "command": "claw.newSession",
-        "title": "CLAW: New Session"
+        "command": "cairn.newSession",
+        "title": "Cairn: New Session"
+      },
+      {
+        "command": "cairn.addMention",
+        "title": "Cairn: Add @ Mention Context"
+      },
+      {
+        "command": "cairn.runWiggum",
+        "title": "Cairn: Run autonomous task (WIGGUM)"
       }
     ],
     "keybindings": [
       {
-        "command": "claw.openPanel",
+        "command": "cairn.openPanel",
         "key": "ctrl+shift+a",
         "mac": "cmd+shift+a"
       }
     ],
     "configuration": {
-      "title": "CLAW",
+      "title": "Cairn",
       "properties": {
-        "claw.apiUrl": {
+        "cairn.apiUrl": {
           "type": "string",
           "default": "http://localhost:8765",
-          "description": "CLAW API server URL"
+          "description": "Cairn API URL"
         },
-        "claw.apiKey": {
+        "cairn.apiKey": {
           "type": "string",
-          "default": "claw-dev-key-change-in-production",
-          "description": "CLAW API key (set in CLAW server .env)"
+          "default": "",
+          "description": "Cairn API key (from .env). Leave blank to auto-read from D:\\claw\\.env"
         },
-        "claw.defaultProject": {
+        "cairn.defaultProject": {
           "type": "string",
-          "default": "phloe",
-          "description": "Default project ID to use"
+          "default": "",
+          "description": "Default project on open"
+        },
+        "cairn.enableInlineCompletions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable ghost text suggestions"
+        },
+        "cairn.completionDebounceMs": {
+          "type": "number",
+          "default": 800,
+          "description": "Inline completion debounce (ms)"
         }
       }
     }
@@ -61,6 +86,7 @@
     "package": "vsce package"
   },
   "devDependencies": {
+    "@types/node": "^25.5.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^2.24.0",
     "typescript": "^5.4.0"

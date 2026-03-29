@@ -1,27 +1,31 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
-export class ClawPanel {
-    public static currentPanel: ClawPanel | undefined;
+export class CairnPanel {
+    public static currentPanel: CairnPanel | undefined;
 
     private readonly _panel: vscode.WebviewPanel;
     private readonly _extensionUri: vscode.Uri;
     private _sessionId: string;
     private _projectId: string;
     private _disposables: vscode.Disposable[] = [];
+    public sessionCost: number = 0;
 
     public static createOrShow(extensionUri: vscode.Uri) {
         const column = vscode.window.activeTextEditor
             ? vscode.ViewColumn.Beside
             : vscode.ViewColumn.One;
 
-        if (ClawPanel.currentPanel) {
-            ClawPanel.currentPanel._panel.reveal(column);
+        if (CairnPanel.currentPanel) {
+            CairnPanel.currentPanel._panel.reveal(column);
             return;
         }
 
         const panel = vscode.window.createWebviewPanel(
-            'clawAgent',
-            'CLAW',
+            'cairnAgent',
+            'Cairn',
             column,
             {
                 enableScripts: true,
@@ -29,7 +33,22 @@ export class ClawPanel {
             }
         );
 
-        ClawPanel.currentPanel = new ClawPanel(panel, extensionUri);
+        CairnPanel.currentPanel = new CairnPanel(panel, extensionUri);
+    }
+
+    private _getApiConfig() {
+        const config = vscode.workspace.getConfiguration('cairn');
+        const apiUrl = config.get<string>('apiUrl', 'http://localhost:8765');
+        let apiKey = config.get<string>('apiKey', '');
+        if (!apiKey) {
+            try {
+                const envPath = path.join('D:', 'claw', '.env');
+                const envContent = fs.readFileSync(envPath, 'utf-8');
+                const match = envContent.match(/^CLAW_API_KEY=(.+)$/m);
+                if (match) { apiKey = match[1].trim(); }
+            } catch { /* ignore */ }
+        }
+        return { apiUrl, apiKey };
     }
 
     private constructor(
@@ -39,8 +58,8 @@ export class ClawPanel {
         this._panel = panel;
         this._extensionUri = extensionUri;
         this._sessionId = Math.random().toString(36).slice(2) + Date.now().toString(36);
-        const config = vscode.workspace.getConfiguration('claw');
-        this._projectId = config.get<string>('defaultProject', 'phloe');
+        const config = vscode.workspace.getConfiguration('cairn');
+        this._projectId = config.get<string>('defaultProject', '') || 'claw';
 
         this._panel.webview.html = this._getHtml();
 
@@ -58,7 +77,7 @@ export class ClawPanel {
             async (message) => {
                 switch (message.type) {
                     case 'sendMessage':
-                        await this._handleSend({ content: message.content, mentions: message.mentions, modelOverride: message.modelOverride });
+                        await this._handleSendStream(message);
                         break;
                     case 'approveTool':
                         await this._handleApproval(message, true);
@@ -66,12 +85,29 @@ export class ClawPanel {
                     case 'rejectTool':
                         await this._handleApproval(message, false);
                         break;
-                    case 'ready':
-                        // Panel loaded — send current project/file context
+                    case 'showDiff':
+                        await this._showNativeDiff(message);
+                        break;
+                    case 'switchProject':
+                        this._projectId = message.projectId;
+                        this._sessionId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+                        this.sessionCost = 0;
+                        const cfg = vscode.workspace.getConfiguration('cairn');
+                        await cfg.update('defaultProject', message.projectId, vscode.ConfigurationTarget.Global);
                         this._panel.webview.postMessage({
                             type: 'init',
                             projectId: this._projectId,
                             sessionId: this._sessionId,
+                        });
+                        break;
+                    case 'ready':
+                        // Fetch projects list and send to panel
+                        const projects = await this._fetchProjects();
+                        this._panel.webview.postMessage({
+                            type: 'init',
+                            projectId: this._projectId,
+                            sessionId: this._sessionId,
+                            projects,
                         });
                         break;
                 }
@@ -87,8 +123,24 @@ export class ClawPanel {
         );
     }
 
+    private async _fetchProjects(): Promise<Array<{ id: string; name: string }>> {
+        const { apiUrl, apiKey } = this._getApiConfig();
+        try {
+            const res = await fetch(`${apiUrl}/projects`, {
+                headers: apiKey ? { 'X-API-Key': apiKey } : {},
+                signal: AbortSignal.timeout(5000),
+            });
+            if (!res.ok) { return []; }
+            const data = await res.json() as { projects: Array<{ id: string; name: string; ready: boolean }> };
+            return (data.projects || []).filter(p => p.ready).map(p => ({ id: p.id, name: p.name }));
+        } catch {
+            return [];
+        }
+    }
+
     public newSession() {
         this._sessionId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        this.sessionCost = 0;
         this._panel.webview.postMessage({
             type: 'newSession',
             sessionId: this._sessionId,
@@ -98,6 +150,7 @@ export class ClawPanel {
     public switchProject(projectId: string) {
         this._projectId = projectId;
         this._sessionId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        this.sessionCost = 0;
         this._panel.webview.postMessage({
             type: 'init',
             projectId: this._projectId,
@@ -113,14 +166,13 @@ export class ClawPanel {
         this._panel.webview.postMessage({ type: 'addMention', mention });
     }
 
-    private async _handleSend(message: { content: string; mentions?: Array<{ type: string; value: string; display: string }>; modelOverride?: string }) {
-        const content = typeof message === 'string' ? message : message.content;
-        const mentions = (typeof message === 'object' && message.mentions) ? message.mentions : [];
-        const modelOverride = (typeof message === 'object' && message.modelOverride) ? message.modelOverride : undefined;
-
-        const config = vscode.workspace.getConfiguration('claw');
-        const apiUrl = config.get<string>('apiUrl', 'http://localhost:8765');
-        const apiKey = config.get<string>('apiKey', '');
+    /** SSE streaming chat — matches the web UI approach */
+    private async _handleSendStream(message: {
+        content: string;
+        mentions?: Array<{ type: string; value: string; display: string }>;
+        modelOverride?: string;
+    }) {
+        const { apiUrl, apiKey } = this._getApiConfig();
 
         const editor = vscode.window.activeTextEditor;
         const activeFile = editor?.document.uri.fsPath ?? null;
@@ -129,44 +181,75 @@ export class ClawPanel {
             ? editor!.document.getText(selection)
             : null;
 
+        const params = new URLSearchParams({
+            project: this._projectId,
+            session_id: this._sessionId,
+            message: message.content,
+        });
+        if (message.mentions?.length) {
+            params.set('mentions', JSON.stringify(message.mentions));
+        }
+        if (message.modelOverride) {
+            params.set('model_override', message.modelOverride);
+        }
+
+        const url = `${apiUrl}/chat/stream?${params.toString()}`;
+
         try {
-            const res = await fetch(`${apiUrl}/chat`, {
-                method: 'POST',
+            const res = await fetch(url, {
                 headers: {
-                    'Content-Type': 'application/json',
-                    'X-API-Key': apiKey,
+                    'Accept': 'text/event-stream',
+                    ...(apiKey ? { 'X-API-Key': apiKey } : {}),
                 },
-                body: JSON.stringify({
-                    content,
-                    project_id: this._projectId,
-                    session_id: this._sessionId,
-                    channel: 'vscode',
-                    active_file: activeFile,
-                    selected_text: selectedText,
-                    mentions,
-                    model_override: modelOverride,
-                }),
             });
 
-            const data = await res.json() as {
-                content: string;
-                pending_tool_call: Record<string, unknown> | null;
-                model_used: string;
-                cost_usd: number;
-            };
+            if (!res.ok || !res.body) {
+                this._panel.webview.postMessage({
+                    type: 'error',
+                    message: `API returned ${res.status}`,
+                });
+                return;
+            }
 
-            this._panel.webview.postMessage({
-                type: 'agentResponse',
-                content: data.content,
-                pendingToolCall: data.pending_tool_call,
-                modelUsed: data.model_used,
-                costUsd: data.cost_usd,
-            });
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) { break; }
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) { continue; }
+                    const payload = line.slice(6).trim();
+                    if (!payload || payload === '[DONE]') { continue; }
+
+                    try {
+                        const event = JSON.parse(payload);
+                        this._panel.webview.postMessage({
+                            type: 'streamEvent',
+                            event,
+                        });
+
+                        // Track cost
+                        if (event.type === 'complete' && event.cost_usd) {
+                            this.sessionCost += event.cost_usd;
+                        }
+                    } catch { /* skip malformed JSON */ }
+                }
+            }
+
+            // Signal stream end
+            this._panel.webview.postMessage({ type: 'streamEnd' });
 
         } catch (err) {
             this._panel.webview.postMessage({
                 type: 'error',
-                message: `Cannot reach CLAW API at ${apiUrl}. Is it running?`,
+                message: `Cannot reach Cairn API at ${apiUrl}. Is it running?`,
             });
         }
     }
@@ -176,16 +259,14 @@ export class ClawPanel {
         toolName: string;
         toolInput: Record<string, unknown>;
     }, approved: boolean) {
-        const config = vscode.workspace.getConfiguration('claw');
-        const apiUrl = config.get<string>('apiUrl', 'http://localhost:8765');
-        const apiKey = config.get<string>('apiKey', '');
+        const { apiUrl, apiKey } = this._getApiConfig();
 
         try {
             const res = await fetch(`${apiUrl}/chat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-API-Key': apiKey,
+                    ...(apiKey ? { 'X-API-Key': apiKey } : {}),
                 },
                 body: JSON.stringify({
                     content: '',
@@ -215,6 +296,10 @@ export class ClawPanel {
                 modelUsed: data.model_used,
                 costUsd: data.cost_usd,
             });
+
+            if (data.cost_usd) {
+                this.sessionCost += data.cost_usd;
+            }
         } catch (err) {
             this._panel.webview.postMessage({
                 type: 'error',
@@ -223,13 +308,39 @@ export class ClawPanel {
         }
     }
 
+    /** Show proposed edit in VS Code's native diff editor */
+    private async _showNativeDiff(message: {
+        filePath: string;
+        oldContent: string;
+        newContent: string;
+    }) {
+        const tmpDir = os.tmpdir();
+        const baseName = path.basename(message.filePath);
+
+        const originalPath = path.join(tmpDir, `cairn-orig-${baseName}`);
+        const modifiedPath = path.join(tmpDir, `cairn-mod-${baseName}`);
+
+        fs.writeFileSync(originalPath, message.oldContent, 'utf-8');
+        fs.writeFileSync(modifiedPath, message.newContent, 'utf-8');
+
+        const originalUri = vscode.Uri.file(originalPath);
+        const modifiedUri = vscode.Uri.file(modifiedPath);
+
+        await vscode.commands.executeCommand(
+            'vscode.diff',
+            originalUri,
+            modifiedUri,
+            `Cairn: proposed changes to ${baseName}`
+        );
+    }
+
     private _getHtml(): string {
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CLAW</title>
+<title>Cairn</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{
@@ -243,14 +354,24 @@ export class ClawPanel {
     padding:6px 12px;
     background:var(--vscode-panel-background);
     border-bottom:1px solid var(--vscode-panel-border);
-    display:flex;align-items:center;justify-content:space-between;
+    display:flex;align-items:center;gap:8px;
     font-size:11px;flex-shrink:0
   }
-  #project-badge{
+  #header-title{
     font-weight:bold;color:var(--vscode-textLink-foreground);
-    letter-spacing:.5px;text-transform:uppercase;font-size:10px
+    letter-spacing:.5px;font-size:12px
   }
-  #model-badge{color:var(--vscode-descriptionForeground)}
+  #project-select{
+    background:var(--vscode-dropdown-background);
+    color:var(--vscode-dropdown-foreground);
+    border:1px solid var(--vscode-dropdown-border);
+    border-radius:3px;padding:2px 6px;font-size:11px;
+    cursor:pointer
+  }
+  #model-badge{
+    color:var(--vscode-descriptionForeground);
+    margin-left:auto
+  }
   #messages{
     flex:1;overflow-y:auto;padding:12px;
     display:flex;flex-direction:column;gap:10px
@@ -273,6 +394,12 @@ export class ClawPanel {
     border-radius:3px;padding:1px 4px;
     font-family:var(--vscode-editor-font-family)
   }
+  .activity-log{
+    font-size:11px;color:var(--vscode-descriptionForeground);
+    margin:4px 0;padding:4px 8px;
+    border-left:2px solid var(--vscode-panel-border)
+  }
+  .activity-log .activity-item{margin:2px 0}
   .tool-card{
     border:1px solid var(--vscode-editorWarning-foreground,#cca700);
     border-radius:6px;padding:10px 12px;margin:4px 0;
@@ -310,6 +437,11 @@ export class ClawPanel {
     background:var(--vscode-button-secondaryBackground);
     color:var(--vscode-button-secondaryForeground)
   }
+  .msg-footer{
+    font-size:10px;color:var(--vscode-descriptionForeground);
+    margin-top:4px;padding-top:4px;
+    border-top:1px solid var(--vscode-panel-border)
+  }
   #cost-row{
     padding:3px 12px;font-size:10px;
     color:var(--vscode-descriptionForeground);
@@ -319,7 +451,8 @@ export class ClawPanel {
   }
   #mentions-row{
     padding:4px 12px 0;background:var(--vscode-panel-background);
-    display:flex;flex-wrap:wrap;gap:4px;flex-shrink:0
+    display:flex;flex-wrap:wrap;gap:4px;flex-shrink:0;
+    min-height:0
   }
   .mention-pill{
     display:inline-flex;align-items:center;gap:4px;
@@ -349,6 +482,13 @@ export class ClawPanel {
     resize:none;min-height:34px;max-height:120px;line-height:1.4
   }
   textarea:focus{outline:1px solid var(--vscode-focusBorder)}
+  #model-select{
+    background:var(--vscode-dropdown-background);
+    color:var(--vscode-dropdown-foreground);
+    border:1px solid var(--vscode-dropdown-border);
+    border-radius:3px;padding:2px 4px;font-size:11px;
+    height:34px;cursor:pointer
+  }
   #send{background:var(--vscode-button-background);color:var(--vscode-button-foreground);height:34px;padding:0 14px}
   .thinking{color:var(--vscode-descriptionForeground);font-style:italic;animation:pulse 1.5s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
@@ -356,14 +496,22 @@ export class ClawPanel {
 </head>
 <body>
 <div id="header">
-  <span id="project-badge">CLAW</span>
+  <span id="header-title">Cairn</span>
+  <select id="project-select"><option value="">loading...</option></select>
   <span id="model-badge">connecting...</span>
 </div>
 <div id="messages"></div>
 <div id="cost-row">$0.0000 | local: 0 | api: 0</div>
 <div id="mentions-row"></div>
 <div id="input-row">
-  <textarea id="inp" placeholder="Ask CLAW... (@ to mention)" rows="1"></textarea>
+  <textarea id="inp" placeholder="Ask Cairn... (@ to mention, Shift+Enter newline)" rows="1"></textarea>
+  <select id="model-select">
+    <option value="">Auto</option>
+    <option value="local">Local</option>
+    <option value="deepseek">DeepSeek</option>
+    <option value="sonnet">Sonnet</option>
+    <option value="opus">Opus</option>
+  </select>
   <button id="send" class="btn-ok">Send</button>
 </div>
 
@@ -374,19 +522,31 @@ const inp  = document.getElementById('inp');
 const send = document.getElementById('send');
 const costRow  = document.getElementById('cost-row');
 const modelBadge = document.getElementById('model-badge');
-const projectBadge = document.getElementById('project-badge');
+const projectSelect = document.getElementById('project-select');
+const modelSelect = document.getElementById('model-select');
 const mentionsRow = document.getElementById('mentions-row');
 
 let sessionCost = 0, localCalls = 0, apiCalls = 0;
 let pendingMentions = [];
+let currentResponseDiv = null;
+let currentActivityLog = null;
+let activityItems = [];
+
+// Project selector
+projectSelect.addEventListener('change', () => {
+  const val = projectSelect.value;
+  if (val) {
+    vscode.postMessage({ type: 'switchProject', projectId: val });
+  }
+});
 
 function renderMentions(){
   mentionsRow.innerHTML = '';
   pendingMentions.forEach((m,i)=>{
-    const icon = m.type==='file'?'📄':m.type==='folder'?'📁':m.type==='symbol'?'⚙':m.type==='session'?'💬':m.type==='core'?'📌':'🌐';
+    const icon = m.type==='file'?'\\u{1F4C4}':m.type==='folder'?'\\u{1F4C1}':m.type==='symbol'?'\\u2699':m.type==='session'?'\\u{1F4AC}':m.type==='core'?'\\u{1F4CC}':'\\u{1F310}';
     const pill = document.createElement('span');
     pill.className='mention-pill';
-    pill.innerHTML=icon+' '+esc(m.display)+'<button onclick="removeMention('+i+')">✕</button>';
+    pill.innerHTML=icon+' '+esc(m.display)+'<button onclick="removeMention('+i+')">\\u2715</button>';
     mentionsRow.appendChild(pill);
   });
 }
@@ -396,15 +556,26 @@ function removeMention(i){ pendingMentions.splice(i,1); renderMentions(); }
 function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
 
 function md(text){
-  // minimal markdown: fenced code, inline code, newlines
+  if (!text) return '';
   return text
     .replace(/\`\`\`([\\s\\S]*?)\`\`\`/g, (_,c)=>'<pre>'+esc(c)+'</pre>')
     .replace(/\`([^\`]+)\`/g, (_,c)=>'<code>'+esc(c)+'</code>')
     .replace(/\\n/g,'<br>');
 }
 
+function toolIcon(tool) {
+  if (tool === 'read_file') return '\\u{1F4D6}';
+  if (tool === 'search_code') return '\\u{1F50D}';
+  if (tool === 'edit_file' || tool === 'create_file') return '\\u270F\\uFE0F';
+  if (tool === 'run_tests') return '\\u{1F9EA}';
+  if (tool === 'run_command' || tool === 'run_migration') return '\\u26A1';
+  if (tool.startsWith('git_')) return '\\u{1F4E6}';
+  if (tool.startsWith('web_')) return '\\u{1F310}';
+  return '\\u{1F527}';
+}
+
 function fmtDiff(diff){
-  if(!diff || diff === 'No changes') return '<span class="git-status-clean">✓ No changes</span>';
+  if(!diff || diff === 'No changes') return '<span class="git-status-clean">\\u2713 No changes</span>';
   return diff.split('\\n').map(l=>{
     if(l.startsWith('+++') || l.startsWith('---')) return '<span class="diff-file">'+esc(l)+'</span>';
     if(l.startsWith('@@')) return '<span class="diff-hunk">'+esc(l)+'</span>';
@@ -423,31 +594,50 @@ function addMsg(role, html, isHtml){
   return d;
 }
 
-function addResponse(content, toolCall){
-  const d = document.createElement('div');
-  d.className = 'msg assistant';
-  d.innerHTML = md(content);
-  if(toolCall && !toolCall.auto_approve){
-    d.appendChild(buildToolCard(toolCall));
-  }
-  msgs.appendChild(d);
+function startResponse() {
+  currentResponseDiv = document.createElement('div');
+  currentResponseDiv.className = 'msg assistant';
+  msgs.appendChild(currentResponseDiv);
+
+  currentActivityLog = document.createElement('div');
+  currentActivityLog.className = 'activity-log';
+  currentActivityLog.style.display = 'none';
+  currentResponseDiv.appendChild(currentActivityLog);
+  activityItems = [];
+
+  return currentResponseDiv;
+}
+
+function addActivityItem(text) {
+  if (!currentActivityLog) return;
+  currentActivityLog.style.display = 'block';
+  const item = document.createElement('div');
+  item.className = 'activity-item';
+  item.textContent = text;
+  currentActivityLog.appendChild(item);
+  activityItems.push(item);
   msgs.scrollTop = msgs.scrollHeight;
 }
 
 function buildToolCard(tc){
   const risk = tc.risk_level || 'review';
-  const icon = risk === 'destructive' ? '⚠️' : '🔧';
+  const icon = risk === 'destructive' ? '\\u26A0\\uFE0F' : '\\u{1F527}';
   const div = document.createElement('div');
   div.className = 'tool-card';
-  div.innerHTML = \`
-    <div class="tool-header">\${icon} \${esc(tc.tool_name)}</div>
-    <div class="tool-desc">\${esc(tc.description)}</div>
-    \${tc.diff_preview ? '<div class="diff">'+fmtDiff(tc.diff_preview)+'</div>' : ''}
-    <div class="tool-btns">
-      <button class="btn-ok"  onclick="approve(this)">Apply</button>
-      <button class="btn-cancel" onclick="reject(this)">Reject</button>
-    </div>
-  \`;
+
+  let btnsHtml = '<div class="tool-btns">'
+    + '<button class="btn-ok" onclick="approve(this)">Apply</button>'
+    + '<button class="btn-cancel" onclick="reject(this)">Reject</button>';
+  if (tc.tool_name === 'edit_file' && tc.diff_preview) {
+    btnsHtml += '<button class="btn-cancel" onclick="showDiff(this)" style="margin-left:8px">View in VS Code</button>';
+  }
+  btnsHtml += '</div>';
+
+  div.innerHTML =
+    '<div class="tool-header">' + icon + ' ' + esc(tc.tool_name) + '</div>'
+    + '<div class="tool-desc">' + esc(tc.description || '') + '</div>'
+    + (tc.diff_preview ? '<div class="diff">' + fmtDiff(tc.diff_preview) + '</div>' : '')
+    + btnsHtml;
   div._toolCall = tc;
   return div;
 }
@@ -455,7 +645,7 @@ function buildToolCard(tc){
 function approve(btn){
   const card = btn.closest('.tool-card');
   const tc = card._toolCall;
-  card.querySelector('.tool-btns').innerHTML = '<em>Applying…</em>';
+  card.querySelector('.tool-btns').innerHTML = '<em>Applying\\u2026</em>';
   vscode.postMessage({type:'approveTool', toolCallId:tc.tool_call_id, toolName:tc.tool_name, toolInput:tc.input});
 }
 
@@ -466,17 +656,33 @@ function reject(btn){
   vscode.postMessage({type:'rejectTool', toolCallId:tc.tool_call_id, toolName:tc.tool_name, toolInput:tc.input});
 }
 
+function showDiff(btn){
+  const card = btn.closest('.tool-card');
+  const tc = card._toolCall;
+  vscode.postMessage({
+    type:'showDiff',
+    filePath: tc.input?.file_path || 'unknown',
+    oldContent: tc.input?.old_str || '',
+    newContent: tc.input?.new_str || '',
+  });
+}
+
 function doSend(){
   const text = inp.value.trim();
   if(!text) return;
   addMsg('user', text, false);
   inp.value = ''; inp.style.height='auto';
-  const thinking = addMsg('assistant','Thinking…',false);
-  thinking.classList.add('thinking');
+
+  // Start streaming response
+  startResponse();
+  addActivityItem('Thinking...');
+
   const mentions = [...pendingMentions];
   pendingMentions = [];
   renderMentions();
-  vscode.postMessage({type:'sendMessage', content:text, mentions});
+
+  const override = modelSelect.value || undefined;
+  vscode.postMessage({type:'sendMessage', content:text, mentions, modelOverride: override});
 }
 
 send.addEventListener('click', doSend);
@@ -490,17 +696,29 @@ inp.addEventListener('input', ()=>{
 
 window.addEventListener('message', e=>{
   const msg = e.data;
-  document.querySelectorAll('.thinking').forEach(el=>el.remove());
 
   switch(msg.type){
-    case 'init':
-      projectBadge.textContent = 'CLAW / ' + msg.projectId;
+    case 'init': {
+      // Populate project dropdown
+      if (msg.projects && msg.projects.length) {
+        projectSelect.innerHTML = '';
+        msg.projects.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = p.id;
+          if (p.id === msg.projectId) opt.selected = true;
+          projectSelect.appendChild(opt);
+        });
+      } else {
+        projectSelect.innerHTML = '<option>' + esc(msg.projectId) + '</option>';
+      }
       sessionCost=0; localCalls=0; apiCalls=0;
       msgs.innerHTML='';
       costRow.textContent = '$0.0000 | local: 0 | api: 0';
-      modelBadge.textContent = '—';
-      addMsg('assistant','Ready. Session: ' + msg.sessionId.slice(0,8) + '…', false);
+      modelBadge.textContent = '\\u2014';
+      addMsg('assistant','Ready. Project: ' + msg.projectId + ' | Session: ' + msg.sessionId.slice(0,8) + '\\u2026', false);
       break;
+    }
 
     case 'newSession':
       msgs.innerHTML='';
@@ -508,30 +726,122 @@ window.addEventListener('message', e=>{
       addMsg('assistant','New session started.', false);
       break;
 
+    case 'streamEvent': {
+      const ev = msg.event;
+      if (!ev) break;
+
+      if (ev.type === 'routing') {
+        if (currentActivityLog) {
+          // Remove "Thinking..." placeholder
+          const items = currentActivityLog.querySelectorAll('.activity-item');
+          if (items.length === 1 && items[0].textContent === 'Thinking...') {
+            items[0].remove();
+          }
+        }
+        const tierLabel = ev.model || ('Tier ' + (ev.tier || '?'));
+        addActivityItem('\\u{1F300} Routing: ' + tierLabel + (ev.manual ? ' [manual]' : ''));
+        modelBadge.textContent = tierLabel;
+      }
+
+      if (ev.type === 'tool_start') {
+        addActivityItem(toolIcon(ev.tool || '') + ' ' + (ev.tool || 'tool') + '...');
+      }
+
+      if (ev.type === 'tool_end') {
+        const dur = ev.duration_ms ? ' (' + ev.duration_ms + 'ms)' : '';
+        const chars = ev.result_chars ? ' ' + ev.result_chars + ' chars' : '';
+        addActivityItem('\\u2705 ' + (ev.tool || 'tool') + dur + chars);
+      }
+
+      if (ev.type === 'tool_queued') {
+        // REVIEW tool — show approval card
+        if (currentResponseDiv && ev.pending_tool_call) {
+          currentResponseDiv.appendChild(buildToolCard(ev.pending_tool_call));
+        }
+      }
+
+      if (ev.type === 'complete') {
+        // Final response
+        if (currentResponseDiv) {
+          // Add response text
+          const textDiv = document.createElement('div');
+          textDiv.innerHTML = md(ev.response || '');
+          currentResponseDiv.appendChild(textDiv);
+
+          // Pending tool call from complete event
+          if (ev.pending_tool_call && !ev.pending_tool_call.auto_approve) {
+            currentResponseDiv.appendChild(buildToolCard(ev.pending_tool_call));
+          }
+
+          // Footer: model + cost + chunks
+          const footer = document.createElement('div');
+          footer.className = 'msg-footer';
+          const parts = [];
+          if (ev.model_used) parts.push(ev.model_used);
+          if (ev.cost_usd) parts.push('$' + ev.cost_usd.toFixed(4));
+          if (ev.metadata?.memory?.chunks) parts.push(ev.metadata.memory.chunks + ' chunks');
+          const toolCount = (ev.executed_tool_calls || []).length;
+          if (toolCount) parts.push(toolCount + ' tool' + (toolCount > 1 ? 's' : ''));
+          footer.textContent = parts.join(' \\u00B7 ');
+          currentResponseDiv.appendChild(footer);
+        }
+
+        // Update cost tracking
+        const mu = (ev.model_used || '').toLowerCase();
+        const isLocal = mu.includes('qwen') || mu.includes('ollama') || mu.includes('local');
+        if (isLocal) {
+          localCalls++;
+          modelBadge.textContent = '\\u26A1 local';
+        } else if (mu.includes('opus')) {
+          apiCalls++; sessionCost += ev.cost_usd || 0;
+          modelBadge.textContent = '\\u{1F9E0} opus';
+        } else if (mu.includes('deepseek')) {
+          apiCalls++; sessionCost += ev.cost_usd || 0;
+          modelBadge.textContent = '\\u2601 deepseek';
+        } else {
+          apiCalls++; sessionCost += ev.cost_usd || 0;
+          modelBadge.textContent = '\\u2601 sonnet';
+        }
+        costRow.textContent = '$'+sessionCost.toFixed(4)+' | local: '+localCalls+' | api: '+apiCalls;
+        msgs.scrollTop = msgs.scrollHeight;
+      }
+
+      if (ev.type === 'error') {
+        addMsg('assistant', '\\u26A0 ' + (ev.message || ev.error || 'Unknown error'), false);
+      }
+      break;
+    }
+
+    case 'streamEnd':
+      currentResponseDiv = null;
+      currentActivityLog = null;
+      break;
+
     case 'agentResponse':
-      addResponse(msg.content, msg.pendingToolCall);
+      // Non-streaming fallback (e.g. tool approval responses)
+      document.querySelectorAll('.thinking').forEach(el=>el.remove());
+      {
+        const d = document.createElement('div');
+        d.className = 'msg assistant';
+        d.innerHTML = md(msg.content);
+        if(msg.pendingToolCall && !msg.pendingToolCall.auto_approve){
+          d.appendChild(buildToolCard(msg.pendingToolCall));
+        }
+        msgs.appendChild(d);
+        msgs.scrollTop = msgs.scrollHeight;
+      }
       if(msg.modelUsed){
         const mu = msg.modelUsed.toLowerCase();
         const isLocal = mu.includes('qwen') || mu.includes('ollama') || mu.includes('local');
-        if (isLocal) {
-          modelBadge.textContent = '⚡ local';
-          (modelBadge as HTMLElement).style.color = '#4ec9b0';
-          localCalls++;
-        } else if (mu.includes('opus')) {
-          modelBadge.textContent = '🧠 opus';
-          (modelBadge as HTMLElement).style.color = '#c586c0';
-          apiCalls++; sessionCost += msg.costUsd||0;
-        } else {
-          modelBadge.textContent = '☁ sonnet';
-          (modelBadge as HTMLElement).style.color = '#9cdcfe';
-          apiCalls++; sessionCost += msg.costUsd||0;
-        }
+        if (isLocal) { localCalls++; }
+        else { apiCalls++; sessionCost += msg.costUsd||0; }
         costRow.textContent = '$'+sessionCost.toFixed(4)+' | local: '+localCalls+' | api: '+apiCalls;
       }
       break;
 
     case 'error':
-      addMsg('assistant', '⚠ ' + msg.message, false);
+      document.querySelectorAll('.thinking').forEach(el=>el.remove());
+      addMsg('assistant', '\\u26A0 ' + msg.message, false);
       break;
 
     case 'activeFileChanged':
@@ -554,7 +864,7 @@ vscode.postMessage({type:'ready'});
     }
 
     public dispose() {
-        ClawPanel.currentPanel = undefined;
+        CairnPanel.currentPanel = undefined;
         this._panel.dispose();
         this._disposables.forEach(d => d.dispose());
         this._disposables = [];

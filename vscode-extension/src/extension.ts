@@ -1,17 +1,79 @@
 import * as vscode from 'vscode';
-import { ClawPanel } from './panel';
+import * as fs from 'fs';
+import * as path from 'path';
+import { CairnPanel } from './panel';
 
-// ─── Inline completion provider ──────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function getConfig() {
+    const config = vscode.workspace.getConfiguration('cairn');
+    const apiUrl = config.get<string>('apiUrl', 'http://localhost:8765');
+    let apiKey = config.get<string>('apiKey', '');
+
+    // Fall back to reading D:\claw\.env if no key configured
+    if (!apiKey) {
+        try {
+            const envPath = path.join('D:', 'claw', '.env');
+            const envContent = fs.readFileSync(envPath, 'utf-8');
+            const match = envContent.match(/^CLAW_API_KEY=(.+)$/m);
+            if (match) { apiKey = match[1].trim(); }
+        } catch { /* .env not found — continue without key */ }
+    }
+
+    const project = config.get<string>('defaultProject', '');
+    return { apiUrl, apiKey, project };
+}
+
+// ─── Status bar ─────────────────────────────────────────────────────────────
+
+let statusBarItem: vscode.StatusBarItem;
+let statusBarInterval: ReturnType<typeof setInterval> | undefined;
+
+async function updateStatusBar() {
+    const { apiUrl, apiKey, project } = getConfig();
+    try {
+        const res = await fetch(`${apiUrl}/health`, {
+            headers: apiKey ? { 'X-API-Key': apiKey } : {},
+            signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) {
+            statusBarItem.text = '$(circle-slash) Cairn offline';
+            statusBarItem.color = new vscode.ThemeColor('statusBarItem.errorForeground');
+            return;
+        }
+        const data = await res.json() as {
+            projects_loaded?: string[];
+            total_chunks?: number;
+        };
+        const chunks = data.total_chunks ?? 0;
+        const proj = project || (data.projects_loaded?.[0] ?? '');
+        const cost = CairnPanel.currentPanel?.sessionCost ?? 0;
+        statusBarItem.text = `$(circle-filled) Cairn  ${proj}  $${cost.toFixed(2)}  ${chunks.toLocaleString()} chunks`;
+        statusBarItem.color = new vscode.ThemeColor('statusBarItem.foreground');
+    } catch {
+        statusBarItem.text = '$(circle-slash) Cairn offline';
+        statusBarItem.color = new vscode.ThemeColor('statusBarItem.errorForeground');
+    }
+}
+
+// ─── Inline completion provider ─────────────────────────────────────────────
 
 let _completionDebounce: ReturnType<typeof setTimeout> | undefined;
 
-class ClawInlineCompletionProvider implements vscode.InlineCompletionItemProvider {
+class CairnInlineCompletionProvider implements vscode.InlineCompletionItemProvider {
     async provideInlineCompletionItems(
         document: vscode.TextDocument,
         position: vscode.Position,
         _context: vscode.InlineCompletionContext,
         token: vscode.CancellationToken,
     ): Promise<vscode.InlineCompletionList | undefined> {
+        const enabled = vscode.workspace.getConfiguration('cairn')
+            .get<boolean>('enableInlineCompletions', true);
+        if (!enabled) { return undefined; }
+
+        const debounceMs = vscode.workspace.getConfiguration('cairn')
+            .get<number>('completionDebounceMs', 800);
+
         return new Promise((resolve) => {
             if (_completionDebounce) {
                 clearTimeout(_completionDebounce);
@@ -22,30 +84,26 @@ class ClawInlineCompletionProvider implements vscode.InlineCompletionItemProvide
                     return;
                 }
 
-                const config = vscode.workspace.getConfiguration('claw');
-                const apiUrl = config.get<string>('apiUrl', 'http://localhost:8765');
-                const apiKey = config.get<string>('apiKey', '');
-                const project = config.get<string>('defaultProject', 'claw');
+                const { apiUrl, apiKey, project } = getConfig();
 
-                const prefix = document.getText(
-                    new vscode.Range(new vscode.Position(0, 0), position)
-                );
-                const suffix = document.getText(
-                    new vscode.Range(position, document.positionAt(document.getText().length))
-                );
+                // Limit prefix/suffix size
+                const fullText = document.getText();
+                const offset = document.offsetAt(position);
+                const prefix = fullText.slice(Math.max(0, offset - 500), offset);
+                const suffix = fullText.slice(offset, offset + 200);
 
                 try {
                     const res = await fetch(`${apiUrl}/complete`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'X-API-Key': apiKey,
+                            ...(apiKey ? { 'X-API-Key': apiKey } : {}),
                         },
                         body: JSON.stringify({
                             file_path: document.fileName,
                             prefix,
                             suffix,
-                            project,
+                            project: project || 'claw',
                             language: document.languageId,
                         }),
                         signal: AbortSignal.timeout(3000),
@@ -71,90 +129,101 @@ class ClawInlineCompletionProvider implements vscode.InlineCompletionItemProvide
                 } catch {
                     resolve(undefined);
                 }
-            }, 800);  // 800ms debounce
+            }, debounceMs);
         });
     }
 }
 
-// ─── Extension activation ────────────────────────────────────────────────────
+// ─── Extension activation ───────────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext) {
 
-    // Register inline completion provider for all languages
+    // Status bar
+    statusBarItem = vscode.window.createStatusBarItem(
+        vscode.StatusBarAlignment.Left, 100
+    );
+    statusBarItem.command = 'cairn.openPanel';
+    statusBarItem.text = '$(loading~spin) Cairn';
+    statusBarItem.tooltip = 'Click to open Cairn panel';
+    statusBarItem.show();
+    context.subscriptions.push(statusBarItem);
+
+    updateStatusBar();
+    statusBarInterval = setInterval(updateStatusBar, 30_000);
+    context.subscriptions.push({ dispose: () => { if (statusBarInterval) { clearInterval(statusBarInterval); } } });
+
+    // Inline completions
     context.subscriptions.push(
         vscode.languages.registerInlineCompletionItemProvider(
             { pattern: '**' },
-            new ClawInlineCompletionProvider(),
+            new CairnInlineCompletionProvider(),
         )
     );
 
+    // Open panel
     context.subscriptions.push(
-        vscode.commands.registerCommand('claw.openPanel', () => {
-            ClawPanel.createOrShow(context.extensionUri);
+        vscode.commands.registerCommand('cairn.openPanel', () => {
+            CairnPanel.createOrShow(context.extensionUri);
         }),
+    );
 
-        vscode.commands.registerCommand('claw.newSession', () => {
-            if (ClawPanel.currentPanel) {
-                ClawPanel.currentPanel.newSession();
+    // New session
+    context.subscriptions.push(
+        vscode.commands.registerCommand('cairn.newSession', () => {
+            if (CairnPanel.currentPanel) {
+                CairnPanel.currentPanel.newSession();
             } else {
-                ClawPanel.createOrShow(context.extensionUri);
+                CairnPanel.createOrShow(context.extensionUri);
             }
         }),
+    );
 
-        vscode.commands.registerCommand('claw.indexProject', async () => {
-            const config = vscode.workspace.getConfiguration('claw');
-            const apiUrl = config.get<string>('apiUrl', 'http://localhost:8765');
-            const apiKey = config.get<string>('apiKey', '');
-            const projectId = config.get<string>('defaultProject', '');
-
-            if (!projectId) {
+    // Index project
+    context.subscriptions.push(
+        vscode.commands.registerCommand('cairn.indexProject', async () => {
+            const { apiUrl, apiKey, project } = getConfig();
+            if (!project) {
                 vscode.window.showErrorMessage(
-                    'Set claw.defaultProject in VS Code settings first'
+                    'Set cairn.defaultProject in VS Code settings first'
                 );
                 return;
             }
-
             try {
                 const res = await fetch(
-                    `${apiUrl}/projects/${projectId}/index`,
+                    `${apiUrl}/projects/${project}/index`,
                     {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'X-API-Key': apiKey,
+                            ...(apiKey ? { 'X-API-Key': apiKey } : {}),
                         },
                         body: JSON.stringify({ force: false }),
                     }
                 );
                 if (res.ok) {
-                    vscode.window.showInformationMessage(
-                        `CLAW: Indexing ${projectId} started`
-                    );
+                    vscode.window.showInformationMessage(`Cairn: Indexing ${project} started`);
                 } else {
-                    vscode.window.showErrorMessage(
-                        `CLAW: Indexing failed — ${res.status}`
-                    );
+                    vscode.window.showErrorMessage(`Cairn: Indexing failed — ${res.status}`);
                 }
-            } catch (err) {
-                vscode.window.showErrorMessage(
-                    `CLAW: Cannot reach API at ${apiUrl}`
-                );
+            } catch {
+                vscode.window.showErrorMessage(`Cairn: Cannot reach API at ${apiUrl}`);
             }
         }),
+    );
 
-        vscode.commands.registerCommand('claw.addMention', async () => {
-            const config = vscode.workspace.getConfiguration('claw');
-            const apiUrl = config.get<string>('apiUrl', 'http://localhost:8765');
-            const apiKey = config.get<string>('apiKey', '');
-            const projectId = config.get<string>('defaultProject', 'claw');
+    // Add @ mention
+    context.subscriptions.push(
+        vscode.commands.registerCommand('cairn.addMention', async () => {
+            const { apiUrl, apiKey, project } = getConfig();
+            const projectId = project || 'claw';
 
-            // Step 1 — pick context type
             const typeChoice = await vscode.window.showQuickPick(
                 [
-                    { label: '📄 File', value: 'file', description: 'Pin a specific file' },
-                    { label: '📁 Folder', value: 'folder', description: 'Pin all files in a folder' },
-                    { label: '⚙ Symbol', value: 'symbol', description: 'Pin a function or class by name' },
-                    { label: '💬 Session', value: 'session', description: 'Attach a past session' },
+                    { label: '📄 Current file', value: 'current_file', description: 'Pin the active editor file' },
+                    { label: '📄 Pick a file...', value: 'file', description: 'Pin a specific file' },
+                    { label: '📁 Pick a folder...', value: 'folder', description: 'Pin all files in a folder' },
+                    { label: '🔍 Search symbols...', value: 'symbol', description: 'Pin a function or class by name' },
+                    { label: '📋 Recent session', value: 'session', description: 'Attach a past session' },
                     { label: '📌 core.md', value: 'core', description: 'Attach the project core.md' },
                     { label: '🌐 Web search', value: 'web', description: 'Search the web and attach results' },
                 ],
@@ -165,7 +234,15 @@ export function activate(context: vscode.ExtensionContext) {
             let value = '';
             let display = '';
 
-            if (typeChoice.value === 'core') {
+            if (typeChoice.value === 'current_file') {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor) {
+                    vscode.window.showWarningMessage('No active editor');
+                    return;
+                }
+                value = editor.document.uri.fsPath;
+                display = path.basename(value);
+            } else if (typeChoice.value === 'core') {
                 value = 'core.md';
                 display = 'core.md';
             } else if (typeChoice.value === 'web') {
@@ -176,7 +253,7 @@ export function activate(context: vscode.ExtensionContext) {
             } else if (typeChoice.value === 'file' || typeChoice.value === 'folder') {
                 try {
                     const res = await fetch(`${apiUrl}/projects/${projectId}/files`, {
-                        headers: { 'X-API-Key': apiKey },
+                        headers: apiKey ? { 'X-API-Key': apiKey } : {},
                     });
                     const data = await res.json() as { files: string[] };
                     let items = (data.files || []).map((f: string) => ({ label: f }));
@@ -196,7 +273,7 @@ export function activate(context: vscode.ExtensionContext) {
                     value = picked.label.replace(/\/$/, '');
                     display = value.split('/').pop() || value;
                 } catch {
-                    vscode.window.showErrorMessage('CLAW: Could not fetch file list');
+                    vscode.window.showErrorMessage('Cairn: Could not fetch file list');
                     return;
                 }
             } else if (typeChoice.value === 'symbol') {
@@ -205,7 +282,7 @@ export function activate(context: vscode.ExtensionContext) {
                 try {
                     const res = await fetch(
                         `${apiUrl}/projects/${projectId}/symbols?q=${encodeURIComponent(query)}`,
-                        { headers: { 'X-API-Key': apiKey } },
+                        { headers: apiKey ? { 'X-API-Key': apiKey } : {} },
                     );
                     const data = await res.json() as { symbols: Array<{ name: string; file: string; type: string }> };
                     if (!data.symbols?.length) {
@@ -220,14 +297,14 @@ export function activate(context: vscode.ExtensionContext) {
                     value = picked.label;
                     display = picked.label;
                 } catch {
-                    vscode.window.showErrorMessage('CLAW: Could not fetch symbols');
+                    vscode.window.showErrorMessage('Cairn: Could not fetch symbols');
                     return;
                 }
             } else if (typeChoice.value === 'session') {
                 try {
                     const res = await fetch(
                         `${apiUrl}/projects/${projectId}/sessions`,
-                        { headers: { 'X-API-Key': apiKey } },
+                        { headers: apiKey ? { 'X-API-Key': apiKey } : {} },
                     );
                     const data = await res.json() as { sessions: Array<{ session_id: string; first_message?: string }> };
                     const picked = await vscode.window.showQuickPick(
@@ -242,30 +319,30 @@ export function activate(context: vscode.ExtensionContext) {
                     value = (picked as any).value;
                     display = picked.label;
                 } catch {
-                    vscode.window.showErrorMessage('CLAW: Could not fetch sessions');
+                    vscode.window.showErrorMessage('Cairn: Could not fetch sessions');
                     return;
                 }
             }
 
             if (!value) { return; }
 
-            // Send the mention to the panel
-            if (ClawPanel.currentPanel) {
-                ClawPanel.currentPanel.addMention({ type: typeChoice.value, value, display });
-                vscode.window.showInformationMessage(`CLAW: Pinned ${typeChoice.value} — ${display}`);
+            const mentionType = typeChoice.value === 'current_file' ? 'file' : typeChoice.value;
+            if (CairnPanel.currentPanel) {
+                CairnPanel.currentPanel.addMention({ type: mentionType, value, display });
+                vscode.window.showInformationMessage(`Cairn: Pinned ${mentionType} — ${display}`);
             } else {
-                vscode.window.showWarningMessage('CLAW panel is not open');
+                vscode.window.showWarningMessage('Cairn panel is not open');
             }
         }),
+    );
 
-        vscode.commands.registerCommand('claw.switchProject', async () => {
-            const config = vscode.workspace.getConfiguration('claw');
-            const apiUrl = config.get<string>('apiUrl', 'http://localhost:8765');
-            const apiKey = config.get<string>('apiKey', '');
-
+    // Select / switch project
+    context.subscriptions.push(
+        vscode.commands.registerCommand('cairn.selectProject', async () => {
+            const { apiUrl, apiKey } = getConfig();
             try {
                 const res = await fetch(`${apiUrl}/projects`, {
-                    headers: { 'X-API-Key': apiKey },
+                    headers: apiKey ? { 'X-API-Key': apiKey } : {},
                 });
                 const data = await res.json() as { projects: Array<{ id: string; name: string; ready: boolean }> };
                 const items = data.projects
@@ -273,28 +350,105 @@ export function activate(context: vscode.ExtensionContext) {
                     .map(p => ({ label: p.id, description: p.name }));
 
                 const picked = await vscode.window.showQuickPick(items, {
-                    placeHolder: 'Select CLAW project',
+                    placeHolder: 'Select Cairn project',
                 });
 
                 if (picked) {
-                    await config.update(
-                        'defaultProject', picked.label,
-                        vscode.ConfigurationTarget.Global
-                    );
-                    if (ClawPanel.currentPanel) {
-                        ClawPanel.currentPanel.switchProject(picked.label);
+                    const config = vscode.workspace.getConfiguration('cairn');
+                    await config.update('defaultProject', picked.label, vscode.ConfigurationTarget.Global);
+                    if (CairnPanel.currentPanel) {
+                        CairnPanel.currentPanel.switchProject(picked.label);
                     }
-                    vscode.window.showInformationMessage(
-                        `CLAW: Switched to project '${picked.label}'`
-                    );
+                    vscode.window.showInformationMessage(`Cairn: Switched to project '${picked.label}'`);
+                    updateStatusBar();
                 }
             } catch {
-                vscode.window.showErrorMessage(
-                    `CLAW: Cannot reach API at ${apiUrl}`
+                vscode.window.showErrorMessage(`Cairn: Cannot reach API at ${apiUrl}`);
+            }
+        }),
+    );
+
+    // WIGGUM autonomous run
+    context.subscriptions.push(
+        vscode.commands.registerCommand('cairn.runWiggum', async () => {
+            const { apiUrl, apiKey, project } = getConfig();
+            if (!project) {
+                vscode.window.showErrorMessage('Set cairn.defaultProject in VS Code settings first');
+                return;
+            }
+
+            const goal = await vscode.window.showInputBox({
+                prompt: 'Enter goal for autonomous run',
+                placeHolder: 'e.g. Fix the vision routing bug in core/models/router.py',
+            });
+            if (!goal) { return; }
+
+            try {
+                const res = await fetch(`${apiUrl}/wiggum`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+                    },
+                    body: JSON.stringify({ project_id: project, goal }),
+                });
+
+                if (!res.ok) {
+                    vscode.window.showErrorMessage(`WIGGUM: Failed to start — ${res.status}`);
+                    return;
+                }
+
+                const data = await res.json() as { run_id: string };
+                const runId = data.run_id;
+
+                vscode.window.withProgress(
+                    {
+                        location: vscode.ProgressLocation.Notification,
+                        title: `WIGGUM running: ${goal.slice(0, 50)}...`,
+                        cancellable: false,
+                    },
+                    async () => {
+                        // Poll for completion
+                        for (let i = 0; i < 360; i++) {  // up to 30 minutes
+                            await new Promise(r => setTimeout(r, 5000));
+                            try {
+                                const poll = await fetch(`${apiUrl}/wiggum/${runId}`, {
+                                    headers: apiKey ? { 'X-API-Key': apiKey } : {},
+                                    signal: AbortSignal.timeout(5000),
+                                });
+                                if (!poll.ok) { continue; }
+                                const status = await poll.json() as {
+                                    status: string;
+                                    criteria_passed?: number;
+                                    criteria_total?: number;
+                                    error?: string;
+                                };
+                                if (status.status === 'complete') {
+                                    vscode.window.showInformationMessage(
+                                        `WIGGUM complete: ${status.criteria_passed ?? 0}/${status.criteria_total ?? 0} criteria passed`
+                                    );
+                                    return;
+                                }
+                                if (status.status === 'failed' || status.status === 'stuck') {
+                                    vscode.window.showErrorMessage(
+                                        `WIGGUM ${status.status}: ${status.error || 'inspect logs'}`
+                                    );
+                                    return;
+                                }
+                            } catch { /* retry */ }
+                        }
+                        vscode.window.showWarningMessage('WIGGUM: Timed out after 30 minutes');
+                    },
                 );
+            } catch {
+                vscode.window.showErrorMessage(`Cairn: Cannot reach API at ${apiUrl}`);
             }
         }),
     );
 }
 
-export function deactivate() {}
+export function deactivate() {
+    if (statusBarInterval) {
+        clearInterval(statusBarInterval);
+    }
+}
