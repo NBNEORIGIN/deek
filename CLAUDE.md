@@ -43,8 +43,14 @@ Fallback: OpenAI GPT (on Claude rate limits)
 - manufacturing: not yet built (replaces Excel sheet)
 - origin-designed: Amazon/eBay/Etsy generic sign products
 
+## Frontend builds
+Frontend runs as a production build (npm start), not dev server.
+After any frontend code change run build-cairn.bat then
+restart-claw.bat to apply changes.
+Never use npm run dev — it's unstable for daily use.
+
 ## Test suite
-204 tests across tests/
+295 tests across tests/
 Run: pytest tests/ -v
 All must pass before any commit
 
