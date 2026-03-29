@@ -494,7 +494,10 @@ class ContextEngine:
         else:
             target = (project_root / file_path).resolve()
 
-        if not os.path.normcase(str(target)).startswith(os.path.normcase(str(project_root))):
+        norm_target = os.path.normcase(str(target))
+        projects_dir = os.path.normcase(str(_REPO_ROOT / 'projects'))
+        allowed = [os.path.normcase(str(project_root)), projects_dir]
+        if not any(norm_target.startswith(r) for r in allowed):
             raise PermissionError(
                 f"File '{file_path}' is outside the project root. "
                 f"Agents cannot access files outside their project."

@@ -6,28 +6,39 @@ import os
 from pathlib import Path
 from .registry import Tool, RiskLevel
 
+# D:\claw\projects is always allowed so agents can read their own
+# core.md, config.json, and skill definitions regardless of where
+# their codebase_path points.
+_PROJECTS_DIR = Path(__file__).resolve().parent.parent.parent / 'projects'
+
 
 def _resolve_safe(project_root: Path, file_path: str) -> Path:
     """Resolve file_path against project_root, blocking traversal.
 
     Accepts both relative paths (``backend/urls.py``) and absolute paths
     (``D:/nbne_business/nbne_platform/backend/urls.py``) as long as the
-    resolved result lives under ``project_root``.  Uses
-    ``os.path.normcase`` so drive-letter case and separator differences
-    on Windows don't cause false rejections.
+    resolved result lives under either ``project_root`` or the shared
+    ``projects/`` directory.  Uses ``os.path.normcase`` so drive-letter
+    case and separator differences on Windows don't cause false rejections.
     """
     candidate = Path(file_path)
     if candidate.is_absolute():
         resolved = candidate.resolve()
     else:
         resolved = (project_root / file_path).resolve()
-    root = project_root.resolve()
-    if not os.path.normcase(str(resolved)).startswith(os.path.normcase(str(root))):
-        raise PermissionError(
-            f"Path '{file_path}' is outside project root "
-            f"'{root}' — rejected."
-        )
-    return resolved
+
+    norm_resolved = os.path.normcase(str(resolved))
+    allowed_roots = [
+        os.path.normcase(str(project_root.resolve())),
+        os.path.normcase(str(_PROJECTS_DIR)),
+    ]
+    if any(norm_resolved.startswith(r) for r in allowed_roots):
+        return resolved
+
+    raise PermissionError(
+        f"Path '{file_path}' is outside project root "
+        f"'{project_root.resolve()}' — rejected."
+    )
 
 
 def _read_file(project_root: str, file_path: str) -> str:
