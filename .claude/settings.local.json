@@ -161,7 +161,17 @@
       "Bash(git push:*)",
       "Bash(ssh:*)",
       "Bash(xargs grep:*)",
-      "Bash(find /d/nbne_business/nbne_production -name *.conf -o -name nginx*)"
+      "Bash(find /d/nbne_business/nbne_production -name *.conf -o -name nginx*)",
+      "Bash(where python:*)",
+      "Bash(where py:*)",
+      "Read(//c/Users/zentu/AppData/Local/Programs/Python/**)",
+      "Read(//d/claw/.venv/Scripts/**)",
+      "Bash(/d/claw/.venv/Scripts/python.exe -c \":*)",
+      "Bash(/c/Users/zentu/AppData/Local/Programs/Python/Python311/python.exe -c \"import pandas; print\\(''ok''\\)\")",
+      "Bash(/c/Users/zentu/AppData/Local/Programs/Python/Python313/python.exe -c \"import pandas; print\\(''ok''\\)\")",
+      "Bash(/c/Users/zentu/AppData/Local/Programs/Python/Python311/python.exe -c \"import openpyxl; print\\(''ok''\\)\")",
+      "Bash(/c/Users/zentu/AppData/Local/Programs/Python/Python311/python.exe -c \":*)",
+      "Bash(timeout 30 bash -c 'while [ ! -s /tmp/claude/*/tasks/byd28jlkv.output ] 2>/dev/null; do sleep 1; done; cat /tmp/claude/*/tasks/byd28jlkv.output 2>/dev/null')"
     ]
   }
 }
