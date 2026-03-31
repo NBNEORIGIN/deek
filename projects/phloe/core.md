@@ -224,3 +224,30 @@ and `git pull` at the site root. No CI pipeline required.
 
 **Rejected**: Continuing to use Vercel or Railway. These add unnecessary third-party
 dependencies for sites that are already running on NBNE-controlled Hetzner infrastructure.
+
+### 2026-03-31 — Ark Disaster Recovery Project Registered
+
+**Context**: Phloe has zero backup or disaster recovery infrastructure. DemNurse and
+Ganbarukai are live paying clients. A single server failure at 178.104.1.152 would
+permanently destroy all client data and take all tenant sites offline indefinitely.
+**Decision**: Dedicated project "ark" created. Phased approach: Phase 1 (Docker-aware
+pg_dump + cron, this week) → Phase 2 (off-site to Backblaze B2) → Phase 3 (single-command
+re-provisioning script) → Phase 4 (CSV export + monitoring) → Phase 5 (age encryption +
+quarterly drills). Key constraint: Phloe is fully Dockerised — pg_dump runs via
+`docker exec <slug>-db-1`, media lives in Docker volumes, DB names = slug (not phloe_slug).
+See `projects/ark/core.md`.
+**Rationale**: This is the single highest-priority infrastructure gap. Cannot responsibly
+onboard more paying tenants without it.
+**Rejected**: Deferral. Every day without backups is uninsured risk.
+
+### 2026-03-31 — Proving Ground Stress Testing Project Registered
+
+**Context**: Phloe is tested manually against a handful of demo tenants. Configuration
+combination edge cases are not surfaced by manual testing. AI-generated SaaS platforms
+are publicly failing in production for exactly this reason.
+**Decision**: Dedicated project "proving-ground" created — 100+ synthetic tenants across
+all four paradigms + hybrids, automated Playwright + k6 scenario suites, nightly HTML
+report. Blocked on Ark Phase 3 (re-provisioning script) and a dedicated staging server
+before implementation begins. See `projects/proving-ground/core.md`.
+**Rationale**: Proactive QA is a competitive requirement, not a nice-to-have.
+**Rejected**: Reactive bug-fixing based on client reports — damages trust and is too late.

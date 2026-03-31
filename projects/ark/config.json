@@ -1,0 +1,43 @@
+{
+  "name": "ark",
+  "display_name": "Phloe Ark",
+  "description": "Disaster recovery, automated backup, and rapid re-provisioning system for all Phloe tenants",
+  "codebase_path": "D:/nbne_business/ark",
+  "project_type": "infrastructure",
+  "force_model": "api",
+
+  "permissions": [
+    "read_file",
+    "search_code",
+    "edit_file",
+    "create_file",
+    "run_command",
+    "check_server",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "git_add",
+    "git_commit",
+    "git_push",
+    "web_fetch",
+    "web_check_status"
+  ],
+
+  "model_preferences": {
+    "force_model": "api",
+    "prefer_local_for": ["script_scaffolding", "boilerplate", "repetitive_edits"],
+    "prefer_api_for": ["architect", "review", "security", "restore_logic"],
+    "opus_keywords": ["restore", "recovery", "encryption", "key management", "disaster"]
+  },
+
+  "indexing": {
+    "auto_reindex": false,
+    "exclude_paths": ["backups", ".git"],
+    "include_extensions": [".sh", ".py", ".json", ".md", ".yaml"]
+  },
+
+  "depends_on": ["phloe"],
+
+  "github": "NBNEORIGIN/ark",
+  "status": "greenfield"
+}

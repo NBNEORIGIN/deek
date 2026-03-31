@@ -153,6 +153,8 @@ Implementation notes:
 | render | D:\render | NBNEORIGIN/render | Formerly SignMaker — registered 2026-03-30 |
 | studio | D:\claw\projects\studio | TBC | See note below |
 | memorials | D:\memorials | NBNEORIGIN/memorials | Personalised memorial SVG generation |
+| ark | D:\nbne_business\ark | NBNEORIGIN/ark | Disaster recovery + backup for all Phloe tenants — Phase 1 in progress |
+| proving-ground | D:\nbne_business\proving-ground | NBNEORIGIN/proving-ground | Automated 100-tenant stress testing — blocked on Ark Phase 3 |
 
 ### Render (formerly SignMaker)
 

@@ -1,0 +1,41 @@
+{
+  "name": "proving-ground",
+  "display_name": "Phloe Proving Ground",
+  "description": "Automated multi-tenant stress testing and UX validation framework for Phloe",
+  "codebase_path": "D:/nbne_business/proving-ground",
+  "project_type": "testing",
+  "force_model": "api",
+
+  "permissions": [
+    "read_file",
+    "search_code",
+    "edit_file",
+    "create_file",
+    "run_tests",
+    "run_command",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "git_add",
+    "git_commit",
+    "git_push"
+  ],
+
+  "model_preferences": {
+    "force_model": "api",
+    "prefer_local_for": ["tenant_manifest_scaffolding", "boilerplate", "fixture_generation"],
+    "prefer_api_for": ["scenario_design", "architect", "review"],
+    "opus_keywords": ["architecture", "paradigm", "scenario design", "edge case"]
+  },
+
+  "indexing": {
+    "auto_reindex": false,
+    "exclude_paths": ["node_modules", ".next", "dist", "test-results", "reports"],
+    "include_extensions": [".py", ".ts", ".yaml", ".json", ".md"]
+  },
+
+  "depends_on": ["phloe", "ark"],
+
+  "github": "NBNEORIGIN/proving-ground",
+  "status": "greenfield"
+}
