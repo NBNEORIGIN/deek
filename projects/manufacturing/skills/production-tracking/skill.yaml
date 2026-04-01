@@ -1,0 +1,33 @@
+skill_id: production-tracking
+project_id: manufacturing
+display_name: Production Tracking
+description: Production order pipeline — stage advancement, operator tracking, completion workflow
+
+triggers:
+  - production stage
+  - what stage
+  - mark complete
+  - who printed
+  - in progress
+  - pipeline
+  - production order
+  - production tracking
+
+tools_allowed:
+  - read_file
+  - edit_file
+  - search_code
+  - run_tests
+
+key_rules:
+  - "Pipeline stages in order: Designed → Printed → Processed → Cut → Labelled → Packed → Shipped"
+  - "Sublimation products add Heat Press and Laminate between Printed and Cut"
+  - "Stock update on Packed completion requires explicit user confirmation"
+  - "Every stage records who completed it and when"
+  - "Multiple people can update stages — whoever does the work marks it"
+
+escalate_to_opus_keywords:
+  - change pipeline
+  - add stage
+  - remove stage
+  - restructure production

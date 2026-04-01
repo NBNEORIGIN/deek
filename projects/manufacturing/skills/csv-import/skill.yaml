@@ -1,0 +1,31 @@
+skill_id: csv-import
+project_id: manufacturing
+display_name: CSV Import
+description: Amazon Seller Central report parsing — FBA inventory, sales, restock recommendations
+
+triggers:
+  - csv import
+  - upload report
+  - fba inventory
+  - sales report
+  - seller central
+  - import data
+  - upload csv
+
+tools_allowed:
+  - read_file
+  - edit_file
+  - create_file
+  - run_tests
+
+key_rules:
+  - "Imports must be idempotent — re-uploading same report does not double-count"
+  - "Unknown SKUs are flagged but never crash the import"
+  - "SKU to M-number resolution via ASSEMBLY mapping table"
+  - "Stock level updates require explicit confirmation after import preview"
+  - "Each report type has different columns — parser must handle all formats"
+
+escalate_to_opus_keywords:
+  - change import format
+  - new report type
+  - modify parser architecture

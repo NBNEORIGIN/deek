@@ -1,5 +1,5 @@
-# Manufacturing / Origin Designed — CLAW Agent Core Context
-# Version: 1.0
+# Manufacturing / Origin Designed — Cairn Agent Core Context
+# Version: 1.1
 
 ## What this is
 The manufacturing management system for NBNE's Origin Designed product
@@ -42,6 +42,15 @@ Blank: the physical substrate/template a product is printed on.
   JOSEPH  = standing display/counter format
   HARRY   = specific rectangular format
   AILEEN  = specific format
+  SADDAM  = specific format
+  GARY    = specific format
+  RICHARD = specific format
+  LOUIS   = specific format
+  DRACULA = 9.5cm x 9.5cm format
+  TED     = specific format
+  PRINCE ANDREW = specific format
+  BARZAN  = specific format (sublimation placement)
+  BABY JESUS = specific format (sublimation placement)
 
 Machine names (also named, internal references):
   ROLF    = UV flatbed printer (Mimaki UV)
@@ -66,9 +75,38 @@ Django backend with models for:
   Shipment (FBA batches, tracking, labelling status)
   Procurement (materials, reorder points, supplier)
 
+## Spreadsheet audit findings (2026-03-31)
+
+MASTER STOCK: ~3,900 rows (header at row 2, rows 0-1 are summaries).
+  Many rows likely inactive/discontinued. Filter on import.
+
+ORDERS: has existing pipeline stage columns (Designed→Packed booleans).
+  Only ~93 of 2,306 rows have active data. Template for stage tracker.
+
+RECORDS: 2,458 production logs since Dec 2023. Columns: DATE, WEEK,
+  SKU, M NUMBER, NUMBER PRINTED, ERRORS, PROCESS, FAILURE REASON.
+  Exists but sparse — Ben said no tracking system, but this is partial.
+
+SUB PLACEMENTS / DIBOND PLACEMENT: machine assignment data.
+  DIBOND PLACEMENT has ROLF/MIMAKI boolean flags per product.
+  SUB PLACEMENTS groups by blank with quantity needs.
+
+Worksheet: unstructured multi-region scratchpad (41 cols, no headers).
+  Ivan's make-list logic lives in cell formulas, not parseable as data.
+
+ScratchPad2: clean 2-column lookup (M-number → Optimal Stock 30 Days).
+  361 entries.
+
+D2C: 28 active personalised orders. Formula-driven, handle with care.
+
+NEW PRODUCTS: 998-row pipeline with DATE, BLANK, DESIGNED, PUBLISHED.
+
 ## Current state
-Application not yet built. CLAW is being used to design and build it.
+Application scaffolding in progress as of 2026-03-31.
+Repo: https://github.com/NBNEORIGIN/manufacture
+Local: D:\manufacture
 The Excel workbook (Shipment_Stock_Sheet.xlsx) is the authoritative
 reference for domain understanding and data structure.
 Key Excel sheets: ORDERS, MASTER STOCK, ASSEMBLY, DIBOND PLACEMENT,
-                  SUB PLACEMENTS, RECORDS, PROCUREMENT
+                  SUB PLACEMENTS, RECORDS, PROCUREMENT, ScratchPad2,
+                  SKU ASSIGNMENT, D2C, NEW PRODUCTS
