@@ -101,47 +101,48 @@ D2C: 28 active personalised orders. Formula-driven, handle with care.
 
 NEW PRODUCTS: 998-row pipeline with DATE, BLANK, DESIGNED, PUBLISHED.
 
-## Current state (updated 2026-04-01)
+## Current state (updated 2026-04-02)
 
 Repo: https://github.com/NBNEORIGIN/manufacture
 Local: D:\manufacture
-Stack: Django 5.x + DRF, Next.js 14, PostgreSQL (DB: manufacture, pw: postgres123)
+Production: https://manufacture.nbnesigns.co.uk (Hetzner 178.104.1.152)
+Stack: Django 5.x + DRF, Next.js 14, PostgreSQL
+Local DB: manufacture, pw postgres123
 Venv: D:\manufacture\.venv
 
-### Phase 0 — COMPLETE (2026-04-01)
-Django scaffolding, 7 apps, models, 5 seed import commands.
-Seeded: 2,442 products, 4,281 SKUs, 360 optimal levels, 21 materials.
+### Deployment
+Docker stack at /opt/nbne/manufacture/ on Hetzner.
+Ports: backend 8015, frontend 3015.
+Nginx: /etc/nginx/sites-enabled/manufacture.conf
+SSL: /etc/ssl/cloudflare/nbne/ (Cloudflare origin cert)
+DNS: A record manufacture → 178.104.1.152 in Cloudflare
+CI/CD: GitHub Actions deploy.yml on push to main
+Superuser: toby / toby@nbnesigns.com
 
-### Phase 1 — COMPLETE (2026-04-01)
-Make-list engine (deficit * 60d priority), production stage tracking,
-full frontend wiring. Composite blank→machine resolution.
-220 items on make list with deficit > 0.
+### ALL PHASES COMPLETE
 
-### Phase 2 — COMPLETE (2026-04-01)
-FBA shipment tracking with status workflow (planning→shipped).
-Historical import: 140 shipments, 42,854 units, 5,467 items.
-Stats endpoint with country breakdown.
-
-### Phase 3 — COMPLETE (2026-04-01)
-CSV import automation. Three parsers: FBA Inventory, Sales & Traffic,
-Restock Inventory. Auto-detection from column headers. Preview/confirm
-workflow — stock never auto-updated. Import audit trail.
-
-### Remaining phases
-Phase 4: D2C Queue (personalised orders — Gabby is primary user)
-Phase 5: Procurement (materials, suppliers — low priority, sheet works)
-Phase 6: SP-API Integration (automated report retrieval)
-Phase 7: Error Tracking & Analytics (RECORDS sheet import)
+Phase 0 — Scaffolding: 8 Django apps, 6 seed import commands.
+Phase 1 — Make list + production tracking (220 items, 7-stage pipeline).
+Phase 2 — FBA shipments (140 historical, 42,854 units).
+Phase 3 — CSV import (4 parsers: FBA Inventory, Sales & Traffic, Restock, Zenstores).
+Phase 4 — D2C dispatch queue (Zenstores CSV → dispatch orders).
+Phase 5 — Procurement materials (10 items, reorder tracking).
+Phase 6 — CANCELLED (SP-API too complex, manual CSV preferred).
+Phase 7 — Error tracking (2,453 records, 4.01% error rate).
+Deployment — Docker on Hetzner, staff auth via Phloe sync, bug reporting via IONOS SMTP.
 
 ### Key technical decisions
 - Direct API calls from frontend (no Next.js proxy — was unreliable)
-- API_BASE hardcoded to http://127.0.0.1:8000 in frontend/src/lib/api.ts
-- CORS allows localhost:3000
-- No auth yet (AllowAny) — internal LAN app
+- NEXT_PUBLIC_API_BASE_URL env var for production, fallback to localhost:8000
+- DATABASE_URL (dj-database-url) for Docker, individual DB_* vars for local dev
+- Django session auth with email login, staff synced from Phloe /api/staff-module/
+- Bug reports emailed via IONOS SMTP (smtp.ionos.co.uk:587)
 - Composite blanks resolved by first word (DICK,TOM → ROLF)
 - Spreadsheet floats need int(float(v)) not int(v)
 - ASSEMBLY/SKU ASSIGNMENT have duplicate column headers — first-occurrence only
-- Channel values are messy — mapped via CHANNEL_MAP dict in import commands
+- Channel values messy — mapped via CHANNEL_MAP dict
+- pgdata volume must be recreated if DB_PASSWORD changes
+- Shipping is Royal Mail (not Evri)
 
 The Excel workbook (Shipment_Stock_Sheet.xlsx) remains the authoritative
 reference for domain understanding.
