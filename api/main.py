@@ -408,6 +408,36 @@ class CompleteRequest(BaseModel):
     language: str = 'python'
 
 
+class MemoryWriteRequest(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    project: str
+    query: str
+    decision: str
+    rejected: str = ''
+    outcome: str = 'committed'  # committed | partial | failed | deferred
+    model: str = ''
+    files_changed: list[str] = []
+    session_id: Optional[str] = None
+
+
+class CostLogEntry(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    model: str
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_gbp: float = 0.0
+
+
+class CostLogRequest(BaseModel):
+    session_id: str
+    prompt_summary: str
+    project: str
+    costs: list[CostLogEntry]
+    total_cost_gbp: float
+
+
 class BatchApprovalRequest(BaseModel):
     approved: list[str] = []
     rejected: list[str] = []
@@ -1009,6 +1039,223 @@ async def get_today_cost(
         'total_cost_usd': round(total_cost, 6),
         'by_provider': list(by_provider.values()),
         'by_project': all_rows,
+    }
+
+
+# ─── Cairn Protocol Endpoints ─────────────────────────────────────────────
+# These four endpoints expose retrieval, memory write-back, and cost logging
+# as standalone HTTP calls — required by the MCP server and cairn.ps1 wrapper.
+
+
+@app.get("/retrieve")
+async def retrieve_codebase_context(
+    query: str,
+    project: str,
+    limit: int = 10,
+    hybrid: bool = True,
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Hybrid BM25 + pgvector retrieval of code chunks.
+    The primary memory-retrieval endpoint for the Cairn Protocol (Step 1).
+    """
+    agent = get_agent(project)
+
+    if not os.getenv('DATABASE_URL', ''):
+        return {
+            'chunks': [],
+            'total': 0,
+            'project': project,
+            'query': query,
+            'error': 'DATABASE_URL not set — pgvector retrieval unavailable',
+        }
+
+    try:
+        loop = asyncio.get_event_loop()
+        chunks = await loop.run_in_executor(
+            None,
+            lambda: agent.context.retrieve_tier2(
+                task=query,
+                embedding_fn=agent._embed,
+                subproject_id=None,
+            ),
+        )
+    except Exception as exc:
+        return {
+            'chunks': [],
+            'total': 0,
+            'project': project,
+            'query': query,
+            'error': f'Retrieval failed: {exc}',
+        }
+
+    # Trim to requested limit and normalise keys for MCP spec
+    trimmed = chunks[:limit]
+    results = [
+        {
+            'file_path': c.get('file', ''),
+            'content': c.get('content', ''),
+            'score': c.get('score', 0),
+            'retrieval_method': c.get('match_quality', 'unknown'),
+            'chunk_type': c.get('chunk_type', ''),
+        }
+        for c in trimmed
+    ]
+    return {
+        'chunks': results,
+        'total': len(results),
+        'project': project,
+        'query': query,
+    }
+
+
+@app.get("/memory/retrieve")
+async def retrieve_chat_history(
+    query: str,
+    project: str,
+    limit: int = 10,
+    outcome_filter: Optional[str] = None,
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Search past development decisions and chat history from memory.
+    The second retrieval endpoint for the Cairn Protocol (Step 1).
+    """
+    from core.memory.store import MemoryStore
+    data_dir = os.getenv('CLAW_DATA_DIR', './data')
+    store = MemoryStore(project, data_dir)
+
+    try:
+        results = store.search_decisions(query)
+    finally:
+        store.close()
+
+    # Apply outcome filter if provided
+    if outcome_filter:
+        results = [r for r in results if r.get('type', '') == outcome_filter]
+
+    # Trim to limit
+    results = results[:limit]
+
+    # Normalise to MCP spec shape
+    entries = [
+        {
+            'query': query,
+            'decision': r.get('description', ''),
+            'rejected': '',  # not stored in current schema
+            'outcome': r.get('type', ''),
+            'files_changed': r.get('files', []),
+            'created_at': r.get('timestamp', ''),
+        }
+        for r in results
+    ]
+    return {
+        'entries': entries,
+        'total': len(entries),
+        'project': project,
+    }
+
+
+@app.post("/memory/write")
+async def write_memory(
+    body: MemoryWriteRequest,
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Write a memory entry after completing a task.
+    The write-back endpoint for the Cairn Protocol (Step 4).
+    """
+    from core.memory.store import MemoryStore
+    data_dir = os.getenv('CLAW_DATA_DIR', './data')
+    store = MemoryStore(body.project, data_dir)
+
+    session_id = body.session_id or f'cairn_{uuid.uuid4().hex[:12]}'
+
+    try:
+        # Map the spec fields to the existing schema
+        # decision_type captures the outcome; description captures the decision;
+        # reasoning captures the rejected approaches and model info
+        reasoning_parts = []
+        if body.rejected:
+            reasoning_parts.append(f'Rejected: {body.rejected}')
+        if body.model:
+            reasoning_parts.append(f'Model: {body.model}')
+        reasoning_parts.append(f'Query: {body.query}')
+
+        store.record_decision(
+            session_id=session_id,
+            decision_type=body.outcome,
+            description=body.decision,
+            reasoning='\n'.join(reasoning_parts),
+            files_affected=body.files_changed,
+        )
+    finally:
+        store.close()
+
+    return {
+        'id': session_id,
+        'project': body.project,
+        'outcome': body.outcome,
+        'written_at': datetime.utcnow().isoformat() + 'Z',
+    }
+
+
+@app.post("/costs/log")
+async def log_cost(
+    body: CostLogRequest,
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Log the cost of every model used in a prompt.
+    The cost-logging endpoint for the Cairn Protocol (Step 4b).
+    Writes to both SQLite (via add_message) and CSV.
+    """
+    from core.memory.store import MemoryStore
+    data_dir = os.getenv('CLAW_DATA_DIR', './data')
+    store = MemoryStore(body.project, data_dir)
+
+    now = datetime.utcnow().isoformat() + 'Z'
+
+    try:
+        # Write each model's cost as a conversation entry with role='cost'
+        # This leverages the existing cost tracking via get_spend_since()
+        for entry in body.costs:
+            store.add_message(
+                session_id=body.session_id,
+                role='assistant',  # cost tracking piggybacks on assistant rows
+                content=f'[cost-log] {body.prompt_summary}',
+                channel='cairn-protocol',
+                model_used=entry.model,
+                tokens_used=entry.tokens_in + entry.tokens_out,
+                cost_usd=entry.cost_gbp,  # stored as cost_usd column but is GBP
+            )
+    finally:
+        store.close()
+
+    # Also append to CSV
+    csv_path = Path(data_dir) / 'cost_log.csv'
+    csv_existed = csv_path.exists()
+    try:
+        with open(csv_path, 'a', encoding='utf-8') as f:
+            if not csv_existed:
+                f.write(
+                    'timestamp,session_id,project,prompt_summary,'
+                    'model,tokens_in,tokens_out,cost_gbp,total_cost_gbp\n'
+                )
+            for entry in body.costs:
+                f.write(
+                    f'{now},{body.session_id},{body.project},'
+                    f'{body.prompt_summary},{entry.model},'
+                    f'{entry.tokens_in},{entry.tokens_out},'
+                    f'{entry.cost_gbp},{body.total_cost_gbp}\n'
+                )
+    except Exception:
+        pass  # CSV is best-effort; SQLite is the primary store
+
+    return {
+        'logged': True,
+        'session_id': body.session_id,
+        'total_cost_gbp': body.total_cost_gbp,
     }
 
 
