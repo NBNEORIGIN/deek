@@ -150,22 +150,15 @@ Implementation notes:
 | phloe | D:\nbne_business\nbne_platform | nbne/phloe | WaaS booking platform |
 | crm | TBC — confirm with Toby | nbne/crm | Fully built, C: drive, path TBC |
 | bookkeeping | TBC — greenfield | TBC | Stack not yet decided |
-| render | D:\render | NBNEORIGIN/render | Formerly SignMaker — registered 2026-03-30 |
+| render | TBC — confirm with Toby | https://github.com/NBNEORIGIN/render | Flask/Python, migrating from Render.com to Hetzner |
 | studio | D:\claw\projects\studio | TBC | See note below |
-| memorials | D:\memorials | NBNEORIGIN/memorials | Personalised memorial SVG generation |
-| ark | D:\nbne_business\ark | NBNEORIGIN/ark | Disaster recovery + backup for all Phloe tenants — Phase 1 in progress |
-| proving-ground | D:\nbne_business\proving-ground | NBNEORIGIN/proving-ground | Automated 100-tenant stress testing — blocked on Ark Phase 3 |
 
-### Render (formerly SignMaker)
+### Signmaker (working name — rename pending)
 
 This is the most important piece of software NBNE has developed. It is an AI-driven,
 semi-automated small-format signage product design and publishing system. It takes a
 product concept through to live listings on Amazon, Etsy, eBay, and (in progress)
 the NBNE website. Staff refer to it internally as "new products."
-
-GitHub: https://github.com/NBNEORIGIN/render
-Local: D:\render
-Cairn project: projects/render/
 
 Treat it with the same care as Phloe. Any architectural decisions here must be
 written back at Opus level.
@@ -264,6 +257,40 @@ Append only. Never overwrite.
 
 ---
 
+## MCP Integration
+
+Cairn exposes its memory and retrieval as an MCP server so any compatible head model
+(Claude Code, Codex, etc.) treats Cairn's tools as native capabilities.
+
+Full specification: `CAIRN_MCP_SPEC.md`
+
+### The five MCP tools
+
+| Tool | Purpose |
+|---|---|
+| `retrieve_codebase_context` | Hybrid BM25 + pgvector retrieval of code chunks |
+| `retrieve_chat_history` | Prior session decisions and chat memory |
+| `update_memory` | Write-back after every non-trivial task |
+| `list_projects` | All loaded projects with chunk counts |
+| `get_project_status` | Cairn health, model availability, memory stats |
+
+MCP server lives at `D:\claw\mcp\cairn_mcp_server.py`.
+Register in Claude Code's MCP config — see CAIRN_MCP_SPEC.md for full setup.
+
+### Structured output requirement
+
+Junior models (Qwen, DeepSeek) must return structured outputs. CC enforces this
+in every delegation prompt. Free-form prose from junior models is not acceptable
+for development tasks.
+
+- **Plans**: JSON with task, approach, files_to_modify, risks, confidence
+- **Diffs**: Standard unified diff format only — no prose
+- **Reviews**: JSON with verdict, summary, issues, approved_for_commit
+
+Nothing gets committed without `approved_for_commit: true` from the reviewer tier.
+
+---
+
 ## This Session: Task List
 
 ### Priority 1 — Fix git_commit tool mapping
@@ -280,13 +307,28 @@ Append only. Never overwrite.
 
 Write back at Sonnet level or above.
 
-### Priority 2 — Confirm and register missing projects
+### Priority 2 — Build the MCP server
+
+**Brief**: `CAIRN_MCP_SPEC.md` contains the full specification.
+
+In summary:
+1. Create `D:\claw\mcp\cairn_mcp_server.py` — thin wrapper over Cairn's FastAPI
+2. Implement all 5 tools as defined in the spec
+3. Install MCP SDK: `pip install mcp --break-system-packages`
+4. Register in Claude Code's MCP config
+5. Test each tool against the live Cairn API
+
+Delegate implementation to DeepSeek. Review with Sonnet before committing.
+Commit: `feat(mcp): Cairn MCP server with 5 tools`
+Write back at Sonnet level.
+
+### Priority 3 — Confirm and register missing projects
 
 When Toby confirms paths, create `projects/<n>/config.json` and `projects/<n>/core.md`
 using `projects/phloe/config.json` as template. Restart API to trigger auto-load.
 
 - [ ] CRM path on C: drive + GitHub repo URL
-- [x] Render path (D:\render) + GitHub repo (NBNEORIGIN/render) — registered 2026-03-30
+- [ ] Signmaker path + GitHub repo URL
 - [ ] Bookkeeping — greenfield, path and stack TBC
 - [ ] houseofhair GitHub repo + Google Drive folder ID
 - [ ] clayport GitHub repo + Google Drive folder ID
@@ -328,6 +370,32 @@ POST /index?project=                  — trigger manual reindex
 
 ---
 
+## Business Brain Architecture
+
+Cairn's second goal beyond coding agent is the NBNE business brain — a system
+that understands the business deeply enough to reason across all operations.
+
+**The value chain**: Make → Measure → Sell
+
+Each module exposes a context endpoint Cairn queries to assemble business state:
+
+| Module | Endpoint | Purpose | Priority |
+|---|---|---|---|
+| Manufacture | GET /api/cairn/context | Make list, machine status, stock alerts | 1 |
+| Ledger | GET /api/cairn/context | Cash, margins, revenue by channel | 2 |
+| Marketing | GET /api/cairn/context | Ad spend, ROAS, CRM pipeline, Phloe | 3 |
+
+Full context endpoint schemas: `CAIRN_MODULES.md`
+
+**Architecture rule**: No module has direct database access to another module.
+Everything communicates via API. Cairn is the memory layer above all modules.
+
+**Hardware dependency**: The brain requires dual RTX 3090 (48GB VRAM) for a
+72b-class local model. Build the context endpoints now. Run the brain when
+the hardware is ready.
+
+---
+
 ## Hardware Context
 
 **Current**: RTX 1050 8GB. Local model: qwen2.5-coder:7b. Keep `CLAW_FORCE_API=true`.
@@ -343,92 +411,3 @@ Then set `CLAW_FORCE_API=false`. API cost drops from ~£40-60/day to ~£5-15/mon
 **Second RTX 3090 (planned)**: Dedicated to ComfyUI / FLUX / Wan2.1 for Studio and
 the Signmaker product image pipeline. Keep workloads separated by card — do not
 tensor split unless specifically running 72b inference.
-
-# Phloe Strategic Direction — core.md additions
-# Append these entries to projects/phloe/core.md
-# Date: 29 March 2026
-
----
-
-## Strategic Decisions
-
-### 2026-03-29 — The Booking Paradigm Insight
-
-**Context**: Client feedback on Phloe across multiple tenants revealed a pattern.
-Requests such as "can I attach a PDF download to a class booking" and "can I add a
-disclaimer form during checkout" kept arriving from different tenant types. On the
-surface these look like bespoke feature requests. They are not.
-
-**Decision**: Phloe is one booking paradigm, not four. Appointment, class, table,
-and food ordering are the same state machine with different configuration surfaces.
-The pizza QR code and the yoga disclaimer are both workflow attachments that trigger
-at defined points in the same underlying booking flow. All future tenant requirements
-should be evaluated through this lens before any new code is written.
-
-**Rationale**: A hotel room, a dog grooming slot, a tennis court, a restaurant table —
-all resolve to the same crude machinery: availability, selection, customer details,
-confirmation, notification. What differs is the attachment type, the trigger point,
-and the presentation layer. Building these as configuration rather than code is the
-correct long-term architecture.
-
-**Implication for development**: The priority architectural investment is the
-*workflow attachment and configuration layer* — a system that lets a tenant describe
-their specific requirements (attach this PDF at confirmation, show this disclaimer
-before payment, generate this QR code post-booking) without requiring a developer.
-This is Phloe's long-term competitive position. The booking engine itself is
-commoditised. The configuration layer is not.
-
-**Rejected**: Treating each tenant feature request as a bespoke development task.
-This does not scale and creates an unmaintainable codebase of one-off conditionals.
-
----
-
-### 2026-03-29 — Conversational Booking AI and Model Training
-
-**Context**: Phloe currently uses pgvector + BM25 + cosine similarity as
-deterministic retrieval and classification methods. Real anonymised booking data
-is accumulating across tenants. The question was raised: could we train our own
-model on this data to handle conversational booking flow?
-
-**Decision**: Yes — this is a viable and strategically important direction.
-Target: a fine-tuned small model (Qwen 2.5 3B or similar) trained on anonymised
-Phloe booking interactions to handle conversational booking flow natively.
-
-**Architecture**:
-- pgvector / BM25 / cosine similarity stack handles *retrieval* — finding relevant
-  tenant config, availability, pricing. This stays and is not replaced.
-- The fine-tuned model handles *generation* — understanding booking intent
-  conversationally, guiding users through the flow in natural language.
-- The two layers are complementary. Retrieval feeds context to the generative model.
-
-**Data requirements**: Fine-tuning a 3B model requires approximately 2,000–5,000
-high-quality labelled examples to produce meaningful results. Sources:
-  1. Anonymised real booking flows from Phloe tenants (primary)
-  2. Feedback widget submissions — intent + resolution pairs
-  3. Synthetic augmentation generated from real patterns to fill sparse categories
-
-All training data must be anonymised before use. No PII, no tenant-identifiable
-information. This is a condition, not a preference.
-
-**Hardware**: Fine-tuning a 3B model locally is viable on a single RTX 3090 24GB.
-Estimated compute: hours, not days. This is not a data centre job.
-
-**Rationale**: A Phloe-native conversational model understands booking context that
-a generic LLM does not — tenant-specific terminology, workflow attachment triggers,
-paradigm-specific edge cases. A generic model can approximate this with prompting.
-A fine-tuned model internalises it. The data to do this exists and is growing.
-
-**Rejected**: Relying solely on prompt engineering with a generic model for
-conversational booking. This works at small scale but does not compound over time
-the way a fine-tuned model on real data does.
-
-**Next steps** (when ready — not current priority):
-- [ ] Define anonymisation pipeline for Phloe booking data
-- [ ] Audit feedback widget submissions for training signal quality
-- [ ] Evaluate Qwen 2.5 3B vs Phi-3 mini as base model for fine-tuning
-- [ ] Design labelling schema for booking intent classification
-- [ ] Scope synthetic data augmentation approach
-- [ ] RTX 3090 required before starting — confirm hardware before scheduling
-
----
-
