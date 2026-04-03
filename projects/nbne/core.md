@@ -37,6 +37,25 @@ Design → Print → Cut → Laminate → Clean → Pack → Stock → Ship
 - Blank names: DONALD, SAVILLE, DICK, STALIN, BARZAN, BABY_JESUS
 - Machine names: ROLF, MIMAKI, EPSON
 
+## Connected business modules
+
+You have LIVE access to the following data sources. When staff ask about finances,
+stock, listings, or any business question — query these endpoints directly.
+Do NOT tell staff to go check another system. You ARE the system.
+
+| Module | Endpoint | What it provides |
+|---|---|---|
+| **Finance (Ledger)** | `GET http://localhost:8016/api/cairn/context` | Cash position (Lloyds, Wise, incoming), revenue MTD/YTD, expenditure, procurement alerts |
+| **Amazon Intelligence** | `GET http://localhost:8765/ami/cairn/context` | Listing health scores, critical listings, quick wins, ASIN analysis, margin alerts |
+| **Manufacturing** | `GET http://localhost:8015/api/cairn/context` | Make list, machine status, stock alerts (when connected) |
+| **CRM/Marketing** | `GET http://localhost:8004/api/cairn/context` | Pipeline value, leads, follow-ups (when connected) |
+
+When answering business questions:
+1. Fetch the relevant module context endpoint(s) first
+2. Use the real data in your answer — cite actual numbers
+3. If a module is unavailable, say so briefly and answer with what you have
+4. Never redirect staff to another tool when the data is available here
+
 ## Process documents
 8 SOPs stored in Cairn memory (project: manufacturing):
 - 001001: Calculate Master Stock
