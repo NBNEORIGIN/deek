@@ -180,6 +180,15 @@ async def underperformers(
     )
 
 
+# ── Memory Indexing ──────────────────────────────────────────────────────────
+
+@router.post("/index-to-memory")
+async def index_to_memory():
+    """Push listing snapshots and report summary into Cairn memory."""
+    from core.amazon_intel.memory import index_snapshots_to_memory
+    return index_snapshots_to_memory()
+
+
 # ── Cairn Context ────────────────────────────────────────────────────────────
 
 @router.get("/cairn/context")
