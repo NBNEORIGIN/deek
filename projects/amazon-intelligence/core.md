@@ -47,6 +47,33 @@ CONTENT_WEAK, KEYWORD_POOR, VISIBILITY_LOW, MARGIN_CRITICAL, QUICK_WIN_IMAGES, Q
 5. Render improvement queue integration
 6. Upload and report UI
 
+## Architecture
+
+Code lives inside the Cairn repo at `D:\claw`, not in a standalone `D:\amazon_intelligence` directory.
+
+| Component | Path |
+|---|---|
+| Core logic | `core/amazon_intel/` (13 Python files) |
+| API routes | `api/routes/amazon_intel.py` (mounted at `/ami/*`) |
+| Database | 7 `ami_*` tables in Cairn's PostgreSQL |
+| Memory | SQLite at `data/amazon-intelligence.db` |
+| Config | `projects/amazon-intelligence/config.json` |
+
+The indexer scopes to `core/amazon_intel` and `api/routes/amazon_intel.py` via `include_paths` in config.json, so Cairn retrieval returns AMI code when queried against this project.
+
+### Data pipeline
+```
+Stock Sheet CSV ──→ ami_sku_mapping (SKU→M-number→ASIN)
+All Listings TSV ──→ ami_sku_mapping (enriches ASINs)
+Flatfile .xlsm ───→ ami_flatfile_data → ─┐
+Business Report ──→ ami_business_report  ─┤→ ami_listing_snapshots → ami_weekly_reports
+Advertising ──────→ ami_advertising_data ─┘        ↓
+                                            Cairn memory (627 entries)
+```
+
+### API endpoints (all at /ami/*)
+`/health`, `/sku-mapping/sync`, `/sku-mapping/stats`, `/upload/flatfile`, `/upload/all-listings`, `/upload/business-report`, `/upload/advertising`, `/uploads`, `/snapshots/build`, `/snapshots`, `/snapshots/{asin}`, `/report/generate`, `/report/latest`, `/underperformers`, `/index-to-memory`, `/cairn/context`
+
 ## Decision Log
 
 ### 2026-04-03 — Project registered in Cairn
@@ -54,3 +81,15 @@ CONTENT_WEAK, KEYWORD_POOR, VISIBILITY_LOW, MARGIN_CRITICAL, QUICK_WIN_IMAGES, Q
 **Decision**: Registered as standalone Cairn project (amazon-intelligence), not part of Manufacture. Spans three projects (manufacturing, render, claw). Codebase at D:\amazon_intelligence.
 **Rationale**: Cross-module scope requires its own project identity. Individual ASIN snapshots stay in listing_snapshots table, not in Cairn memory (would flood search). Weekly summaries go to memory.
 **Rejected**: Building inside Manufacture app (wrong scope), using SP-API (hostile to set up, manual downloads are fine for Phase 1)
+
+### 2026-04-03 — Code embedded in Cairn repo, not standalone
+**Context**: Phase 1 built inside `D:\claw\core\amazon_intel\` with API routes in `D:\claw\api\routes\amazon_intel.py`. Moving to standalone dir would break imports and the FastAPI router mount.
+**Decision**: Keep code inside Cairn repo. Set `codebase_path: D:/claw` with `include_paths` to scope indexing. `D:\amazon_intelligence` remains empty.
+**Rationale**: AMI is tightly coupled to Cairn's FastAPI app (lifespan schema init, router mount, shared PostgreSQL). Extracting it would require a separate web server for no benefit. The indexer scoping via `include_paths` gives the same retrieval behaviour as a standalone codebase.
+**Rejected**: Moving to `D:\amazon_intelligence` as standalone Django/FastAPI app (unnecessary infrastructure duplication, breaks working code)
+
+### 2026-04-03 — All Listings Report as primary SKU→ASIN bridge
+**Context**: Flatfile only has ASINs for ~11% of rows. Business report join was 144/4,142 (3.5%).
+**Decision**: Added All Listings Report parser (`POST /ami/upload/all-listings`). Enriches ami_sku_mapping and backfills flatfile ASINs.
+**Result**: Business report join went from 144 to 627 matches (4.4x). 3,638 flatfile rows gained ASINs.
+**Rejected**: Relying solely on stock sheet + flatfile for ASIN mapping (too sparse)

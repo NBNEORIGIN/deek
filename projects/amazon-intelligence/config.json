@@ -38,7 +38,8 @@
 
   "indexing": {
     "auto_reindex": false,
+    "include_paths": ["core/amazon_intel", "api/routes/amazon_intel.py"],
     "exclude_paths": ["data", "node_modules", "__pycache__", ".venv"],
-    "include_extensions": [".py", ".ts", ".tsx", ".json", ".md", ".sql"]
+    "include_extensions": [".py", ".json", ".md", ".sql"]
   }
 }
