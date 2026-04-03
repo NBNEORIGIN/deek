@@ -73,7 +73,7 @@ export default function ProcessesPage() {
   }
 
   return (
-    <div className="max-w-5xl space-y-6">
+    <div className="max-w-5xl space-y-4 md:space-y-6">
       {/* Search */}
       <div className="relative">
         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-base pointer-events-none">
@@ -94,7 +94,7 @@ export default function ProcessesPage() {
           <p className="text-sm text-slate-400">No processes match your search.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
           {filtered.map((proc) => {
             const isOpen = expanded === proc.id
             return (
@@ -104,7 +104,7 @@ export default function ProcessesPage() {
               >
                 {/* Card header */}
                 <button
-                  className="w-full text-left px-5 py-4 flex items-start gap-3 hover:bg-slate-50 transition-colors"
+                  className="w-full text-left px-4 py-4 md:px-5 flex items-start gap-3 hover:bg-slate-50 transition-colors min-h-[44px]"
                   onClick={() => toggleExpand(proc.id)}
                 >
                   <div className="flex-shrink-0 mt-0.5">

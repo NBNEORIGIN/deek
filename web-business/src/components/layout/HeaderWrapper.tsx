@@ -12,8 +12,12 @@ const PATH_TITLES: Record<string, string> = {
   '/notes': 'Notes',
 }
 
-export default function HeaderWrapper() {
+export interface HeaderWrapperProps {
+  onMenuToggle: () => void
+}
+
+export default function HeaderWrapper({ onMenuToggle }: HeaderWrapperProps) {
   const pathname = usePathname()
   const title = PATH_TITLES[pathname] ?? 'NBNE'
-  return <Header title={title} />
+  return <Header title={title} onMenuToggle={onMenuToggle} />
 }

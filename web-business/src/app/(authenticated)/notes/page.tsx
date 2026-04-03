@@ -77,7 +77,7 @@ export default function NotesPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="max-w-3xl mx-auto space-y-4 md:space-y-6">
       {/* Header row */}
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-700">Your Notes</h2>
@@ -89,7 +89,7 @@ export default function NotesPage() {
               setContent('')
               setSaveError('')
             }}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors"
+            className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors min-h-[44px]"
           >
             New Note
           </button>
@@ -98,7 +98,7 @@ export default function NotesPage() {
 
       {/* Editor */}
       {showEditor && (
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 md:p-5 shadow-sm space-y-4">
           <input
             type="text"
             placeholder="Note title (optional)"
@@ -118,13 +118,13 @@ export default function NotesPage() {
             <button
               onClick={handleSave}
               disabled={saving || !content.trim()}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
             >
               {saving ? 'Saving…' : 'Save'}
             </button>
             <button
               onClick={() => setShowEditor(false)}
-              className="px-4 py-2 text-slate-600 hover:text-slate-900 text-sm font-medium transition-colors"
+              className="px-4 py-2.5 text-slate-600 hover:text-slate-900 text-sm font-medium transition-colors min-h-[44px]"
             >
               Cancel
             </button>

@@ -11,6 +11,8 @@ interface Message {
   saved?: boolean
 }
 
+type VoiceState = 'idle' | 'recording' | 'transcribing' | 'error'
+
 // ---- Markdown renderer -------------------------------------------------------
 
 function renderMarkdown(text: string): string {
@@ -178,6 +180,58 @@ function generateSessionId() {
   return `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+// ---- Mic button --------------------------------------------------------------
+
+function MicButton({
+  voiceState,
+  onToggle,
+}: {
+  voiceState: VoiceState
+  onToggle: () => void
+}) {
+  const isRecording = voiceState === 'recording'
+  const isTranscribing = voiceState === 'transcribing'
+  const isError = voiceState === 'error'
+
+  let label = 'Start voice input'
+  if (isRecording) label = 'Stop recording'
+  if (isTranscribing) label = 'Transcribing…'
+  if (isError) label = 'Microphone access denied'
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={isTranscribing}
+      title={label}
+      aria-label={label}
+      className={
+        'relative flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-lg transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ' +
+        (isRecording
+          ? 'bg-red-500 text-white animate-pulse'
+          : isTranscribing
+          ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+          : isError
+          ? 'bg-red-50 text-red-400 border border-red-200'
+          : 'bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700')
+      }
+    >
+      {isTranscribing ? (
+        /* Spinner */
+        <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+        </svg>
+      ) : (
+        /* Mic icon */
+        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M12 1a4 4 0 00-4 4v6a4 4 0 008 0V5a4 4 0 00-4-4zm-1 18.93V21h-2v2h6v-2h-2v-1.07A7.003 7.003 0 0019 13h-2a5 5 0 01-10 0H5a7.003 7.003 0 006 6.93z" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
 // ---- Inner component (uses useSearchParams) ----------------------------------
 
 function AskPageInner() {
@@ -188,12 +242,15 @@ function AskPageInner() {
   const [input, setInput] = useState(prefill)
   const [sending, setSending] = useState(false)
   const [saving, setSaving] = useState<string | null>(null)
+  const [voiceState, setVoiceState] = useState<VoiceState>('idle')
+
   const sessionId = useRef<string>(generateSessionId())
   const bottomRef = useRef<HTMLDivElement>(null)
   const esRef = useRef<EventSource | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
 
   const saveToMemory = useCallback(async (msgId: string) => {
-    // Find the assistant message and the preceding user message for context
     const idx = messages.findIndex((m) => m.id === msgId)
     if (idx < 0) return
     const assistantMsg = messages[idx]
@@ -227,8 +284,8 @@ function AskPageInner() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const sendMessage = useCallback(async () => {
-    const text = input.trim()
+  const sendMessage = useCallback(async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim()
     if (!text || sending) return
 
     const userMsg: Message = {
@@ -267,7 +324,6 @@ function AskPageInner() {
         const type: string = parsed.type ?? ''
 
         if (type === 'response_delta') {
-          // Streamed text chunk — append to message
           const chunk: string = parsed.text ?? ''
           if (chunk) {
             setMessages((prev) =>
@@ -277,11 +333,10 @@ function AskPageInner() {
             )
           }
         } else if (type === 'complete') {
-          // Final response — use if no delta text received yet
           setMessages((prev) =>
             prev.map((m) => {
               if (m.id !== assistantId) return m
-              if (m.content) return m // deltas already built the message
+              if (m.content) return m
               return { ...m, content: parsed.response ?? '' }
             })
           )
@@ -305,7 +360,6 @@ function AskPageInner() {
           esRef.current = null
           setSending(false)
         }
-        // Ignore: status, routing, tokens, tool_start, tool_end, tool_queued
       } catch {
         // Non-JSON or unparseable — ignore
       }
@@ -325,13 +379,91 @@ function AskPageInner() {
     }
   }
 
+  // ---- Voice recording -------------------------------------------------------
+
+  const startRecording = useCallback(async () => {
+    setVoiceState('recording')
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch {
+      setVoiceState('error')
+      // Reset error state after a couple seconds
+      setTimeout(() => setVoiceState('idle'), 2500)
+      return
+    }
+
+    chunksRef.current = []
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : 'audio/webm'
+
+    const recorder = new MediaRecorder(stream, { mimeType })
+    mediaRecorderRef.current = recorder
+
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksRef.current.push(e.data)
+    }
+
+    recorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop())
+      setVoiceState('transcribing')
+
+      const blob = new Blob(chunksRef.current, { type: mimeType })
+      const formData = new FormData()
+      formData.append('audio', blob, 'recording.webm')
+
+      try {
+        const res = await fetch('/api/voice/transcribe', {
+          method: 'POST',
+          body: formData,
+        })
+        if (res.ok) {
+          const data = await res.json()
+          const transcribed: string = data.text ?? ''
+          if (transcribed.trim()) {
+            // Put text in input field and auto-submit
+            setInput(transcribed)
+            setVoiceState('idle')
+            // Use the transcribed text directly to avoid stale closure on input
+            setTimeout(() => {
+              sendMessage(transcribed)
+            }, 0)
+          } else {
+            setVoiceState('idle')
+          }
+        } else {
+          setVoiceState('idle')
+        }
+      } catch {
+        setVoiceState('idle')
+      }
+    }
+
+    recorder.start()
+  }, [sendMessage])
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && voiceState === 'recording') {
+      mediaRecorderRef.current.stop()
+    }
+  }, [voiceState])
+
+  const handleVoiceToggle = useCallback(() => {
+    if (voiceState === 'idle') {
+      startRecording()
+    } else if (voiceState === 'recording') {
+      stopRecording()
+    }
+  }, [voiceState, startRecording, stopRecording])
+
   return (
-    <div className="flex flex-col h-[calc(100vh-56px-3rem)] max-w-3xl mx-auto">
+    <div className="flex flex-col h-[calc(100dvh-56px-3rem)] max-w-3xl mx-auto">
       {/* Message list */}
       <div className="flex-1 overflow-y-auto space-y-4 pb-4">
         {messages.length === 0 && (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-sm text-slate-400">
+          <div className="flex items-center justify-center h-full px-4">
+            <p className="text-sm text-slate-400 text-center">
               Ask anything about the business — stock, orders, processes, financials.
             </p>
           </div>
@@ -340,13 +472,13 @@ function AskPageInner() {
         {messages.map((msg) =>
           msg.role === 'user' ? (
             <div key={msg.id} className="flex justify-end">
-              <div className="max-w-[75%] bg-indigo-600 text-white text-sm px-4 py-3 rounded-2xl rounded-tr-sm">
+              <div className="max-w-[85%] md:max-w-[75%] bg-indigo-600 text-white text-sm px-3 py-2.5 md:px-4 md:py-3 rounded-2xl rounded-tr-sm">
                 {msg.content}
               </div>
             </div>
           ) : (
             <div key={msg.id} className="flex justify-start">
-              <div className="max-w-[75%] bg-white border border-slate-200 text-slate-800 text-sm px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm">
+              <div className="max-w-[85%] md:max-w-[75%] bg-white border border-slate-200 text-slate-800 text-sm px-3 py-2.5 md:px-4 md:py-3 rounded-2xl rounded-tl-sm shadow-sm">
                 {msg.content ? (
                   <>
                     <AssistantBubble content={msg.content} isError={msg.isError} />
@@ -376,10 +508,32 @@ function AskPageInner() {
         <div ref={bottomRef} />
       </div>
 
+      {/* Recording indicator */}
+      {voiceState === 'recording' && (
+        <div className="flex items-center gap-2 px-3 py-2 mb-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600 font-medium">
+          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+          Recording — tap mic to stop
+        </div>
+      )}
+      {voiceState === 'transcribing' && (
+        <div className="flex items-center gap-2 px-3 py-2 mb-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-500">
+          <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          Transcribing…
+        </div>
+      )}
+      {voiceState === 'error' && (
+        <div className="px-3 py-2 mb-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">
+          Microphone access denied
+        </div>
+      )}
+
       {/* Input bar */}
-      <div className="bg-white border border-slate-200 rounded-xl p-3 flex gap-3 items-end shadow-sm">
+      <div className="bg-white border border-slate-200 rounded-xl p-2.5 md:p-3 flex gap-2 md:gap-3 items-end shadow-sm">
         <textarea
-          className="flex-1 resize-none text-sm text-slate-800 placeholder-slate-400 focus:outline-none min-h-[40px] max-h-[160px] overflow-y-auto"
+          className="flex-1 resize-none text-sm text-slate-800 placeholder-slate-400 focus:outline-none min-h-[40px] max-h-[160px] overflow-y-auto px-1 md:px-0"
           rows={1}
           placeholder="Ask anything…"
           value={input}
@@ -387,10 +541,11 @@ function AskPageInner() {
           onKeyDown={handleKeyDown}
           disabled={sending}
         />
+        <MicButton voiceState={voiceState} onToggle={handleVoiceToggle} />
         <button
-          onClick={sendMessage}
+          onClick={() => sendMessage()}
           disabled={sending || !input.trim()}
-          className="flex-shrink-0 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex-shrink-0 px-3 py-2 md:px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed h-10"
         >
           Send
         </button>

@@ -103,15 +103,15 @@ export default function VoicePage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-8">
+    <div className="max-w-2xl mx-auto space-y-6 md:space-y-8">
       {/* Record button */}
-      <div className="flex flex-col items-center gap-6 py-8">
+      <div className="flex flex-col items-center gap-6 py-10 md:py-8">
         <button
           onClick={handleToggle}
           disabled={recordingState === 'processing'}
           aria-label={recordingState === 'recording' ? 'Stop recording' : 'Start recording'}
           className={
-            'relative w-24 h-24 rounded-full flex items-center justify-center transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ' +
+            'relative w-28 h-28 md:w-24 md:h-24 rounded-full flex items-center justify-center transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ' +
             (recordingState === 'recording'
               ? 'bg-red-500 shadow-lg shadow-red-200 animate-pulse'
               : recordingState === 'processing'
@@ -161,7 +161,7 @@ export default function VoicePage() {
             <button
               onClick={saveToMemory}
               disabled={saveStatus === 'saving' || saveStatus === 'saved'}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
             >
               {saveStatus === 'saving'
                 ? 'Saving…'

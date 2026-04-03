@@ -117,14 +117,14 @@ export default function DocumentsPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8">
+    <div className="max-w-3xl mx-auto space-y-6 md:space-y-8">
       {/* Drop zone */}
       <div
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         className={
-          'border-2 border-dashed rounded-xl p-10 flex flex-col items-center gap-4 transition-colors ' +
+          'border-2 border-dashed rounded-xl p-6 md:p-10 flex flex-col items-center gap-4 transition-colors w-full ' +
           (dragging
             ? 'border-indigo-400 bg-indigo-50'
             : 'border-slate-300 bg-slate-50 hover:border-slate-400')
@@ -152,7 +152,7 @@ export default function DocumentsPage() {
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading}
-          className="px-4 py-2 bg-white border border-slate-300 hover:border-indigo-400 text-slate-700 text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+          className="px-4 py-2.5 bg-white border border-slate-300 hover:border-indigo-400 text-slate-700 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 min-h-[44px]"
         >
           Browse files
         </button>
@@ -198,7 +198,7 @@ export default function DocumentsPage() {
                 <button
                   onClick={saveToMemory}
                   disabled={saveStatus === 'saving' || saveStatus === 'saved'}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px]"
                 >
                   {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'saved' ? 'Saved' : 'Save to Memory'}
                 </button>

@@ -61,7 +61,7 @@ function MetricTile({
   accent?: string
 }) {
   return (
-    <div className={`bg-white rounded-xl border border-slate-200 p-5 flex flex-col gap-1 ${accent ?? ''}`}>
+    <div className={`bg-white rounded-xl border border-slate-200 p-4 md:p-5 flex flex-col gap-1 ${accent ?? ''}`}>
       <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">{label}</p>
       <p className="text-2xl font-semibold text-slate-900">{value}</p>
       {sub && <p className="text-xs text-slate-400">{sub}</p>}
@@ -112,10 +112,10 @@ export default function DashboardPage() {
   const modules: ModuleStatus[] = data?.modules ?? []
 
   return (
-    <div className="space-y-8 max-w-6xl">
+    <div className="space-y-6 md:space-y-8 max-w-6xl">
       {/* KPI Row */}
       <section>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 md:gap-4 md:grid-cols-4">
           <MetricTile label="Cash Position" value={fmt_currency(cashBalance)} sub="Current balance" />
           <MetricTile label="Revenue MTD" value={fmt_currency(revenueMtd)} sub="Month to date" />
           <MetricTile label="Pipeline Value" value={fmt_currency(pipelineValue)} sub="Open opportunities" />
@@ -132,7 +132,7 @@ export default function DashboardPage() {
       <section>
         <h2 className="text-sm font-semibold text-slate-700 mb-3">Priority Actions</h2>
         {makeList.length === 0 ? (
-          <div className="bg-white rounded-xl border border-slate-200 px-5 py-8 text-center">
+          <div className="bg-white rounded-xl border border-slate-200 px-4 py-6 md:px-5 md:py-8 text-center">
             <p className="text-sm text-slate-400">
               {data === null ? 'Loading…' : 'No urgent actions right now.'}
             </p>
@@ -142,7 +142,7 @@ export default function DashboardPage() {
             {makeList.map((item) => (
               <div
                 key={item.id}
-                className="bg-white rounded-xl border border-slate-200 px-5 py-4 flex items-start gap-4"
+                className="bg-white rounded-xl border border-slate-200 px-4 py-3 md:px-5 md:py-4 flex items-start gap-3 md:gap-4"
               >
                 <div className="flex-shrink-0">
                   <span className="inline-block text-xs font-mono bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded">
@@ -165,7 +165,7 @@ export default function DashboardPage() {
       <section>
         <h2 className="text-sm font-semibold text-slate-700 mb-3">System Overview</h2>
         {modules.length === 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
             {['Orders', 'Manufacturing', 'Finance', 'Stock', 'Customers', 'Fulfilment'].map((name) => (
               <div key={name} className="bg-white rounded-xl border border-slate-200 px-4 py-4">
                 <div className="flex items-center gap-2 mb-1">
@@ -177,7 +177,7 @@ export default function DashboardPage() {
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
             {modules.map((mod) => (
               <div key={mod.name} className="bg-white rounded-xl border border-slate-200 px-4 py-4">
                 <div className="flex items-center gap-2 mb-1">
