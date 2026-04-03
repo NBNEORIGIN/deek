@@ -246,6 +246,7 @@ def _store_snapshots(snapshots: list[dict]) -> int:
         with conn.cursor() as cur:
             for s in snapshots:
                 try:
+                    cur.execute("SAVEPOINT snap_save")
                     cur.execute(
                         """INSERT INTO ami_listing_snapshots
                                (asin, sku, m_number, marketplace, snapshot_date,
@@ -296,7 +297,7 @@ def _store_snapshots(snapshots: list[dict]) -> int:
                     )
                     stored += 1
                 except Exception:
-                    pass  # skip individual failures, don't abort batch
+                    cur.execute("ROLLBACK TO SAVEPOINT snap_save")
 
             conn.commit()
     return stored

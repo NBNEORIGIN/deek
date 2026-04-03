@@ -156,7 +156,7 @@ CREATE INDEX IF NOT EXISTS idx_ami_ad_upload ON ami_advertising_data(upload_id);
 -- Listing snapshots (the core analytical unit)
 CREATE TABLE IF NOT EXISTS ami_listing_snapshots (
     id                  SERIAL PRIMARY KEY,
-    asin                VARCHAR(20) NOT NULL,
+    asin                VARCHAR(100) NOT NULL,
     sku                 VARCHAR(100),
     m_number            VARCHAR(20),
     marketplace         VARCHAR(10),
