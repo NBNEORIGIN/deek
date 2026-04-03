@@ -243,6 +243,8 @@ function AskPageInner() {
   const [sending, setSending] = useState(false)
   const [saving, setSaving] = useState<string | null>(null)
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
+  const [speaking, setSpeaking] = useState<string | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
 
   const sessionId = useRef<string>(generateSessionId())
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -278,6 +280,61 @@ function AskPageInner() {
       setSaving(null)
     }
   }, [messages])
+
+  const speakMessage = useCallback(async (msgId: string) => {
+    const msg = messages.find((m) => m.id === msgId)
+    if (!msg || !msg.content) return
+
+    // If already speaking this message, stop it
+    if (speaking === msgId && audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+      setSpeaking(null)
+      return
+    }
+
+    // Stop any current playback
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+
+    setSpeaking(msgId)
+    try {
+      // Strip markdown for cleaner speech
+      const plainText = msg.content
+        .replace(/\*\*(.*?)\*\*/g, '$1')
+        .replace(/\*(.*?)\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/#{1,3}\s/g, '')
+        .replace(/\|[^\n]+\|/g, '')
+        .replace(/---/g, '')
+        .replace(/\n+/g, '. ')
+        .trim()
+
+      const res = await fetch('/api/voice/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: plainText }),
+      })
+      if (!res.ok) {
+        setSpeaking(null)
+        return
+      }
+      const audioBlob = await res.blob()
+      const url = URL.createObjectURL(audioBlob)
+      const audio = new Audio(url)
+      audioRef.current = audio
+      audio.onended = () => {
+        setSpeaking(null)
+        audioRef.current = null
+        URL.revokeObjectURL(url)
+      }
+      audio.play()
+    } catch {
+      setSpeaking(null)
+    }
+  }, [messages, speaking])
 
   // Auto-scroll to bottom whenever messages change
   useEffect(() => {
@@ -483,7 +540,14 @@ function AskPageInner() {
                   <>
                     <AssistantBubble content={msg.content} isError={msg.isError} />
                     {!msg.isError && !sending && (
-                      <div className="mt-2 pt-2 border-t border-slate-100">
+                      <div className="mt-2 pt-2 border-t border-slate-100 flex items-center gap-3">
+                        <button
+                          onClick={() => speakMessage(msg.id)}
+                          className="text-xs text-slate-400 hover:text-indigo-600 transition-colors"
+                          title={speaking === msg.id ? 'Stop speaking' : 'Read aloud'}
+                        >
+                          {speaking === msg.id ? '⏹️ Stop' : '🔊 Listen'}
+                        </button>
                         {msg.saved ? (
                           <span className="text-xs text-emerald-600">✓ Saved to memory</span>
                         ) : (
