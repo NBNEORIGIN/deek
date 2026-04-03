@@ -1,81 +1,87 @@
-import { NextResponse } from 'next/server';
-import type { ModuleContext } from '@/lib/types';
+import { NextResponse } from 'next/server'
+import { CAIRN_API_URL, CAIRN_API_KEY } from '@/lib/api'
 
+/**
+ * Module registry — auto-discovered from Cairn project configs + known endpoints.
+ * Each module has a name (display), key (data key), and a url to poll.
+ *
+ * To add a new module: add an entry here. The dashboard renders whatever responds.
+ * Modules that don't respond get status: 'unavailable' — no errors, no breaking.
+ */
 interface ModuleSpec {
-  name: string;
-  url: string;
+  key: string
+  name: string
+  url: string
 }
 
-const MODULES: ModuleSpec[] = [
-  { name: 'manufacture', url: 'http://localhost:8002/api/cairn/context' },
-  { name: 'ledger',      url: 'http://localhost:8001/api/cairn/context' },
-  { name: 'marketing',   url: 'http://localhost:8004/api/cairn/context' },
-];
+// Build module list: Cairn API internal endpoints + external module endpoints
+function getModules(): ModuleSpec[] {
+  const cairn = CAIRN_API_URL
+  return [
+    // Amazon Intelligence — built into Cairn API
+    { key: 'amazon', name: 'Amazon Intelligence', url: `${cairn}/ami/cairn/context` },
+    // Manufacturing — standalone module (when deployed)
+    { key: 'manufacture', name: 'Manufacturing', url: 'http://host.docker.internal:8015/api/cairn/context' },
+    // Ledger — standalone module (when deployed)
+    { key: 'ledger', name: 'Finance', url: 'http://host.docker.internal:8001/api/cairn/context' },
+    // CRM / Marketing — Phloe NBNE tenant (when context endpoint built)
+    { key: 'marketing', name: 'Customers', url: 'http://host.docker.internal:8004/api/cairn/context' },
+  ]
+}
 
-const TIMEOUT_MS = 2000;
+const TIMEOUT_MS = 3000
 
-async function fetchModule(spec: ModuleSpec): Promise<ModuleContext> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+interface ModuleResult {
+  key: string
+  name: string
+  status: 'live' | 'stale' | 'unavailable'
+  generated_at: string
+  summary: string
+  data: Record<string, unknown> | null
+}
+
+async function fetchModule(spec: ModuleSpec): Promise<ModuleResult> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
   try {
     const res = await fetch(spec.url, {
       signal: controller.signal,
       cache: 'no-store',
-    });
-    clearTimeout(timer);
+      headers: { 'X-API-Key': CAIRN_API_KEY },
+    })
+    clearTimeout(timer)
 
     if (!res.ok) {
-      return {
-        module: spec.name,
-        generated_at: new Date().toISOString(),
-        summary: '',
-        data: null,
-        status: 'unavailable',
-      };
+      return { key: spec.key, name: spec.name, status: 'unavailable', generated_at: '', summary: '', data: null }
     }
 
-    const data = await res.json();
+    const body = await res.json()
     return {
-      module: spec.name,
-      generated_at: data.generated_at ?? new Date().toISOString(),
-      summary: data.summary ?? '',
-      data: data.data ?? data,
-      status: data.status ?? 'live',
-    };
+      key: spec.key,
+      name: spec.name,
+      status: 'live',
+      generated_at: body.generated_at ?? new Date().toISOString(),
+      summary: body.summary_text ?? body.summary ?? '',
+      data: body,
+    }
   } catch {
-    clearTimeout(timer);
-    return {
-      module: spec.name,
-      generated_at: new Date().toISOString(),
-      summary: '',
-      data: null,
-      status: 'unavailable',
-    };
+    clearTimeout(timer)
+    return { key: spec.key, name: spec.name, status: 'unavailable', generated_at: '', summary: '', data: null }
   }
 }
 
 export async function GET() {
-  const results = await Promise.allSettled(MODULES.map(fetchModule));
+  const modules = getModules()
+  const results = await Promise.allSettled(modules.map(fetchModule))
 
-  const context: Record<string, ModuleContext> = {};
-
-  for (let i = 0; i < MODULES.length; i++) {
-    const spec = MODULES[i];
-    const result = results[i];
-
-    if (result.status === 'fulfilled') {
-      context[spec.name] = result.value;
-    } else {
-      context[spec.name] = {
-        module: spec.name,
-        generated_at: new Date().toISOString(),
-        summary: '',
-        data: null,
-        status: 'unavailable',
-      };
-    }
+  const output: Record<string, ModuleResult> = {}
+  for (let i = 0; i < modules.length; i++) {
+    const result = results[i]
+    output[modules[i].key] = result.status === 'fulfilled'
+      ? result.value
+      : { key: modules[i].key, name: modules[i].name, status: 'unavailable', generated_at: '', summary: '', data: null }
   }
 
-  return NextResponse.json(context);
+  return NextResponse.json(output)
 }
