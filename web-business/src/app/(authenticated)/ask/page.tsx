@@ -8,6 +8,7 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   isError?: boolean
+  saved?: boolean
 }
 
 // ---- Markdown renderer -------------------------------------------------------
@@ -186,9 +187,40 @@ function AskPageInner() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState(prefill)
   const [sending, setSending] = useState(false)
+  const [saving, setSaving] = useState<string | null>(null)
   const sessionId = useRef<string>(generateSessionId())
   const bottomRef = useRef<HTMLDivElement>(null)
   const esRef = useRef<EventSource | null>(null)
+
+  const saveToMemory = useCallback(async (msgId: string) => {
+    // Find the assistant message and the preceding user message for context
+    const idx = messages.findIndex((m) => m.id === msgId)
+    if (idx < 0) return
+    const assistantMsg = messages[idx]
+    const userMsg = idx > 0 ? messages[idx - 1] : null
+    const query = userMsg?.content || 'Chat exchange'
+
+    setSaving(msgId)
+    try {
+      const res = await fetch('/api/notes/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: `Remembered: ${query.slice(0, 80)}`,
+          content: `**Question:** ${query}\n\n**Answer:** ${assistantMsg.content}`,
+        }),
+      })
+      if (res.ok) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === msgId ? { ...m, saved: true } : m))
+        )
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setSaving(null)
+    }
+  }, [messages])
 
   // Auto-scroll to bottom whenever messages change
   useEffect(() => {
@@ -316,7 +348,24 @@ function AskPageInner() {
             <div key={msg.id} className="flex justify-start">
               <div className="max-w-[75%] bg-white border border-slate-200 text-slate-800 text-sm px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm">
                 {msg.content ? (
-                  <AssistantBubble content={msg.content} isError={msg.isError} />
+                  <>
+                    <AssistantBubble content={msg.content} isError={msg.isError} />
+                    {!msg.isError && !sending && (
+                      <div className="mt-2 pt-2 border-t border-slate-100">
+                        {msg.saved ? (
+                          <span className="text-xs text-emerald-600">✓ Saved to memory</span>
+                        ) : (
+                          <button
+                            onClick={() => saveToMemory(msg.id)}
+                            disabled={saving === msg.id}
+                            className="text-xs text-slate-400 hover:text-indigo-600 transition-colors disabled:opacity-50"
+                          >
+                            {saving === msg.id ? 'Saving…' : '💾 Remember this'}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <span className="text-slate-400 animate-pulse">Thinking…</span>
                 )}
