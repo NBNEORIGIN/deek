@@ -58,8 +58,12 @@ frontend/src/app/admin/      — admin dashboard (SKUs, colours, types, layouts)
 
 - All 7 processors generating print sheets correctly
 - Admin dashboard functional for SKU/colour/type/layout management
-- Docker deployment working on NBNE infrastructure
-- Bug reporting via IONOS SMTP
-- No test suite yet (pytest scaffold being added)
-- CORS is allow_origins=["*"] — tighten for production
+- Docker deployment working on NBNE infrastructure (Hetzner 178.104.1.152)
+- Bug reporting via IONOS SMTP (XSS-safe as of 2026-04-04)
+- CORS locked to app.nbnesigns.co.uk (configurable via CORS_ORIGINS env var)
+- Upload filenames UUID-sanitised (path traversal fix 2026-04-04)
+- Cairn Protocol memory: POST /api/memory/write, GET /api/memory/retrieve
+- Hybrid BM25 + cosine retrieval with Ollama/sentence-transformers embeddings
+- Ark backup: backup-memorials.sh + restore-memorials.sh (SQLite + 3 Docker volumes)
 - No authentication on API — acceptable behind nginx, known gap
+- pytest scaffold exists (test_health, test_processors, test_memory)

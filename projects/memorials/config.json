@@ -38,5 +38,19 @@
     "include_extensions": [".py", ".tsx", ".ts", ".json", ".md", ".yml", ".css"]
   },
 
-  "subprojects": []
+  "subprojects": [],
+
+  "memory_api": {
+    "base_url": "http://178.104.1.152:8012",
+    "retrieve": "/api/memory/retrieve",
+    "write": "/api/memory/write",
+    "status": "/api/memory/status"
+  },
+
+  "backup": {
+    "method": "ark",
+    "scripts": ["projects/ark/backup-memorials.sh", "projects/ark/restore-memorials.sh"],
+    "volumes": ["memorials-data", "memorials-uploads", "memorials-output"],
+    "database": "sqlite"
+  }
 }

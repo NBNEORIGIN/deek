@@ -191,3 +191,21 @@ manual backups (will be forgotten), deferral (every day unprotected is uninsured
 **Key architectural constraint identified at registration**: Phloe is fully Dockerised.
 Backup script must use `docker exec <slug>-db-1 pg_dump` and Docker volume extraction,
 not system-level postgres or filesystem media paths. DB names = slug, not phloe_<slug>.
+
+### 2026-04-04 — Standalone Apps: Memorials Added
+
+**Context**: Memorials (memorial SVG generator) runs on the same Hetzner server but is
+NOT a Phloe tenant. It has its own docker-compose.yml, uses SQLite (not PostgreSQL),
+and has fixed container names (memorials-backend-1, memorials-frontend-1).
+
+**Decision**: Add standalone app backup/restore scripts alongside the tenant system.
+- `backup-memorials.sh`: docker cp for SQLite DB, tar Docker volumes, copy .env
+- `restore-memorials.sh`: clone repo at recorded git hash, restore DB + volumes
+- Stored under `$BACKUP_ROOT/memorials/$TODAY/` (separate from tenant backups)
+
+**Key differences from Phloe tenants**:
+- SQLite backup via `docker cp` (not `docker exec pg_dump`)
+- Three volumes: memorials-data, memorials-uploads, memorials-output
+- Deployed at `/opt/nbne/memorials/` (not `/opt/nbne/instances/`)
+- WAL files (memorials.db-wal, memorials.db-shm) also backed up if present
+- Git commit hash recorded for exact repo state restoration
