@@ -121,12 +121,8 @@ export default function ChatHistorySidebar({
 
       {/* Sidebar panel */}
       <div
-        className={
-          'flex flex-col bg-white border-r border-slate-200 z-40 transition-all duration-200 ' +
-          (isOpen
-            ? 'fixed inset-y-0 left-0 w-72 lg:relative lg:inset-auto lg:w-72 translate-x-0'
-            : 'fixed inset-y-0 left-0 w-72 lg:relative lg:inset-auto lg:w-0 -translate-x-full lg:translate-x-0 lg:overflow-hidden lg:border-0')
-        }
+        className="flex flex-col bg-white border-r border-slate-200 z-40 transition-all duration-200 shrink-0 overflow-hidden"
+        style={{ width: isOpen ? '288px' : '0px' }}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-3 border-b border-slate-100">
