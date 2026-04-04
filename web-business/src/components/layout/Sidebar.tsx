@@ -14,6 +14,7 @@ const SECONDARY_NAV = [
   { label: 'Voice Memos', href: '/voice', icon: '🎙️' },
   { label: 'Documents', href: '/documents', icon: '📄' },
   { label: 'Notes', href: '/notes', icon: '📝' },
+  { label: 'Memory', href: '/memory', icon: '🧠' },
 ]
 
 export interface SidebarProps {

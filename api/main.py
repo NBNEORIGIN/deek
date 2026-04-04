@@ -438,6 +438,15 @@ class CostLogEntry(BaseModel):
     cost_gbp: float = 0.0
 
 
+class MemoryUpdateRequest(BaseModel):
+    description: Optional[str] = None
+    reasoning: Optional[str] = None
+    query: Optional[str] = None
+    rejected: Optional[str] = None
+    decision_type: Optional[str] = None
+    files_affected: Optional[list[str]] = None
+
+
 class CostLogRequest(BaseModel):
     session_id: str
     prompt_summary: str
@@ -1201,6 +1210,91 @@ async def write_memory(
         'outcome': body.outcome,
         'written_at': datetime.utcnow().isoformat() + 'Z',
     }
+
+
+@app.get("/memory/entries")
+async def list_memory_entries(
+    project: str,
+    limit: int = 50,
+    offset: int = 0,
+    q: Optional[str] = None,
+    _: bool = Depends(verify_api_key),
+):
+    """List memory entries with pagination and optional search."""
+    from core.memory.store import MemoryStore
+    data_dir = os.getenv('CLAW_DATA_DIR', './data')
+    store = MemoryStore(project, data_dir)
+    try:
+        entries, total = store.list_decisions(limit=limit, offset=offset, query_filter=q or '')
+    finally:
+        store.close()
+    return {'entries': entries, 'total': total, 'project': project}
+
+
+@app.get("/memory/entries/{entry_id}")
+async def get_memory_entry(
+    entry_id: int,
+    project: str,
+    _: bool = Depends(verify_api_key),
+):
+    """Get a single memory entry by ID."""
+    from core.memory.store import MemoryStore
+    data_dir = os.getenv('CLAW_DATA_DIR', './data')
+    store = MemoryStore(project, data_dir)
+    try:
+        entry = store.get_decision(entry_id)
+    finally:
+        store.close()
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Entry {entry_id} not found")
+    return entry
+
+
+@app.put("/memory/entries/{entry_id}")
+async def update_memory_entry(
+    entry_id: int,
+    project: str,
+    body: MemoryUpdateRequest,
+    _: bool = Depends(verify_api_key),
+):
+    """Update an existing memory entry. Only provided fields are changed."""
+    from core.memory.store import MemoryStore
+    data_dir = os.getenv('CLAW_DATA_DIR', './data')
+    store = MemoryStore(project, data_dir)
+    try:
+        updated = store.update_decision(
+            decision_id=entry_id,
+            description=body.description,
+            reasoning=body.reasoning,
+            query=body.query,
+            rejected=body.rejected,
+            decision_type=body.decision_type,
+            files_affected=body.files_affected,
+        )
+    finally:
+        store.close()
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Entry {entry_id} not found")
+    return {'updated': True, 'id': entry_id}
+
+
+@app.delete("/memory/entries/{entry_id}")
+async def delete_memory_entry(
+    entry_id: int,
+    project: str,
+    _: bool = Depends(verify_api_key),
+):
+    """Delete a memory entry."""
+    from core.memory.store import MemoryStore
+    data_dir = os.getenv('CLAW_DATA_DIR', './data')
+    store = MemoryStore(project, data_dir)
+    try:
+        deleted = store.delete_decision(entry_id)
+    finally:
+        store.close()
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Entry {entry_id} not found")
+    return {'deleted': True, 'id': entry_id}
 
 
 @app.post("/costs/log")

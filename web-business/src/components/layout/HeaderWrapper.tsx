@@ -10,6 +10,7 @@ const PATH_TITLES: Record<string, string> = {
   '/voice': 'Voice Memos',
   '/documents': 'Documents',
   '/notes': 'Notes',
+  '/memory': 'Memory',
 }
 
 export interface HeaderWrapperProps {

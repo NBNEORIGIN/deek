@@ -228,6 +228,114 @@ class MemoryStore:
               diff_preview, reason, approved_by))
         self.conn.commit()
 
+    def get_decision(self, decision_id: int) -> dict | None:
+        """Get a single decision by ID."""
+        row = self.conn.execute("""
+            SELECT id, decision_type, description, reasoning,
+                   files_affected, timestamp,
+                   project, query, rejected, model_used
+            FROM decisions WHERE id = ?
+        """, (decision_id,)).fetchone()
+        if not row:
+            return None
+        return {
+            'id': row[0], 'type': row[1], 'description': row[2],
+            'reasoning': row[3], 'files': json.loads(row[4] or '[]'),
+            'timestamp': row[5], 'project': row[6] if len(row) > 6 else '',
+            'query': row[7] if len(row) > 7 else '',
+            'rejected': row[8] if len(row) > 8 else '',
+            'model_used': row[9] if len(row) > 9 else '',
+        }
+
+    def update_decision(
+        self,
+        decision_id: int,
+        description: str | None = None,
+        reasoning: str | None = None,
+        query: str | None = None,
+        rejected: str | None = None,
+        decision_type: str | None = None,
+        files_affected: list | None = None,
+    ) -> bool:
+        """Update an existing decision. Only provided fields are changed."""
+        updates = []
+        params = []
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        if reasoning is not None:
+            updates.append("reasoning = ?")
+            params.append(reasoning)
+        if query is not None:
+            updates.append("query = ?")
+            params.append(query)
+        if rejected is not None:
+            updates.append("rejected = ?")
+            params.append(rejected)
+        if decision_type is not None:
+            updates.append("decision_type = ?")
+            params.append(decision_type)
+        if files_affected is not None:
+            updates.append("files_affected = ?")
+            params.append(json.dumps(files_affected))
+        if not updates:
+            return False
+        params.append(decision_id)
+        self.conn.execute(
+            f"UPDATE decisions SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        self.conn.commit()
+        return self.conn.total_changes > 0
+
+    def delete_decision(self, decision_id: int) -> bool:
+        """Delete a decision by ID."""
+        self.conn.execute("DELETE FROM decisions WHERE id = ?", (decision_id,))
+        self.conn.commit()
+        return self.conn.total_changes > 0
+
+    def list_decisions(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        query_filter: str = '',
+    ) -> tuple[list[dict], int]:
+        """List decisions with pagination. Returns (entries, total_count)."""
+        if query_filter:
+            where = "WHERE description LIKE ? OR query LIKE ? OR reasoning LIKE ?"
+            params = [f'%{query_filter}%'] * 3
+            count = self.conn.execute(
+                f"SELECT COUNT(*) FROM decisions {where}", params
+            ).fetchone()[0]
+            rows = self.conn.execute(f"""
+                SELECT id, decision_type, description, reasoning,
+                       files_affected, timestamp,
+                       project, query, rejected, model_used
+                FROM decisions {where}
+                ORDER BY timestamp DESC LIMIT ? OFFSET ?
+            """, params + [limit, offset]).fetchall()
+        else:
+            count = self.conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
+            rows = self.conn.execute("""
+                SELECT id, decision_type, description, reasoning,
+                       files_affected, timestamp,
+                       project, query, rejected, model_used
+                FROM decisions ORDER BY timestamp DESC LIMIT ? OFFSET ?
+            """, (limit, offset)).fetchall()
+
+        entries = [
+            {
+                'id': r[0], 'type': r[1], 'description': r[2],
+                'reasoning': r[3], 'files': json.loads(r[4] or '[]'),
+                'timestamp': r[5], 'project': r[6] if len(r) > 6 else '',
+                'query': r[7] if len(r) > 7 else '',
+                'rejected': r[8] if len(r) > 8 else '',
+                'model_used': r[9] if len(r) > 9 else '',
+            }
+            for r in rows
+        ]
+        return entries, count
+
     def search_decisions(self, query: str) -> list[dict]:
         """Search past decisions by keyword — agent recall mechanism."""
         rows = self.conn.execute("""
