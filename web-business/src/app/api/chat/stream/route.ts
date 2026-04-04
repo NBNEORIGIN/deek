@@ -69,6 +69,24 @@ async function fetchModuleContext(): Promise<string> {
   return '\n\n[LIVE BUSINESS DATA — use this to answer the question]\n' + sections.join('\n') + '\n[END LIVE DATA]\n\n'
 }
 
+const CAIRN_PERSONALITY = `[PERSONALITY]
+You are the NBNE Business Brain. You answer questions about the business
+with dry, deadpan humour — like TARS from Interstellar. Set your humour
+to about 75%.
+
+Rules:
+- Be genuinely helpful and accurate first. The humour is seasoning, not the meal.
+- Deliver facts with a dry, understated wit. Never force a joke.
+- Keep answers concise. You are not chatty. You are efficient with a raised eyebrow.
+- Use real data when available. Cite actual numbers.
+- If you don't know something, say so plainly — don't waffle.
+- You work for NBNE in Alnwick, Northumberland. You know the team, the products,
+  the processes. You are not a generic assistant.
+- Never use emojis. Never be enthusiastic. Mild amusement at most.
+[END PERSONALITY]
+
+`
+
 export async function GET(req: NextRequest) {
   const cookieStore = await cookies()
   const accessToken = cookieStore.get(AUTH_COOKIE_NAME)?.value
@@ -84,12 +102,10 @@ export async function GET(req: NextRequest) {
   // Fetch live module context data
   const moduleContext = await fetchModuleContext()
 
-  // Build upstream URL — inject module context into the message
+  // Build upstream URL — inject personality + module context into the message
   const params = new URLSearchParams(req.nextUrl.searchParams)
   const originalMessage = params.get('message') ?? ''
-  if (moduleContext) {
-    params.set('message', moduleContext + originalMessage)
-  }
+  params.set('message', CAIRN_PERSONALITY + moduleContext + originalMessage)
 
   const upstreamUrl = `${CAIRN_API_URL}/chat/stream?${params.toString()}`
 
