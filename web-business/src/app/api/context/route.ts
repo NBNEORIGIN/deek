@@ -22,8 +22,8 @@ function getModules(): ModuleSpec[] {
     { key: 'amazon', name: 'Amazon Intelligence', url: `${cairn}/ami/cairn/context` },
     // Manufacturing — standalone module (when deployed)
     { key: 'manufacture', name: 'Manufacturing', url: 'http://host.docker.internal:8015/api/cairn/context' },
-    // Ledger — live on Hetzner port 8016
-    { key: 'ledger', name: 'Finance', url: 'http://host.docker.internal:8016/api/cairn/context' },
+    // Ledger — on deploy_default network, also reachable via host port 8016
+    { key: 'ledger', name: 'Finance', url: 'http://ledger-backend-1:8001/api/cairn/context' },
     // CRM / Marketing — Phloe NBNE tenant (when context endpoint built)
     { key: 'marketing', name: 'Customers', url: 'http://host.docker.internal:8004/api/cairn/context' },
   ]
@@ -48,7 +48,10 @@ async function fetchModule(spec: ModuleSpec): Promise<ModuleResult> {
     const res = await fetch(spec.url, {
       signal: controller.signal,
       cache: 'no-store',
-      headers: { 'X-API-Key': CAIRN_API_KEY },
+      headers: {
+        'X-API-Key': CAIRN_API_KEY,
+        'Authorization': `Bearer ${CAIRN_API_KEY}`,
+      },
     })
     clearTimeout(timer)
 

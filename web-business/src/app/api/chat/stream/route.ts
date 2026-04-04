@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic'
 const DOCKER_HOST = process.env.DOCKER_HOST_GATEWAY ?? 'host.docker.internal'
 
 const MODULE_ENDPOINTS = [
-  { key: 'finance', url: `http://${DOCKER_HOST}:8016/api/cairn/context`, label: 'Finance (Ledger)' },
+  { key: 'finance', url: 'http://ledger-backend-1:8001/api/cairn/context', label: 'Finance (Ledger)' },
   { key: 'amazon', url: `${CAIRN_API_URL}/ami/cairn/context`, label: 'Amazon Intelligence' },
 ]
 
@@ -27,7 +27,10 @@ async function fetchModuleContext(): Promise<string> {
         const res = await fetch(mod.url, {
           signal: controller.signal,
           cache: 'no-store',
-          headers: { 'X-API-Key': CAIRN_API_KEY },
+          headers: {
+            'X-API-Key': CAIRN_API_KEY,
+            'Authorization': `Bearer ${CAIRN_API_KEY}`,
+          },
         })
         clearTimeout(timer)
         if (!res.ok) return null
