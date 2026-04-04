@@ -259,7 +259,7 @@ problems that Toby should know about.
 | claw | D:\claw | 8765 | Cairn itself |
 | phloe | D:\nbne_business\nbne_platform | 8000/3000 | WaaS booking |
 | render | TBC | TBC | Product publishing (was Signmaker) |
-| crm | TBC | TBC | Path to confirm with Toby |
+| crm | D:\crm | 8003/3003 | CRM v2, Hetzner deploy, GitHub: NBNEORIGIN/crm |
 
 Full registry: CAIRN_PROTOCOL.md
 

@@ -16,7 +16,7 @@ You are implementing the CRM v2 upgrade for NBNE. The full spec is in
 CRM_V2_SPEC.md. Read it completely before writing any code.
 
 Key points:
-- CRM is live at crm.nbnesigns.co.uk (currently on Vercel — migrating off)
+- CRM will be deployed to crm.nbnesigns.co.uk (Hetzner — new deployment)
 - GitHub: https://github.com/NBNEORIGIN/crm
 - Pipeline: £50,309 across 37 projects
 - Primary use case: semantic search — "what are our options for an illuminated
@@ -61,13 +61,15 @@ The snapshot overview / AI insights panel is unused.
 ### Database
 PostgreSQL + pgvector on nbne1 RAID server. Create the CRM database:
 ```
-ssh toby@192.168.1.228  # password: !y0e!y0e
-echo '!y0e!y0e' | sudo -S sudo -u postgres createdb cairn_crm
-echo '!y0e!y0e' | sudo -S sudo -u postgres psql -d cairn_crm -c "GRANT ALL PRIVILEGES ON DATABASE cairn_crm TO cairn;"
-echo '!y0e!y0e' | sudo -S sudo -u postgres psql -d cairn_crm -c "CREATE EXTENSION IF NOT EXISTS vector;"
-echo '!y0e!y0e' | sudo -S sudo -u postgres psql -d cairn_crm -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+# Credentials: see Cairn memory (reference_local_server.md) or .env
+ssh toby@192.168.1.228
+sudo -u postgres createdb cairn_crm
+sudo -u postgres psql -d cairn_crm -c "GRANT ALL PRIVILEGES ON DATABASE cairn_crm TO cairn;"
+sudo -u postgres psql -d cairn_crm -c "CREATE EXTENSION IF NOT EXISTS vector;"
+sudo -u postgres psql -d cairn_crm -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 ```
-Connection string: postgresql://cairn:cairn_nbne_2026@192.168.1.228:5432/cairn_crm
+Connection string: set `CRM_DATABASE_URL` in `.env` (see `.env.example`)
+Format: `postgresql://cairn:<password>@192.168.1.228:5432/cairn_crm`
 Backup: automatic — nightly Contabo backup covers all nbne1 databases.
 Add cairn_crm to the backup list in /data/cairn/backup.sh.
 
@@ -128,6 +130,12 @@ After every phase:
 
 ## Build Order (Phase 1 only — this session)
 
+0. Register CRM project in Cairn:
+   - Create projects/crm/config.json with codebase_path: "D:\\crm"
+   - POST /index?project=crm to seed the index
+   - Verify: GET /projects returns "crm"
+   (This enables Steps 1+ to use memory retrieval correctly)
+
 1. Clone repo: git clone https://github.com/NBNEORIGIN/crm D:\crm
    Audit current codebase — schema, API routes, existing Llama/RAG, UI components
    (Use Explore sub-agent)
@@ -146,6 +154,11 @@ After every phase:
 
 6. Build GET /api/cairn/search — hybrid BM25 + cosine + RRF merge
    THIS IS THE CORE. Opus-level. Get this right.
+
+6b. **Test hybrid search** — integration tests against real pgvector DB.
+    Test cases: exact match, semantic match, empty results, multi-entity
+    (e.g. "illuminated signs for golf clubs" should hit projects + materials).
+    Do not proceed to step 7 until search quality is verified.
 
 7. Migrate existing RAG Knowledge Search to unified crm_embeddings index
 
@@ -186,7 +199,8 @@ After every phase:
 
 18. Wire to cairn.nbnesigns.co.uk dashboard:
     Update D:\claw\web-business\src\app\api\context\route.ts:
-    { key: 'crm', name: 'Customers', url: 'http://host.docker.internal:8003/api/cairn/context' }
+    { key: 'crm', name: 'Customers', url: `${process.env.CRM_API_URL || 'http://localhost:8003'}/api/cairn/context` }
+    Note: on Hetzner, use the Docker bridge IP or container name, not host.docker.internal (Linux-only limitation).
 
 Commit after each step. One logical change per commit.
 Write back to Cairn memory after each step.

@@ -16,7 +16,7 @@ This document is a CC (Claude Code) implementation prompt.
 ## Current State
 
 **Live app**: crm.nbnesigns.co.uk
-**Hosting**: Vercel (frontend + API routes) + Neon (PostgreSQL)
+**Hosting**: New deployment — Hetzner Docker (previously undeployed)
 **What exists** (from screenshot, 03 April 2026):
 
 - Projects view (Cards / Table toggle)
@@ -29,7 +29,7 @@ This document is a CC (Claude Code) implementation prompt.
 - Left nav: Projects, Clients, Materials, Suppliers, Knowledge Base
 - "New Lead from Email" button (top right)
 
-**Stack**: Next.js on Vercel, Neon PostgreSQL, Llama for insights, RAG for knowledge search
+**Stack**: Next.js, PostgreSQL + pgvector on nbne1, Llama for insights, RAG for knowledge search
 
 ---
 
