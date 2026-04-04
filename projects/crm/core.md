@@ -6,11 +6,14 @@ Live at crm.nbnesigns.co.uk. Being upgraded from standalone tool to Cairn-connec
 development platform with semantic search, email integration, and cross-module intelligence.
 
 ## Current stack
-- Frontend + API: Next.js (migrating from Vercel to Hetzner/local server)
-- Database: PostgreSQL + pgvector (Hetzner or local server, backed up to Contabo nightly)
+- Frontend + API: Next.js (migrating from Vercel to Hetzner)
+- Database: PostgreSQL + pgvector on nbne1 (192.168.1.228), DB: cairn_crm
+  Connection: postgresql://cairn:cairn_nbne_2026@192.168.1.228:5432/cairn_crm
 - AI: Llama for insights (existing), migrating to Cairn hybrid search
 - Domain: crm.nbnesigns.co.uk
-- Email access: cairn@nbnesigns.com (new, dedicated), sales@nbnesigns.co.uk (existing), toby@nbnesigns.com (existing)
+- GitHub: https://github.com/NBNEORIGIN/crm
+- Email: cairn@nbnesigns.com (dedicated), sales@nbnesigns.co.uk (read-only), toby@nbnesigns.com (read-only)
+- Backup: Contabo nightly (automatic — all nbne1 databases included)
 
 ## Live data (as of 03 April 2026)
 - Pipeline: £50,309 total (18 leads £17,450, 13 quoted £25,716, 6 in production £6,218)
