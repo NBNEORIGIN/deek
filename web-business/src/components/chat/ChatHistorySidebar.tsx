@@ -123,9 +123,9 @@ export default function ChatHistorySidebar({
       <div
         className={
           'flex flex-col bg-white border-r border-slate-200 z-40 transition-all duration-200 ' +
-          // Mobile: fixed overlay
-          'fixed inset-y-0 left-0 w-72 lg:relative lg:inset-auto ' +
-          (isOpen ? 'translate-x-0' : '-translate-x-full lg:w-0 lg:translate-x-0 lg:overflow-hidden lg:border-0')
+          (isOpen
+            ? 'fixed inset-y-0 left-0 w-72 lg:relative lg:inset-auto lg:w-72 translate-x-0'
+            : 'fixed inset-y-0 left-0 w-72 lg:relative lg:inset-auto lg:w-0 -translate-x-full lg:translate-x-0 lg:overflow-hidden lg:border-0')
         }
       >
         {/* Header */}
