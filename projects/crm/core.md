@@ -6,10 +6,11 @@ Live at crm.nbnesigns.co.uk. Being upgraded from standalone tool to Cairn-connec
 development platform with semantic search, email integration, and cross-module intelligence.
 
 ## Current stack
-- Frontend + API: Next.js on Vercel
-- Database: Neon PostgreSQL
-- AI: Llama for insights, RAG for knowledge search (being migrated to unified pgvector index)
+- Frontend + API: Next.js (migrating from Vercel to Hetzner/local server)
+- Database: PostgreSQL + pgvector (Hetzner or local server, backed up to Contabo nightly)
+- AI: Llama for insights (existing), migrating to Cairn hybrid search
 - Domain: crm.nbnesigns.co.uk
+- Email access: cairn@nbnesigns.com (new, dedicated), sales@nbnesigns.co.uk (existing), toby@nbnesigns.com (existing)
 
 ## Live data (as of 03 April 2026)
 - Pipeline: £50,309 total (18 leads £17,450, 13 quoted £25,716, 6 in production £6,218)
@@ -34,3 +35,13 @@ projects, quotes, emails, materials, and knowledge base entries.
 **Decision**: Registered as Cairn project. Codebase on C: drive (confirm path with Toby).
 Full spec at D:\claw\projects\crm\CRM_V2_SPEC.md
 **Rejected**: Moving off Vercel (too much migration risk for Phase 1)
+
+### 2026-04-04 — Hosting and email decisions
+**Context**: Toby confirmed Vercel is deprecated, CRM moves to Hetzner/local server
+**Decision**: Host on Hetzner (or local NBNE server) with daily Contabo backups.
+Three email sources: cairn@nbnesigns.com (new dedicated inbox), sales@nbnesigns.co.uk
+(existing sales inbox for historical context), toby@nbnesigns.com (existing for
+direct client correspondence). All three feed into CRM semantic memory.
+**Rationale**: Sovereign hosting, Ollama embeddings available locally, no Vercel
+timeout limits for email worker, Contabo backup aligns with other module backup strategy
+**Rejected**: Staying on Vercel (deprecated, can't reach local Ollama, cron limits)
