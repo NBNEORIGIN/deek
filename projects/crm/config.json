@@ -1,0 +1,44 @@
+{
+  "name": "NBNE CRM",
+  "description": "B2B project management and business development platform — Cairn-connected with semantic search, email integration, pipeline analytics",
+  "codebase_path": "C:/Users/zentu/Projects/crm",
+  "project_type": "coding",
+  "force_model": "api",
+
+  "permissions": [
+    "read_file",
+    "search_code",
+    "edit_file",
+    "create_file",
+    "run_tests",
+    "run_command",
+    "run_migration",
+    "check_server",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "git_add",
+    "git_commit",
+    "git_push",
+    "git_branch",
+    "git_stash",
+    "web_fetch",
+    "web_check_status"
+  ],
+
+  "model_preferences": {
+    "force_model": "api",
+    "opus_keywords": [
+      "architecture", "semantic search", "embedding pipeline",
+      "email integration", "GDPR", "cross-module", "Cairn context"
+    ]
+  },
+
+  "related_projects": ["claw", "manufacturing", "phloe"],
+
+  "indexing": {
+    "auto_reindex": false,
+    "exclude_paths": ["node_modules", ".next", ".vercel"],
+    "include_extensions": [".ts", ".tsx", ".js", ".json", ".md", ".sql"]
+  }
+}
