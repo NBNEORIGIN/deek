@@ -77,6 +77,49 @@ async function fetchModuleContext(): Promise<string> {
     '[END LIVE DATA]\n\n'
 }
 
+/**
+ * Query-aware CRM search — searches projects, clients, emails, materials, and
+ * knowledge base using the user's actual question. Returns relevant CRM data
+ * to inject into the chat context.
+ */
+const CRM_SEARCH_URL = process.env.CRM_API_URL || 'http://crm-crm-1:3000'
+
+async function fetchCrmSearch(query: string): Promise<string> {
+  if (!query.trim()) return ''
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 5000) // 5s for search + embedding
+
+  try {
+    const res = await fetch(
+      `${CRM_SEARCH_URL}/api/cairn/search?q=${encodeURIComponent(query)}&limit=8`,
+      { signal: controller.signal, cache: 'no-store' }
+    )
+    clearTimeout(timer)
+    if (!res.ok) return ''
+
+    const data = await res.json()
+    if (!data.results || data.results.length === 0) return ''
+
+    const sections: string[] = []
+    for (const r of data.results) {
+      const meta = r.metadata ?? {}
+      const label = meta.project_name || meta.name || meta.title || meta.subject || ''
+      sections.push(`[${r.source_type.toUpperCase()}] ${label}\n${r.content}`)
+    }
+
+    return '\n\n[CRM DATA — projects, clients, emails, materials matched to this query]\n' +
+      sections.join('\n---\n') +
+      '\n[IMPORTANT: For CRM questions about projects, clients, quotes, materials, signage, ' +
+      'or email correspondence — use the CRM data above. Only quote figures and details that ' +
+      'appear explicitly in this data. If the information is not here, say you don\'t have it on file.]\n' +
+      '[END CRM DATA]\n\n'
+  } catch {
+    clearTimeout(timer)
+    return ''
+  }
+}
+
 const CAIRN_PERSONALITY = `[PERSONALITY]
 You are the NBNE Business Brain. You answer questions about the business
 with dry, deadpan humour — like TARS from Interstellar. Set your humour
@@ -107,13 +150,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Token expired' }, { status: 401 })
   }
 
-  // Fetch live module context data
-  const moduleContext = await fetchModuleContext()
-
-  // Build upstream URL — inject personality + module context into the message
+  // Build upstream URL — inject personality + module context + CRM search into the message
   const params = new URLSearchParams(req.nextUrl.searchParams)
   const originalMessage = params.get('message') ?? ''
-  params.set('message', CAIRN_PERSONALITY + moduleContext + originalMessage)
+
+  // Fetch live module context and CRM search in parallel
+  const [moduleContext, crmContext] = await Promise.all([
+    fetchModuleContext(),
+    fetchCrmSearch(originalMessage),
+  ])
+
+  params.set('message', CAIRN_PERSONALITY + moduleContext + crmContext + originalMessage)
 
   const upstreamUrl = `${CAIRN_API_URL}/chat/stream?${params.toString()}`
 
