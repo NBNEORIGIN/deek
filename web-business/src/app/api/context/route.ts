@@ -24,8 +24,8 @@ function getModules(): ModuleSpec[] {
     { key: 'manufacture', name: 'Manufacturing', url: 'http://host.docker.internal:8015/api/cairn/context' },
     // Ledger — live on Hetzner port 8016
     { key: 'ledger', name: 'Finance', url: 'http://host.docker.internal:8016/api/cairn/context' },
-    // CRM / Marketing — Phloe NBNE tenant (when context endpoint built)
-    { key: 'marketing', name: 'Customers', url: 'http://host.docker.internal:8004/api/cairn/context' },
+    // CRM — NBNE business development platform
+    { key: 'crm', name: 'Customers', url: `${process.env.CRM_API_URL || 'http://host.docker.internal:3003'}/api/cairn/context` },
   ]
 }
 
