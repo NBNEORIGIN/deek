@@ -20,6 +20,8 @@ function getModules(): ModuleSpec[] {
   return [
     // Amazon Intelligence — built into Cairn API
     { key: 'amazon', name: 'Amazon Intelligence', url: `${cairn}/ami/cairn/context` },
+    // Etsy Intelligence — built into Cairn API
+    { key: 'etsy', name: 'Etsy Sales', url: `${cairn}/etsy/cairn/context` },
     // Manufacturing — standalone module (when deployed)
     { key: 'manufacture', name: 'Manufacturing', url: 'http://host.docker.internal:8015/api/cairn/context' },
     // Ledger — on deploy_default network
