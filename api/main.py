@@ -151,6 +151,14 @@ async def lifespan(app: FastAPI):
     except Exception as ami_err:
         print(f'[CLAW startup] Amazon Intel schema failed: {ami_err}')
 
+    # ── Etsy Intelligence schema ───────────────────────────────────────
+    try:
+        from core.etsy_intel.db import ensure_schema as etsy_ensure_schema
+        etsy_ensure_schema()
+        print('[CLAW startup] Etsy Intel schema ready')
+    except Exception as etsy_err:
+        print(f'[CLAW startup] Etsy Intel schema failed: {etsy_err}')
+
     # ── Auto-index empty projects ───────────────────────────────────────
     skip_auto_index = os.getenv('CAIRN_SKIP_AUTO_INDEX', '').lower() in {
         '1', 'true', 'yes',
@@ -2241,3 +2249,7 @@ app.include_router(whatsapp_router)
 # Register Amazon Intelligence routes
 from api.routes.amazon_intel import router as ami_router
 app.include_router(ami_router)
+
+# Register Etsy Intelligence routes
+from api.routes.etsy_intel import router as etsy_router
+app.include_router(etsy_router)
