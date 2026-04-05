@@ -35,6 +35,9 @@ services:
       DEEPSEEK_ENABLED: "true"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       CLAW_DATA_DIR: /app/data
+      ETSY_API_KEY: ${ETSY_API_KEY:-}
+      ETSY_SHARED_SECRET: ${ETSY_SHARED_SECRET:-}
+      ETSY_SHOP_IDS: ${ETSY_SHOP_IDS:-}
     ports:
       - "127.0.0.1:8765:8765"
     volumes:
