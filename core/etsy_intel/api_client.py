@@ -1,12 +1,15 @@
 """
 Etsy API v3 client with rate limiting and pagination.
 
-Authentication: x-api-key header with API key.
+Authentication: x-api-key header with keystring:shared_secret format.
+(Changed Feb 2026 — Etsy now requires both in a colon-separated header.)
 Rate limit: 5 QPS / 5K QPD (Personal Access tier).
 Pagination: offset/limit based.
 
 Credentials come from environment variables:
-  ETSY_API_KEY — the API key (x-api-key header)
+  ETSY_API_KEY       — the keystring
+  ETSY_SHARED_SECRET — the shared secret
+  Header sent: x-api-key: {keystring}:{shared_secret}
 """
 import os
 import asyncio
@@ -27,10 +30,15 @@ RETRY_BACKOFF = 2.0      # seconds, doubled each retry
 class EtsyClient:
     """Async Etsy API v3 client with rate limiting."""
 
-    def __init__(self, api_key: str = None):
+    def __init__(self, api_key: str = None, shared_secret: str = None):
         self.api_key = api_key or os.getenv('ETSY_API_KEY', '')
+        self.shared_secret = shared_secret or os.getenv('ETSY_SHARED_SECRET', '')
         if not self.api_key:
             raise ValueError('ETSY_API_KEY not set')
+        if not self.shared_secret:
+            raise ValueError('ETSY_SHARED_SECRET not set')
+        # Etsy requires keystring:secret combined in the header (since Feb 2026)
+        self._auth_header = f'{self.api_key}:{self.shared_secret}'
         self._semaphore = asyncio.Semaphore(MAX_QPS)
         self._client: httpx.AsyncClient | None = None
 
@@ -38,7 +46,7 @@ class EtsyClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 base_url=BASE_URL,
-                headers={'x-api-key': self.api_key},
+                headers={'x-api-key': self._auth_header},
                 timeout=30.0,
             )
         return self._client
@@ -124,8 +132,22 @@ class EtsyClient:
             raise
 
     async def get_shop(self, shop_id) -> dict:
-        """GET /v3/application/shops/{shop_id} — accepts numeric ID or shop name."""
+        """GET /v3/application/shops/{shop_id} — numeric ID only."""
         return await self._get(f'/application/shops/{shop_id}')
+
+    async def find_shop_by_name(self, shop_name: str) -> dict:
+        """Find a shop by name. Returns the shop dict or raises."""
+        data = await self._get('/application/shops', params={'shop_name': shop_name})
+        results = data.get('results', [])
+        if not results:
+            raise ValueError(f'No shop found with name: {shop_name}')
+        return results[0]
+
+    async def resolve_shop(self, identifier: str) -> dict:
+        """Resolve a shop by numeric ID or name string."""
+        if identifier.isdigit():
+            return await self.get_shop(int(identifier))
+        return await self.find_shop_by_name(identifier)
 
     # ── Listing endpoints ────────────────────────────────────────────────
 

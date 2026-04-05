@@ -74,7 +74,7 @@ async def _sync_shop(client: EtsyClient, shop_identifier: str) -> dict:
 
     # 1. Sync shop info — resolves name to numeric shop_id
     try:
-        shop_data = await client.get_shop(shop_identifier)
+        shop_data = await client.resolve_shop(shop_identifier)
         shop_id = shop_data['shop_id']
         shop_result['shop_id'] = shop_id
         upsert_shop({
