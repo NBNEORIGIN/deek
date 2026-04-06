@@ -42,7 +42,7 @@ export default function ArticlePanel({ node, onClose }: ArticlePanelProps) {
   return (
     <div
       className={
-        'absolute top-0 right-0 h-full bg-slate-900 border-l border-slate-700 ' +
+        'absolute top-0 right-0 h-full bg-white border-l border-slate-200 shadow-lg ' +
         'transition-transform duration-300 ease-in-out overflow-y-auto z-20 ' +
         (node ? 'translate-x-0' : 'translate-x-full')
       }
@@ -53,16 +53,16 @@ export default function ArticlePanel({ node, onClose }: ArticlePanelProps) {
           {/* Header */}
           <div className="flex items-start justify-between mb-4">
             <div>
-              <h2 className="text-lg font-bold text-slate-100">{node.label}</h2>
-              <p className="text-sm text-slate-400 mt-0.5">{node.description}</p>
+              <h2 className="text-lg font-bold text-slate-900">{node.label}</h2>
+              <p className="text-sm text-slate-500 mt-0.5">{node.description}</p>
               <span
                 className={
                   'inline-block mt-1.5 text-xs font-medium px-2 py-0.5 rounded capitalize ' +
                   (node.status === 'production'
-                    ? 'bg-green-900/50 text-green-400'
+                    ? 'bg-green-100 text-green-700'
                     : node.status === 'development'
-                    ? 'bg-amber-900/50 text-amber-400'
-                    : 'bg-slate-800 text-slate-400')
+                    ? 'bg-amber-100 text-amber-700'
+                    : 'bg-slate-100 text-slate-500')
                 }
               >
                 {node.status}
@@ -70,7 +70,7 @@ export default function ArticlePanel({ node, onClose }: ArticlePanelProps) {
             </div>
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-slate-200 p-1"
+              className="text-slate-400 hover:text-slate-600 p-1"
               aria-label="Close panel"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -83,11 +83,11 @@ export default function ArticlePanel({ node, onClose }: ArticlePanelProps) {
           {loading ? (
             <div className="text-slate-400 text-sm py-8 text-center">Loading article...</div>
           ) : article ? (
-            <div className="prose prose-invert prose-sm max-w-none prose-headings:text-slate-200 prose-p:text-slate-300 prose-li:text-slate-300 prose-strong:text-slate-200 prose-a:text-indigo-400">
+            <div className="prose prose-sm max-w-none prose-headings:text-slate-800 prose-p:text-slate-600 prose-li:text-slate-600 prose-strong:text-slate-800 prose-a:text-indigo-600">
               <ReactMarkdown>{article}</ReactMarkdown>
             </div>
           ) : node.status === 'planned' ? (
-            <div className="text-slate-500 text-sm py-8 text-center">
+            <div className="text-slate-400 text-sm py-8 text-center">
               This module is planned. No article available yet.
             </div>
           ) : null}
