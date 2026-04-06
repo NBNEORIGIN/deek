@@ -75,6 +75,13 @@ class ClawAgent:
         self.openai = OpenAIClient(api_key=openai_key) if openai_key else None
         deepseek_key = os.getenv('DEEPSEEK_API_KEY', '')
         self.deepseek = DeepSeekClient(api_key=deepseek_key) if deepseek_key else None
+        # OpenRouter — final fallback, OpenAI-compatible API with many models
+        openrouter_key = os.getenv('OPENROUTER_API_KEY', '')
+        self.openrouter = OpenAIClient(
+            api_key=openrouter_key,
+            base_url='https://openrouter.ai/api/v1',
+            model=os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-chat'),
+        ) if openrouter_key else None
         # API_PROVIDER = 'claude' | 'openai' | 'deepseek' | 'auto'
         # auto: use tier routing; fall back on rate-limit errors
         self._api_provider = os.getenv('API_PROVIDER', 'auto').lower()
@@ -2143,11 +2150,15 @@ class ClawAgent:
             if requires_vision or override in ('sonnet', 'opus'):
                 if self.openai:
                     return self.openai
+                if self.openrouter:
+                    return self.openrouter
                 return None
             if self.deepseek:
                 return self.deepseek
             if self.openai:
                 return self.openai
+            if self.openrouter:
+                return self.openrouter
             return None
         if isinstance(client, DeepSeekClient):
             if requires_vision:
@@ -2156,7 +2167,13 @@ class ClawAgent:
                 return self.claude
             if self.openai:
                 return self.openai
+            if self.openrouter:
+                return self.openrouter
             return None
+        # OpenAI failed — try OpenRouter as last resort
+        if isinstance(client, OpenAIClient) and client != self.openrouter:
+            if self.openrouter:
+                return self.openrouter
         return None
 
     def _model_name_for_client(self, client, use_opus: bool) -> str:

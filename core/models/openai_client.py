@@ -18,10 +18,18 @@ class OpenAIClient:
         OpenAI:    {type: 'function', function: {name, description, parameters}}
     """
 
-    def __init__(self, api_key: str):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str | None = None,
+        model: str | None = None,
+    ):
         from openai import AsyncOpenAI
-        self.client = AsyncOpenAI(api_key=api_key)
-        self.model = os.getenv('OPENAI_MODEL', 'gpt-4o')
+        kwargs: dict = {'api_key': api_key}
+        if base_url:
+            kwargs['base_url'] = base_url
+        self.client = AsyncOpenAI(**kwargs)
+        self.model = model or os.getenv('OPENAI_MODEL', 'gpt-4o')
         # Expose same attribute names as ClaudeClient so agent.py can log them
         self.opus_model = self.model
 
