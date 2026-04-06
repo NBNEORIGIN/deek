@@ -19,8 +19,8 @@
     {
       "id": "ledger",
       "label": "Ledger",
-      "description": "Financial management and accounts",
-      "status": "development",
+      "description": "Bookkeeping, revenue, P&L, invoice OCR",
+      "status": "production",
       "article_path": "wiki/modules/ledger.md",
       "category": "measure"
     },
@@ -95,6 +95,7 @@
     {"from": "crm", "to": "ledger", "label": "margin data"},
     {"from": "crm", "to": "manufacture", "label": "capacity check"},
     {"from": "render", "to": "manufacture", "label": "ASIN mapping"},
+    {"from": "ledger", "to": "amazon-intelligence", "label": "revenue cross-ref"},
     {"from": "ledger-light", "to": "phloe", "label": "tenant bookkeeping"},
     {"from": "ledger-light", "to": "ledger", "label": "financial data"}
   ],
