@@ -7,6 +7,7 @@ import { useEffect } from 'react'
 const PRIMARY_NAV = [
   { label: 'Priorities', href: '/dashboard', icon: '📋' },
   { label: 'Ask', href: '/ask', icon: '💬' },
+  { label: 'Module Map', href: '/map', icon: '🗺️' },
   { label: 'How We Do Things', href: '/processes', icon: '📖' },
 ]
 
