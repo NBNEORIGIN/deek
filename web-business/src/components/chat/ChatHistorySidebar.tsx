@@ -121,7 +121,7 @@ export default function ChatHistorySidebar({
 
       {/* Sidebar panel */}
       <div
-        className="flex flex-col bg-white border-r border-slate-200 z-40 transition-all duration-200 shrink-0 overflow-hidden"
+        className="flex flex-col bg-white border-l border-slate-200 z-40 transition-all duration-200 shrink-0 overflow-hidden"
         style={{ width: isOpen ? '288px' : '0px' }}
       >
         {/* Header */}

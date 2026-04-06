@@ -3,6 +3,28 @@
 import { useState, useRef, useEffect } from 'react'
 import type { SessionSummary } from '@/types/chat'
 
+function cleanTitle(raw: string): string {
+  // Strip everything between [PERSONALITY] and [END PERSONALITY]
+  let cleaned = raw.replace(/\[PERSONALITY\][\s\S]*?\[END PERSONALITY\]\s*/g, '')
+  // Strip [LIVE BUSINESS DATA...] blocks
+  cleaned = cleaned.replace(/\[LIVE BUSINESS DATA[\s\S]*?\[END LIVE DATA\]\s*/g, '')
+  // Strip [WIKI CONTEXT...] blocks
+  cleaned = cleaned.replace(/\[WIKI CONTEXT[\s\S]*?\[END WIKI CONTEXT\]\s*/g, '')
+  // Strip [CRM DATA...] blocks
+  cleaned = cleaned.replace(/\[CRM DATA[\s\S]*?\[END CRM DATA\]\s*/g, '')
+  // Strip [IMPORTANT:...] blocks
+  cleaned = cleaned.replace(/\[IMPORTANT:[\s\S]*?\]\s*/g, '')
+  // Strip [FILE UPLOADED:...] prefix
+  cleaned = cleaned.replace(/\[FILE UPLOADED:[^\]]*\]\s*/g, '')
+  // Strip [FILE UPLOAD FAILED:...] prefix
+  cleaned = cleaned.replace(/\[FILE UPLOAD FAILED:[^\]]*\]\s*/g, '')
+  // Clean up leading whitespace and newlines
+  cleaned = cleaned.trim()
+  // Take first line only as title, max 60 chars
+  const firstLine = cleaned.split('\n')[0] ?? ''
+  return firstLine.slice(0, 60) || 'New conversation'
+}
+
 function timeAgo(dateStr: string): string {
   const date = new Date(dateStr)
   const now = new Date()
@@ -93,7 +115,7 @@ export default function SessionItem({
         ) : (
           <>
             <p className="text-sm text-slate-800 truncate font-medium leading-tight">
-              {session.title}
+              {cleanTitle(session.title)}
             </p>
             <p className="text-xs text-slate-400 truncate mt-0.5">
               {timeAgo(session.last_message_at)}
