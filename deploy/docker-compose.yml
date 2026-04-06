@@ -29,6 +29,7 @@ services:
     environment:
       DATABASE_URL: postgresql://cairn:${DB_PASSWORD:-cairn_secure_pw}@cairn-db:5432/cairn
       CLAW_FORCE_API: "true"
+      CAIRN_EMBED_PROVIDER: "openai"
       CLAW_API_KEY: ${CLAW_API_KEY:-claw-dev-key-change-in-production}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}

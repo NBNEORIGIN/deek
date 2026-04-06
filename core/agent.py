@@ -1984,8 +1984,25 @@ class ClawAgent:
         return descriptions.get(name, f"Call tool: {name}")
 
     def _embed(self, text: str) -> list[float]:
-        """Embedding function for Tier 2 context retrieval."""
+        """Embedding function for Tier 2 context retrieval.
+        Respects CAIRN_EMBED_PROVIDER: 'openai' uses OpenAI, otherwise Ollama."""
         import httpx
+        provider = os.getenv('CAIRN_EMBED_PROVIDER', '').lower()
+
+        if provider == 'openai' or (provider != 'ollama' and not self._ollama_available()):
+            # Use OpenAI text-embedding-3-small (768 dims)
+            api_key = os.getenv('OPENAI_API_KEY', '')
+            if api_key:
+                response = httpx.post(
+                    "https://api.openai.com/v1/embeddings",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={"model": "text-embedding-3-small", "input": text[:1500], "dimensions": 768},
+                    timeout=30,
+                )
+                response.raise_for_status()
+                return response.json()['data'][0]['embedding']
+
+        # Default: Ollama nomic-embed-text
         response = httpx.post(
             f"{os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')}"
             f"/api/embeddings",
@@ -1993,6 +2010,18 @@ class ClawAgent:
             timeout=30,
         )
         return response.json()['embedding']
+
+    def _ollama_available(self) -> bool:
+        """Quick check if Ollama is reachable."""
+        try:
+            import httpx
+            r = httpx.get(
+                f"{os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')}/api/tags",
+                timeout=2,
+            )
+            return r.status_code == 200
+        except Exception:
+            return False
 
     async def _get_api_client(
         self,
