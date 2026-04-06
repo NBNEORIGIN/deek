@@ -245,6 +245,7 @@ function AskPageInner() {
 
   const [uploadState, setUploadState] = useState<'idle' | 'uploading'>('idle')
   const [uploadFilename, setUploadFilename] = useState('')
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const pendingAutoSpeakRef = useRef<string | null>(null)
@@ -255,58 +256,38 @@ function AskPageInner() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const isNewSession = useRef(!urlSessionId)
 
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    e.target.value = '' // reset so same file can be selected again
-
-    const filename = file.name
-    setUploadState('uploading')
-    setUploadFilename(filename)
-
-    // Show user message
-    const userMsgId = `u-${Date.now()}`
-    setMessages((prev) => [...prev, {
-      id: userMsgId,
-      role: 'user',
-      content: `📎 Uploading: ${filename}`,
-    }])
-
-    try {
-      const formData = new FormData()
-      formData.append('file', file)
-
-      const res = await fetch('/api/chat/upload', {
-        method: 'POST',
-        body: formData,
-      })
-
-      const data = await res.json()
-
-      // Show result as assistant message
-      const resultId = `a-${Date.now()}`
-      const content = data.success
-        ? `${data.summary}${data.detail && data.type !== 'document' ? '\n\nYou can now ask me questions about this data.' : ''}`
-        : `Upload failed: ${data.summary}`
-
-      setMessages((prev) => [...prev, {
-        id: resultId,
-        role: 'assistant',
-        content,
-        isError: !data.success,
-      }])
-    } catch {
-      setMessages((prev) => [...prev, {
-        id: `a-${Date.now()}`,
-        role: 'assistant',
-        content: 'Upload failed — could not reach the server.',
-        isError: true,
-      }])
-    } finally {
-      setUploadState('idle')
-      setUploadFilename('')
+    e.target.value = ''
+    setPendingFile(file)
+    // Pre-fill a helpful prompt if the input is empty
+    if (!input.trim()) {
+      setInput(`Analyse this file and summarise the key findings`)
     }
+  }, [input])
+
+  const handleRemoveFile = useCallback(() => {
+    setPendingFile(null)
   }, [])
+
+  // Handle drag and drop on the whole chat area
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const file = e.dataTransfer.files?.[0]
+    if (file) {
+      setPendingFile(file)
+      if (!input.trim()) {
+        setInput(`Analyse this file and summarise the key findings`)
+      }
+    }
+  }, [input])
 
   // Load existing session from URL param
   useEffect(() => {
@@ -442,12 +423,38 @@ function AskPageInner() {
     const text = (overrideText ?? input).trim()
     if (!text || sending) return
 
-    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: text }
+    // Show user message (include file indicator if attached)
+    const fileLabel = pendingFile ? `📎 ${pendingFile.name}\n` : ''
+    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: fileLabel + text }
     setMessages((prev) => [...prev, userMsg])
     setInput('')
     setSending(true)
 
     if (esRef.current) { esRef.current.close(); esRef.current = null }
+
+    // If there's a pending file, upload it first and prepend the result to the message
+    let fileContext = ''
+    if (pendingFile) {
+      setUploadState('uploading')
+      setUploadFilename(pendingFile.name)
+      try {
+        const formData = new FormData()
+        formData.append('file', pendingFile)
+        const uploadRes = await fetch('/api/chat/upload', { method: 'POST', body: formData })
+        const uploadData = await uploadRes.json()
+        if (uploadData.success) {
+          fileContext = `[FILE UPLOADED: ${pendingFile.name} — ${uploadData.summary}]\n\n`
+        } else {
+          fileContext = `[FILE UPLOAD FAILED: ${pendingFile.name} — ${uploadData.summary}]\n\n`
+        }
+      } catch {
+        fileContext = `[FILE UPLOAD FAILED: ${pendingFile.name} — could not reach server]\n\n`
+      } finally {
+        setUploadState('idle')
+        setUploadFilename('')
+        setPendingFile(null)
+      }
+    }
 
     const assistantId = `a-${Date.now()}`
     setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '' }])
@@ -463,7 +470,7 @@ function AskPageInner() {
     const params = new URLSearchParams({
       project: 'nbne',
       session_id: sessionId,
-      message: text,
+      message: fileContext + text,
       channel: 'web',
     })
 
@@ -598,7 +605,7 @@ function AskPageInner() {
   }, [voiceState, startRecording, stopRecording])
 
   return (
-    <div className="flex h-[calc(100dvh-56px-3rem)]">
+    <div className="flex h-[calc(100dvh-56px-3rem)]" onDragOver={handleDragOver} onDrop={handleDrop}>
       {/* Chat history sidebar */}
       <ChatHistorySidebar
         isOpen={historyOpen}
@@ -729,14 +736,26 @@ function AskPageInner() {
               </div>
             )}
 
-            {/* File upload indicator */}
+            {/* Pending file indicator */}
+            {pendingFile && uploadState !== 'uploading' && (
+              <div className="flex items-center justify-between px-3 py-2 mb-2 bg-slate-50 border border-slate-200 rounded-lg max-w-3xl mx-auto w-full">
+                <div className="flex items-center gap-2 text-xs text-slate-600 font-medium">
+                  <span>📎</span>
+                  <span className="truncate max-w-[200px] md:max-w-[400px]">{pendingFile.name}</span>
+                  <span className="text-slate-400">({(pendingFile.size / 1024).toFixed(0)} KB)</span>
+                </div>
+                <button onClick={handleRemoveFile} className="text-xs text-slate-400 hover:text-red-500 ml-2">Remove</button>
+              </div>
+            )}
+
+            {/* File uploading indicator */}
             {uploadState === 'uploading' && (
               <div className="flex items-center gap-2 px-3 py-2 mb-2 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-600 font-medium max-w-3xl mx-auto w-full">
                 <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                 </svg>
-                Uploading {uploadFilename}...
+                Processing {uploadFilename}...
               </div>
             )}
 
