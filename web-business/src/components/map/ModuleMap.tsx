@@ -52,6 +52,17 @@ export default function ModuleMap() {
       .catch((err) => console.error('Failed to load graph:', err))
   }, [])
 
+  // Configure d3 forces for wider spacing once graph mounts
+  useEffect(() => {
+    const fg = graphRef.current
+    if (!fg || !graphData) return
+    const charge = fg.d3Force('charge')
+    if (charge) charge.strength(-600).distanceMax(500)
+    const link = fg.d3Force('link')
+    if (link) link.distance(180)
+    fg.d3ReheatSimulation()
+  }, [graphData])
+
   const handleNodeClick = useCallback((node: any) => {
     setSelectedNode(node as GraphNode)
   }, [])
@@ -279,27 +290,9 @@ export default function ModuleMap() {
         cooldownTicks={150}
         warmupTicks={80}
         d3AlphaMin={0.005}
-        linkDistance={180}
-        dagLevelDistance={120}
         onEngineStop={() => {
           if (graphRef.current) {
             graphRef.current.zoomToFit(400, 60)
-          }
-        }}
-        onEngineTick={() => {
-          // Increase charge repulsion on first render
-          const fg = graphRef.current
-          if (fg) {
-            const charge = fg.d3Force('charge')
-            if (charge && !charge._configured) {
-              charge.strength(-600).distanceMax(500)
-              charge._configured = true
-            }
-            const link = fg.d3Force('link')
-            if (link && !link._configured) {
-              link.distance(180)
-              link._configured = true
-            }
           }
         }}
       />
