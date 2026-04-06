@@ -243,13 +243,70 @@ function AskPageInner() {
   )
   const [loadingSession, setLoadingSession] = useState(false)
 
+  const [uploadState, setUploadState] = useState<'idle' | 'uploading'>('idle')
+  const [uploadFilename, setUploadFilename] = useState('')
+
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const pendingAutoSpeakRef = useRef<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const esRef = useRef<EventSource | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const isNewSession = useRef(!urlSessionId)
+
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = '' // reset so same file can be selected again
+
+    const filename = file.name
+    setUploadState('uploading')
+    setUploadFilename(filename)
+
+    // Show user message
+    const userMsgId = `u-${Date.now()}`
+    setMessages((prev) => [...prev, {
+      id: userMsgId,
+      role: 'user',
+      content: `📎 Uploading: ${filename}`,
+    }])
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const res = await fetch('/api/chat/upload', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const data = await res.json()
+
+      // Show result as assistant message
+      const resultId = `a-${Date.now()}`
+      const content = data.success
+        ? `${data.summary}${data.detail && data.type !== 'document' ? '\n\nYou can now ask me questions about this data.' : ''}`
+        : `Upload failed: ${data.summary}`
+
+      setMessages((prev) => [...prev, {
+        id: resultId,
+        role: 'assistant',
+        content,
+        isError: !data.success,
+      }])
+    } catch {
+      setMessages((prev) => [...prev, {
+        id: `a-${Date.now()}`,
+        role: 'assistant',
+        content: 'Upload failed — could not reach the server.',
+        isError: true,
+      }])
+    } finally {
+      setUploadState('idle')
+      setUploadFilename('')
+    }
+  }, [])
 
   // Load existing session from URL param
   useEffect(() => {
@@ -672,8 +729,38 @@ function AskPageInner() {
               </div>
             )}
 
+            {/* File upload indicator */}
+            {uploadState === 'uploading' && (
+              <div className="flex items-center gap-2 px-3 py-2 mb-2 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-600 font-medium max-w-3xl mx-auto w-full">
+                <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                Uploading {uploadFilename}...
+              </div>
+            )}
+
             {/* Input bar */}
             <div className="bg-white border border-slate-200 rounded-xl p-2.5 md:p-3 flex gap-2 md:gap-3 items-end shadow-sm flex-shrink-0 max-w-3xl mx-auto w-full">
+              {/* File attach button */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                accept=".csv,.xlsm,.xlsx,.tsv,.txt,.md,.pdf,.docx"
+                onChange={handleFileSelect}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={sending || uploadState === 'uploading'}
+                title="Attach file (reports, documents)"
+                className="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center transition-colors bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-50"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+              </button>
               <textarea
                 className="flex-1 resize-none text-sm text-slate-800 placeholder-slate-400 focus:outline-none min-h-[40px] max-h-[160px] overflow-y-auto px-1 md:px-0"
                 rows={1}
