@@ -57,9 +57,12 @@ export default function ModuleMap() {
     const fg = graphRef.current
     if (!fg || !graphData) return
     const charge = fg.d3Force('charge')
-    if (charge) charge.strength(-600).distanceMax(500)
+    if (charge) charge.strength(-2000).distanceMax(800)
     const link = fg.d3Force('link')
-    if (link) link.distance(180)
+    if (link) link.distance(300)
+    // Add collision force to prevent overlap based on node radius
+    const d3 = require('d3-force')
+    fg.d3Force('collide', d3.forceCollide(60))
     fg.d3ReheatSimulation()
   }, [graphData])
 
