@@ -277,6 +277,99 @@ async def _scheduled_reindex_loop(
             except Exception as e:
                 print(f'[Cairn] Scheduled reindex failed {project_id}: {e}')
 
+        # ── Wiki freshness check ────────────────────────────────────
+        await _check_wiki_freshness()
+
+
+async def _check_wiki_freshness() -> None:
+    """Re-embed any wiki articles whose file mtime is newer than their DB entry."""
+    wiki_root = _CLAW_ROOT / 'wiki'
+    if not wiki_root.exists():
+        return
+
+    db_url = os.getenv('DATABASE_URL', '')
+    if not db_url:
+        return
+
+    try:
+        import psycopg2
+        from pgvector.psycopg2 import register_vector
+        conn = psycopg2.connect(db_url, connect_timeout=5)
+        register_vector(conn)
+    except Exception:
+        return
+
+    from core.wiki.embeddings import get_embed_fn
+    embed_fn = get_embed_fn()
+    if not embed_fn:
+        conn.close()
+        return
+
+    stale = 0
+    for md_file in wiki_root.rglob('*.md'):
+        if md_file.name == 'index.md':
+            continue
+
+        rel_path = str(md_file.relative_to(_CLAW_ROOT)).replace('\\', '/')
+        file_mtime = md_file.stat().st_mtime
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT indexed_at FROM claw_code_chunks
+                   WHERE project_id = 'claw' AND file_path = %s AND chunk_type = 'wiki'""",
+                (rel_path,),
+            )
+            row = cur.fetchone()
+
+        # Needs embedding if: not in DB, or file is newer than indexed_at
+        needs_update = False
+        if not row:
+            needs_update = True
+        elif row[0]:
+            indexed_ts = row[0].timestamp()
+            if file_mtime > indexed_ts:
+                needs_update = True
+
+        if not needs_update:
+            continue
+
+        content = md_file.read_text(encoding='utf-8')
+        if not content.strip():
+            continue
+
+        try:
+            embedding = embed_fn(content[:6000])
+        except Exception:
+            continue
+
+        import hashlib
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
+        chunk_name = md_file.stem
+        for line in content.split('\n'):
+            if line.startswith('# '):
+                chunk_name = line[2:].strip()
+                break
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """DELETE FROM claw_code_chunks
+                   WHERE project_id = 'claw' AND file_path = %s AND chunk_type = 'wiki'""",
+                (rel_path,),
+            )
+            cur.execute(
+                """INSERT INTO claw_code_chunks
+                   (project_id, file_path, chunk_content, chunk_type, chunk_name,
+                    content_hash, embedding, indexed_at)
+                   VALUES (%s, %s, %s, 'wiki', %s, %s, %s::vector, NOW())""",
+                ('claw', rel_path, content, chunk_name, content_hash, embedding),
+            )
+        conn.commit()
+        stale += 1
+
+    conn.close()
+    if stale > 0:
+        print(f'[Cairn] Wiki freshness: re-embedded {stale} stale articles')
+
 
 # In-memory index run registry — tracks manual and auto index operations
 _index_runs: dict[str, dict] = {}
