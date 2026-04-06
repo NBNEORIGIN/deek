@@ -17,6 +17,8 @@ interface GraphNode {
   category: string
   x?: number
   y?: number
+  fx?: number
+  fy?: number
 }
 
 interface GraphEdge {
@@ -39,6 +41,41 @@ const STATUS_INDICATORS: Record<string, string> = {
   planned: '#94a3b8',
 }
 
+/**
+ * Compute fixed positions in a radial layout.
+ * Cairn at centre, other nodes arranged in a circle around it.
+ */
+function computeRadialPositions(nodes: GraphNode[]): GraphNode[] {
+  const cx = 0
+  const cy = 0
+  const radius = 220
+
+  // Cairn goes in the centre
+  const centre = nodes.find((n) => n.id === 'cairn')
+  const others = nodes.filter((n) => n.id !== 'cairn')
+
+  const positioned: GraphNode[] = []
+
+  if (centre) {
+    positioned.push({ ...centre, fx: cx, fy: cy })
+  }
+
+  // Arrange remaining nodes evenly around the circle
+  const angleStep = (2 * Math.PI) / others.length
+  const startAngle = -Math.PI / 2 // Start from top
+
+  others.forEach((node, i) => {
+    const angle = startAngle + i * angleStep
+    positioned.push({
+      ...node,
+      fx: cx + radius * Math.cos(angle),
+      fy: cy + radius * Math.sin(angle),
+    })
+  })
+
+  return positioned
+}
+
 export default function ModuleMap() {
   const [graphData, setGraphData] = useState<GraphData | null>(null)
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
@@ -52,18 +89,13 @@ export default function ModuleMap() {
       .catch((err) => console.error('Failed to load graph:', err))
   }, [])
 
-  // Configure d3 forces for wider spacing once graph mounts
+  // Zoom to fit after initial render
   useEffect(() => {
-    const fg = graphRef.current
-    if (!fg || !graphData) return
-    const charge = fg.d3Force('charge')
-    if (charge) charge.strength(-2000).distanceMax(800)
-    const link = fg.d3Force('link')
-    if (link) link.distance(300)
-    // Add collision force to prevent overlap based on node radius
-    const d3 = require('d3-force')
-    fg.d3Force('collide', d3.forceCollide(60))
-    fg.d3ReheatSimulation()
+    if (!graphData || !graphRef.current) return
+    const timer = setTimeout(() => {
+      graphRef.current?.zoomToFit(400, 80)
+    }, 200)
+    return () => clearTimeout(timer)
   }, [graphData])
 
   const handleNodeClick = useCallback((node: any) => {
@@ -72,6 +104,12 @@ export default function ModuleMap() {
 
   const handleNodeHover = useCallback((node: any) => {
     setHoveredNode(node?.id ?? null)
+  }, [])
+
+  // Allow dragging to unpin and repin
+  const handleNodeDragEnd = useCallback((node: any) => {
+    node.fx = node.x
+    node.fy = node.y
   }, [])
 
   const nodeCanvasObject = useCallback(
@@ -83,8 +121,10 @@ export default function ModuleMap() {
       const isPlanned = n.status === 'planned'
       const isHovered = hoveredNode === n.id
       const isSelected = selectedNode?.id === n.id
+      const isCairn = n.id === 'cairn'
 
-      const radius = isHovered || isSelected ? 26 : 22
+      const baseRadius = isCairn ? 32 : 26
+      const radius = isHovered || isSelected ? baseRadius + 4 : baseRadius
       const x = node.x ?? 0
       const y = node.y ?? 0
 
@@ -92,7 +132,7 @@ export default function ModuleMap() {
       if (!isPlanned) {
         ctx.beginPath()
         ctx.arc(x + 1, y + 2, radius, 0, 2 * Math.PI)
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.08)'
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.06)'
         ctx.fill()
       }
 
@@ -114,20 +154,11 @@ export default function ModuleMap() {
       ctx.stroke()
       ctx.setLineDash([])
 
-      // Category colour dot (top-left)
-      const dotRadius = 4.5
-      const dotX = x - radius * 0.55
-      const dotY = y - radius * 0.55
-      ctx.beginPath()
-      ctx.arc(dotX, dotY, dotRadius, 0, 2 * Math.PI)
-      ctx.fillStyle = colour
-      ctx.fill()
-
       // Status dot (top-right)
-      const statusX = x + radius * 0.55
-      const statusY = y - radius * 0.55
+      const statusX = x + radius * 0.6
+      const statusY = y - radius * 0.6
       ctx.beginPath()
-      ctx.arc(statusX, statusY, 3.5, 0, 2 * Math.PI)
+      ctx.arc(statusX, statusY, 4, 0, 2 * Math.PI)
       ctx.fillStyle = STATUS_INDICATORS[n.status] ?? '#94a3b8'
       ctx.fill()
       ctx.strokeStyle = '#ffffff'
@@ -135,7 +166,9 @@ export default function ModuleMap() {
       ctx.stroke()
 
       // Label — inside the node
-      const fontSize = Math.max(9, 11 / globalScale)
+      const fontSize = isCairn
+        ? Math.max(11, 13 / globalScale)
+        : Math.max(9, 11 / globalScale)
       ctx.font = `600 ${fontSize}px Inter, system-ui, sans-serif`
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
@@ -143,14 +176,14 @@ export default function ModuleMap() {
 
       // Wrap long labels
       const label = n.label
-      if (label.length > 12) {
+      if (label.length > 10 && !isCairn) {
         const words = label.split(' ')
         if (words.length >= 2) {
           const mid = Math.ceil(words.length / 2)
           const line1 = words.slice(0, mid).join(' ')
           const line2 = words.slice(mid).join(' ')
-          ctx.fillText(line1, x, y - fontSize * 0.4)
-          ctx.fillText(line2, x, y + fontSize * 0.6)
+          ctx.fillText(line1, x, y - fontSize * 0.35)
+          ctx.fillText(line2, x, y + fontSize * 0.55)
         } else {
           ctx.fillText(label, x, y)
         }
@@ -164,7 +197,7 @@ export default function ModuleMap() {
         ctx.font = `${descSize}px Inter, system-ui, sans-serif`
         ctx.fillStyle = '#64748b'
         ctx.textBaseline = 'top'
-        ctx.fillText(n.description, x, y + radius + 6)
+        ctx.fillText(n.description, x, y + radius + 8)
       }
     },
     [graphData, hoveredNode, selectedNode]
@@ -180,13 +213,13 @@ export default function ModuleMap() {
       ctx.beginPath()
       ctx.moveTo(start.x, start.y)
       ctx.lineTo(end.x, end.y)
-      ctx.strokeStyle = '#cbd5e1'
-      ctx.lineWidth = 1.2
+      ctx.strokeStyle = '#d1d5db'
+      ctx.lineWidth = 1
       ctx.stroke()
 
       // Arrow at midpoint
       const angle = Math.atan2(end.y - start.y, end.x - start.x)
-      const arrowLen = 7
+      const arrowLen = 6
       const midX = (start.x + end.x) / 2
       const midY = (start.y + end.y) / 2
       ctx.beginPath()
@@ -200,29 +233,26 @@ export default function ModuleMap() {
         midX - arrowLen * Math.cos(angle + Math.PI / 6),
         midY - arrowLen * Math.sin(angle + Math.PI / 6)
       )
-      ctx.strokeStyle = '#94a3b8'
-      ctx.lineWidth = 1.2
+      ctx.strokeStyle = '#9ca3af'
+      ctx.lineWidth = 1
       ctx.stroke()
 
       // Edge label
-      if (globalScale > 0.7) {
-        const labelSize = Math.max(7, 8 / globalScale)
-        ctx.font = `${labelSize}px Inter, system-ui, sans-serif`
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-
-        // Background pill for readability
+      if (globalScale > 0.6) {
         const text = link.label ?? ''
         if (text) {
-          const metrics = ctx.measureText(text)
-          const pw = metrics.width + 6
-          const ph = labelSize + 4
-          ctx.fillStyle = '#ffffff'
-          ctx.globalAlpha = 0.85
-          ctx.fillRect(midX - pw / 2, midY - 8 - ph / 2, pw, ph)
-          ctx.globalAlpha = 1
+          const labelSize = Math.max(7, 8 / globalScale)
+          ctx.font = `${labelSize}px Inter, system-ui, sans-serif`
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
 
-          ctx.fillStyle = '#64748b'
+          const metrics = ctx.measureText(text)
+          const pw = metrics.width + 8
+          const ph = labelSize + 4
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'
+          ctx.fillRect(midX - pw / 2, midY - 8 - ph / 2, pw, ph)
+
+          ctx.fillStyle = '#6b7280'
           ctx.fillText(text, midX, midY - 8)
         }
       }
@@ -238,8 +268,11 @@ export default function ModuleMap() {
     )
   }
 
+  // Pre-compute fixed radial positions so nodes never overlap
+  const positionedNodes = computeRadialPositions(graphData.nodes)
+
   const forceData = {
-    nodes: graphData.nodes,
+    nodes: positionedNodes,
     links: graphData.edges.map((e) => ({
       ...e,
       source: e.from,
@@ -280,24 +313,17 @@ export default function ModuleMap() {
         nodeCanvasObject={nodeCanvasObject}
         nodePointerAreaPaint={(node: any, colour: string, ctx: CanvasRenderingContext2D) => {
           ctx.beginPath()
-          ctx.arc(node.x ?? 0, node.y ?? 0, 26, 0, 2 * Math.PI)
+          ctx.arc(node.x ?? 0, node.y ?? 0, 30, 0, 2 * Math.PI)
           ctx.fillStyle = colour
           ctx.fill()
         }}
         linkCanvasObject={linkCanvasObject}
         onNodeClick={handleNodeClick}
         onNodeHover={handleNodeHover}
+        onNodeDragEnd={handleNodeDragEnd}
         backgroundColor="#f8fafc"
-        d3VelocityDecay={0.25}
-        d3AlphaDecay={0.015}
-        cooldownTicks={150}
-        warmupTicks={80}
-        d3AlphaMin={0.005}
-        onEngineStop={() => {
-          if (graphRef.current) {
-            graphRef.current.zoomToFit(400, 60)
-          }
-        }}
+        cooldownTicks={0}
+        warmupTicks={0}
       />
 
       {/* Article panel */}
