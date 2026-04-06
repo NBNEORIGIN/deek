@@ -10,11 +10,14 @@ Regions:
   FE → sellingpartnerapi-fe.amazon.com  (AU, JP, SG...)
 """
 import gzip
+import logging
 import os
 import time
 from typing import Literal
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 Region = Literal['EU', 'NA', 'FE']
 
@@ -195,9 +198,11 @@ def wait_for_report(region: Region, report_id: str,
     Raises ReportError on CANCELLED/FATAL, TimeoutError if max_wait exceeded.
     """
     deadline = time.time() + max_wait
+    elapsed = 0
     while time.time() < deadline:
         data = spapi_get(region, f'/reports/2021-06-30/reports/{report_id}')
         status = data.get('processingStatus', '')
+        logger.info("SP-API report %s: status=%s elapsed=%ds", report_id, status, elapsed)
         if status == 'DONE':
             doc_id = data.get('reportDocumentId')
             if not doc_id:
@@ -206,6 +211,7 @@ def wait_for_report(region: Region, report_id: str,
         if status in ('CANCELLED', 'FATAL'):
             raise ReportError(f"Report {report_id} failed: status={status}")
         time.sleep(poll_interval)
+        elapsed += poll_interval
     raise TimeoutError(f"Report {report_id} not ready after {max_wait}s")
 
 

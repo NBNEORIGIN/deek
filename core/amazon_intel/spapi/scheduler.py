@@ -9,11 +9,15 @@ Schedule: 4x daily (every 6 hours). Enforced by checking last_completed_at
 in the sync log — won't re-run if last sync was < MIN_INTERVAL_HOURS ago,
 unless force=True.
 """
+import logging
 import traceback
 from datetime import datetime, timezone
+from typing import Callable
 
 from core.amazon_intel.db import get_conn
 from .client import Region
+
+logger = logging.getLogger(__name__)
 
 MIN_INTERVAL_HOURS = 6
 ACTIVE_REGIONS: list[Region] = ['EU']  # Add 'NA', 'FE' once credentials confirmed
@@ -21,6 +25,7 @@ ACTIVE_REGIONS: list[Region] = ['EU']  # Add 'NA', 'FE' once credentials confirm
 
 def _log_start(sync_type: str, region: str) -> int:
     """Insert a sync log entry. Returns log ID."""
+    logger.info("SP-API sync starting: type=%s region=%s", sync_type, region)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -35,6 +40,7 @@ def _log_start(sync_type: str, region: str) -> int:
 
 def _log_complete(log_id: int, result: dict):
     import json
+    logger.info("SP-API sync complete: log_id=%d result=%s", log_id, result)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -47,6 +53,7 @@ def _log_complete(log_id: int, result: dict):
 
 
 def _log_error(log_id: int, error: str):
+    logger.error("SP-API sync error: log_id=%d error=%s", log_id, error[:500])
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -56,6 +63,20 @@ def _log_error(log_id: int, error: str):
                 (error[:2000], log_id),
             )
             conn.commit()
+
+
+def _run_logged(sync_type: str, region: str, fn: Callable, **kwargs):
+    """
+    Wrapper used by individual sync endpoints to get the same logging
+    and status tracking as the full scheduler.
+    """
+    log_id = _log_start(sync_type, region)
+    try:
+        result = fn(**kwargs)
+        _log_complete(log_id, result)
+    except Exception as e:
+        _log_error(log_id, traceback.format_exc())
+        raise
 
 
 def _is_due(sync_type: str, region: str) -> bool:

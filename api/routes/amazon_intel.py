@@ -229,9 +229,20 @@ async def cairn_context():
 
 @router.get("/spapi/status")
 async def spapi_status():
-    """Recent SP-API sync log entries."""
+    """
+    Recent SP-API sync log entries.
+    Status values: running | complete | error
+    While 'running': Amazon is generating the report (5-20 min).
+    """
     from core.amazon_intel.spapi.scheduler import get_sync_status
-    return {'syncs': get_sync_status(limit=40)}
+    syncs = get_sync_status(limit=40)
+    running = [s for s in syncs if s['status'] == 'running']
+    last_complete = {s['sync_type']: s for s in syncs if s['status'] == 'complete'}
+    return {
+        'syncs': syncs,
+        'running': running,
+        'last_complete': last_complete,
+    }
 
 
 @router.post("/spapi/sync")
@@ -263,9 +274,11 @@ async def spapi_sync_inventory(
     region: str = Query('EU'),
 ):
     """Pull All Listings Report for a region via SP-API."""
+    from core.amazon_intel.spapi.scheduler import _run_logged
     from core.amazon_intel.spapi.inventory import sync_inventory
-    background_tasks.add_task(sync_inventory, region=region)
-    return {'status': 'started', 'region': region, 'type': 'inventory'}
+    background_tasks.add_task(_run_logged, 'inventory', region, sync_inventory, region=region)
+    return {'status': 'started', 'region': region, 'type': 'inventory',
+            'message': 'Poll /ami/spapi/status for result. Amazon report generation: 5-20 min.'}
 
 
 @router.post("/spapi/sync/analytics")
@@ -275,9 +288,12 @@ async def spapi_sync_analytics(
     days: int = Query(30, le=60),
 ):
     """Pull 30-day Sales & Traffic report via SP-API."""
+    from core.amazon_intel.spapi.scheduler import _run_logged
     from core.amazon_intel.spapi.analytics import sync_analytics
-    background_tasks.add_task(sync_analytics, region=region, days=days)
-    return {'status': 'started', 'region': region, 'type': 'analytics', 'days': days}
+    background_tasks.add_task(_run_logged, 'analytics', region, sync_analytics,
+                               region=region, days=days)
+    return {'status': 'started', 'region': region, 'type': 'analytics', 'days': days,
+            'message': 'Poll /ami/spapi/status for result.'}
 
 
 @router.post("/spapi/sync/advertising")
