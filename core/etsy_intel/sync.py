@@ -36,9 +36,24 @@ def _get_shop_identifiers() -> list[str]:
 async def sync_all() -> dict:
     """
     Full sync: shops, listings, receipts, scoring, snapshots.
+    Loads OAuth token from DB if available (enables receipt access).
     Returns a summary of what was synced.
     """
-    client = EtsyClient()
+    # Load OAuth token if available
+    from core.etsy_intel.db import get_oauth_token
+    oauth = get_oauth_token()
+
+    if oauth and oauth.get('access_token'):
+        client = EtsyClient(
+            access_token=oauth['access_token'],
+            refresh_token=oauth.get('refresh_token'),
+            token_expires_at=oauth.get('expires_at'),
+        )
+        log.info('Etsy sync using OAuth token (user_id=%s)', oauth.get('user_id'))
+    else:
+        client = EtsyClient()
+        log.info('Etsy sync using API key only (no OAuth — receipts will be skipped)')
+
     try:
         shop_identifiers = _get_shop_identifiers()
         if not shop_identifiers:

@@ -119,6 +119,20 @@ CREATE TABLE IF NOT EXISTS etsy_listing_snapshots (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_etsy_snapshots_listing_date
     ON etsy_listing_snapshots(listing_id, snapshot_date);
+
+-- OAuth 2.0 token storage (one row per authenticated user)
+CREATE TABLE IF NOT EXISTS etsy_oauth_tokens (
+    id              SERIAL PRIMARY KEY,
+    user_id         BIGINT UNIQUE NOT NULL,
+    access_token    TEXT NOT NULL,
+    refresh_token   TEXT NOT NULL,
+    expires_at      TIMESTAMP NOT NULL,
+    scopes          TEXT,
+    code_verifier   TEXT,
+    state           TEXT,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -341,6 +355,83 @@ def get_listings(*, shop_id: int = None, state: str = None,
             total = cur.fetchone()[0]
 
     return {'total': total, 'limit': limit, 'offset': offset, 'listings': rows}
+
+
+# ── OAuth token helpers ──────────────────────────────────────────────────────
+
+def save_oauth_state(state: str, code_verifier: str) -> None:
+    """Store PKCE state + verifier before redirect. Uses user_id=0 as placeholder."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO etsy_oauth_tokens
+                    (user_id, access_token, refresh_token, expires_at,
+                     state, code_verifier)
+                VALUES (0, '', '', CURRENT_TIMESTAMP, %s, %s)
+                ON CONFLICT (user_id)
+                DO UPDATE SET state = EXCLUDED.state,
+                              code_verifier = EXCLUDED.code_verifier,
+                              updated_at = CURRENT_TIMESTAMP
+            """, (state, code_verifier))
+            conn.commit()
+
+
+def get_oauth_state(state: str) -> dict | None:
+    """Retrieve stored state + code_verifier for callback validation."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT state, code_verifier FROM etsy_oauth_tokens
+                WHERE state = %s
+            """, (state,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {'state': row[0], 'code_verifier': row[1]}
+
+
+def save_oauth_token(user_id: int, access_token: str, refresh_token: str,
+                     expires_at, scopes: str = None) -> None:
+    """Store or update OAuth tokens after code exchange or refresh."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO etsy_oauth_tokens
+                    (user_id, access_token, refresh_token, expires_at, scopes,
+                     state, code_verifier)
+                VALUES (%s, %s, %s, %s, %s, NULL, NULL)
+                ON CONFLICT (user_id)
+                DO UPDATE SET access_token = EXCLUDED.access_token,
+                              refresh_token = EXCLUDED.refresh_token,
+                              expires_at = EXCLUDED.expires_at,
+                              scopes = EXCLUDED.scopes,
+                              state = NULL,
+                              code_verifier = NULL,
+                              updated_at = CURRENT_TIMESTAMP
+            """, (user_id, access_token, refresh_token, expires_at, scopes))
+            conn.commit()
+
+
+def get_oauth_token() -> dict | None:
+    """Get the stored OAuth token (most recent non-placeholder)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT user_id, access_token, refresh_token, expires_at, scopes
+                FROM etsy_oauth_tokens
+                WHERE access_token != '' AND user_id != 0
+                ORDER BY updated_at DESC LIMIT 1
+            """)
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                'user_id': row[0],
+                'access_token': row[1],
+                'refresh_token': row[2],
+                'expires_at': row[3],
+                'scopes': row[4],
+            }
 
 
 def get_listing(listing_id: int) -> dict | None:

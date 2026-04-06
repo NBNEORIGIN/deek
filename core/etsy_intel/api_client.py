@@ -1,36 +1,43 @@
 """
 Etsy API v3 client with rate limiting and pagination.
 
-Authentication: x-api-key header with keystring:shared_secret format.
-(Changed Feb 2026 — Etsy now requires both in a colon-separated header.)
+Authentication:
+  - API key: x-api-key header with keystring:shared_secret format
+    (Changed Feb 2026 — Etsy now requires both colon-separated.)
+  - OAuth 2.0: Authorization: Bearer {access_token} for scoped endpoints
+    (receipts, transactions). x-api-key is still required alongside Bearer.
+
 Rate limit: 5 QPS / 5K QPD (Personal Access tier).
 Pagination: offset/limit based.
 
-Credentials come from environment variables:
+Credentials from environment:
   ETSY_API_KEY       — the keystring
   ETSY_SHARED_SECRET — the shared secret
-  Header sent: x-api-key: {keystring}:{shared_secret}
 """
 import os
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
 log = logging.getLogger(__name__)
 
 BASE_URL = 'https://api.etsy.com/v3'
+TOKEN_URL = 'https://api.etsy.com/v3/public/oauth/token'
 MAX_QPS = 5
 PAGE_SIZE = 100          # Etsy max per request
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2.0      # seconds, doubled each retry
+REFRESH_BUFFER = timedelta(minutes=5)  # refresh token this long before expiry
 
 
 class EtsyClient:
-    """Async Etsy API v3 client with rate limiting."""
+    """Async Etsy API v3 client with rate limiting and optional OAuth."""
 
-    def __init__(self, api_key: str = None, shared_secret: str = None):
+    def __init__(self, api_key: str = None, shared_secret: str = None,
+                 access_token: str = None, refresh_token: str = None,
+                 token_expires_at: datetime = None):
         self.api_key = api_key or os.getenv('ETSY_API_KEY', '')
         self.shared_secret = shared_secret or os.getenv('ETSY_SHARED_SECRET', '')
         if not self.api_key:
@@ -38,26 +45,92 @@ class EtsyClient:
         if not self.shared_secret:
             raise ValueError('ETSY_SHARED_SECRET not set')
         # Etsy requires keystring:secret combined in the header (since Feb 2026)
-        self._auth_header = f'{self.api_key}:{self.shared_secret}'
+        self._api_key_header = f'{self.api_key}:{self.shared_secret}'
+
+        # OAuth state (optional — enables scoped endpoints like receipts)
+        self._access_token = access_token
+        self._refresh_token = refresh_token
+        self._token_expires_at = token_expires_at
+
         self._semaphore = asyncio.Semaphore(MAX_QPS)
         self._client: httpx.AsyncClient | None = None
 
+    @property
+    def has_oauth(self) -> bool:
+        return bool(self._access_token)
+
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
+            headers = {'x-api-key': self._api_key_header}
+            if self._access_token:
+                headers['Authorization'] = f'Bearer {self._access_token}'
             self._client = httpx.AsyncClient(
                 base_url=BASE_URL,
-                headers={'x-api-key': self._auth_header},
+                headers=headers,
                 timeout=30.0,
             )
         return self._client
+
+    def _rebuild_client(self):
+        """Force client rebuild on next request (after token refresh)."""
+        if self._client and not self._client.is_closed:
+            # Schedule close but don't await — just mark for rebuild
+            self._client = None
 
     async def close(self):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
 
+    async def _maybe_refresh_token(self):
+        """Refresh OAuth token if it's about to expire."""
+        if not self._access_token or not self._refresh_token:
+            return
+        if not self._token_expires_at:
+            return
+
+        now = datetime.now(timezone.utc)
+        expires = self._token_expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+
+        if now + REFRESH_BUFFER < expires:
+            return  # still valid
+
+        log.info('Etsy OAuth token expiring soon, refreshing...')
+        try:
+            async with httpx.AsyncClient() as http:
+                resp = await http.post(TOKEN_URL, json={
+                    'grant_type': 'refresh_token',
+                    'client_id': self.api_key,
+                    'refresh_token': self._refresh_token,
+                })
+                resp.raise_for_status()
+                data = resp.json()
+
+            self._access_token = data['access_token']
+            self._refresh_token = data['refresh_token']
+            self._token_expires_at = datetime.now(timezone.utc) + timedelta(
+                seconds=data.get('expires_in', 3600)
+            )
+            self._rebuild_client()
+
+            # Persist refreshed token to database
+            from core.etsy_intel.db import save_oauth_token
+            user_id = int(self._access_token.split('.')[0])
+            save_oauth_token(
+                user_id=user_id,
+                access_token=self._access_token,
+                refresh_token=self._refresh_token,
+                expires_at=self._token_expires_at,
+            )
+            log.info('Etsy OAuth token refreshed successfully')
+        except Exception as e:
+            log.error('Failed to refresh Etsy OAuth token: %s', e)
+
     async def _request(self, method: str, path: str, **kwargs) -> dict:
         """Make a rate-limited, retried request."""
+        await self._maybe_refresh_token()
         client = await self._get_client()
 
         for attempt in range(MAX_RETRIES):
