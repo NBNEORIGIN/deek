@@ -30,13 +30,13 @@ create production orders directly in the Manufacture pipeline.
 ```
 User clicks "Sync GB" →
   POST /api/restock/GB/sync/ →
-    Manufacture spapi_client.py calls Cairn POST /ami/spapi/report/request →
-      Cairn requests GET_FBA_INVENTORY_PLANNING_DATA from Amazon SP-API
-    Background thread polls Cairn /ami/spapi/report/{id}/status every 30s (5-15 min)
-    When DONE: downloads CSV bytes →
-      parser.py normalises rows →
-      assembler.py resolves SKUs to M-numbers + runs Newsvendor →
-      RestockItem records stored
+    spapi_client.py: LWA token exchange → Amazon SP-API
+    POST /reports/2021-06-30/reports (reportType=GET_FBA_INVENTORY_PLANNING_DATA)
+    Background thread polls GET /reports/2021-06-30/reports/{id} every 30s (5-15 min)
+    When processingStatus=DONE: fetches document URL → downloads TSV bytes →
+      parser.py: tab-split, maps UK→GB, derives restock alerts from days_of_supply →
+      assembler.py: resolves SKUs→M-numbers, skips D2C exclusions, runs Newsvendor →
+      RestockItem records bulk-created
   Frontend polls /api/restock/GB/status/ every 10s
   When complete: table loads with Amazon rec + Newsvendor rec side-by-side
 User edits "Send qty" per item, selects rows →
@@ -67,14 +67,25 @@ GET/POST/DELETE /api/restock/exclusions/   D2C exclusion list
 ## Supported Marketplaces
 GB (EU region), DE (EU), FR (EU), US (NA), CA (NA), AU (FE)
 
-## Report Schema
-CSV columns: Country, Product Name, FNSKU, Merchant SKU, ASIN, Condition,
-Price, Sales last 30 days, Units Sold Last 30 Days, Total Units, Inbound,
-Available, Days of Supply at Amazon Fulfillment Network,
-Total Days of Supply (including units from open shipments),
-Alert, Recommended replenishment qty, Recommended ship date, Unit storage size
+## Report Schema (actual — TSV format)
+Tab-separated. Headers are lowercase-hyphenated. Key columns:
 
-Alert values: `out_of_stock`, `reorder_now`, blank
+| TSV column | Internal key | Notes |
+|---|---|---|
+| `sku` | `merchant_sku` | |
+| `marketplace` | `marketplace` | `UK` in report → mapped to `GB` |
+| `your-price` | `price` | |
+| `units-shipped-t30` | `units_sold_30d` | blank for zero-velocity items |
+| `available` | `units_available` | |
+| `inbound-quantity` | `units_inbound` | |
+| `days-of-supply` | `days_of_supply_amazon` | |
+| `alert` | `amazon_alert_raw` | velocity alert: `Low traffic`, `Low conversion`, blank |
+| `Recommended ship-in quantity` | `amazon_recommended_qty` | |
+
+Restock alert (`out_of_stock`, `reorder_now`, blank) is **derived** by parser from `available == 0` or `days_of_supply < 30 + recommended_qty > 0`. Amazon's `alert` column is NOT the restock signal.
+
+## Approximate row counts (2026-04-07)
+GB: 514, CA: 210, FR: 44 — US/AU/DE volume TBC
 
 ## Decision Log
 
@@ -95,6 +106,9 @@ only for SKUs not found locally.
 ### 2026-04-07 — Newsvendor without scipy
 scipy is a heavy dependency for one function. Implemented `_norm_ppf()` as a rational
 approximation (Abramowitz and Stegun formula). Accurate to ~1e-4 for 0.001 < p < 0.999.
+
+### 2026-04-07 — Heredoc corrupts LWA tokens (| character)
+When the NA refresh token was injected into `.env` via a bash heredoc, a single character was silently corrupted (`ETd` → `ETt`), causing 400 errors on all NA-region calls. The `|` in `Atzr|Iw...` tokens makes heredoc and `sed` unreliable. **Always use Python `re.sub` to copy secrets between env files on the server.** See `wiki/infrastructure/hetzner.md` for the safe pattern.
 
 ### 2026-04-07 — Both recommendations shown side-by-side
 Amazon's recommendation is a good baseline but doesn't account for NBNE's margin
