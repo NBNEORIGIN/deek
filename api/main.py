@@ -2469,6 +2469,10 @@ app.include_router(whatsapp_router)
 from api.routes.amazon_intel import router as ami_router
 app.include_router(ami_router)
 
+# Register Amazon Analytics routes (Sprint 1 Revenue Truth Engine)
+from api.routes.analytics import router as ami_analytics_router
+app.include_router(ami_analytics_router)
+
 # Register Etsy Intelligence routes
 from api.routes.etsy_intel import router as etsy_router
 app.include_router(etsy_router)
