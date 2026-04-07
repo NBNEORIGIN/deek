@@ -250,10 +250,110 @@ CREATE TABLE IF NOT EXISTS ami_spapi_sync_log (
     started_at      TIMESTAMP DEFAULT NOW(),
     completed_at    TIMESTAMP,
     result_json     JSONB,
-    error           TEXT
+    error           TEXT,
+    -- Sprint 1 additions (analytics)
+    orders_inserted     INTEGER,
+    orders_skipped      INTEGER,
+    traffic_upserted    INTEGER,
+    date_range_start    DATE,
+    date_range_end      DATE
 );
 CREATE INDEX IF NOT EXISTS idx_ami_sync_type_region
     ON ami_spapi_sync_log(sync_type, region, completed_at DESC);
+
+-- ── Sprint 1: Revenue Truth Engine ────────────────────────────────────────────
+
+-- Atomic order lines. One row = one unit of one product in one order.
+-- Source of truth for all revenue. Never SUM from ami_business_report_legacy.
+CREATE TABLE IF NOT EXISTS ami_orders (
+    id                      SERIAL PRIMARY KEY,
+    amazon_order_id         VARCHAR(50)     NOT NULL,
+    order_item_id           VARCHAR(50)     NOT NULL,
+    marketplace             VARCHAR(10)     NOT NULL,
+    region                  VARCHAR(5)      NOT NULL,
+    asin                    VARCHAR(20),
+    merchant_sku            VARCHAR(200),
+    m_number                VARCHAR(20),
+    product_name            VARCHAR(500),
+    order_date              DATE            NOT NULL,
+    purchase_date           TIMESTAMPTZ,
+    quantity                INTEGER         NOT NULL DEFAULT 1,
+    quantity_shipped        INTEGER,
+    quantity_to_ship        INTEGER,
+    item_price_amount       NUMERIC(12,4),
+    item_price_currency     VARCHAR(5),
+    item_tax_amount         NUMERIC(12,4),
+    shipping_price_amount   NUMERIC(12,4),
+    gift_wrap_price_amount  NUMERIC(12,4),
+    item_promotion_discount NUMERIC(12,4),
+    is_b2b                  BOOLEAN         NOT NULL DEFAULT FALSE,
+    fulfillment_channel     VARCHAR(20),
+    ship_service_level      VARCHAR(50),
+    ship_country            VARCHAR(5),
+    shipment_status         VARCHAR(30),
+    synced_at               TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT ami_orders_unique UNIQUE (amazon_order_id, order_item_id)
+);
+CREATE INDEX IF NOT EXISTS ami_orders_date_idx ON ami_orders (order_date);
+CREATE INDEX IF NOT EXISTS ami_orders_marketplace_idx ON ami_orders (marketplace, order_date);
+CREATE INDEX IF NOT EXISTS ami_orders_asin_idx ON ami_orders (asin, order_date);
+CREATE INDEX IF NOT EXISTS ami_orders_m_number_idx ON ami_orders (m_number, order_date);
+CREATE INDEX IF NOT EXISTS ami_orders_sku_idx ON ami_orders (merchant_sku);
+
+-- Daily sessions, page views, Buy Box, conversion at ASIN+date granularity.
+-- Source: GET_SALES_AND_TRAFFIC_REPORT with dateGranularity=DAY.
+-- UNIQUE constraint prevents double-counting regardless of sync frequency.
+CREATE TABLE IF NOT EXISTS ami_daily_traffic (
+    id                          SERIAL PRIMARY KEY,
+    marketplace                 VARCHAR(10)     NOT NULL,
+    region                      VARCHAR(5)      NOT NULL,
+    asin                        VARCHAR(20)     NOT NULL,
+    parent_asin                 VARCHAR(20),
+    m_number                    VARCHAR(20),
+    date                        DATE            NOT NULL,
+    sessions                    INTEGER,
+    session_percentage          NUMERIC(8,4),
+    page_views                  INTEGER,
+    page_views_percentage       NUMERIC(8,4),
+    buy_box_percentage          NUMERIC(8,4),
+    units_ordered               INTEGER,
+    units_ordered_b2b           INTEGER,
+    ordered_product_sales       NUMERIC(12,4),
+    ordered_product_sales_b2b   NUMERIC(12,4),
+    total_order_items           INTEGER,
+    total_order_items_b2b       INTEGER,
+    conversion_rate             NUMERIC(8,4),
+    synced_at                   TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT ami_daily_traffic_unique UNIQUE (marketplace, asin, date)
+);
+CREATE INDEX IF NOT EXISTS ami_daily_traffic_date_idx ON ami_daily_traffic (date);
+CREATE INDEX IF NOT EXISTS ami_daily_traffic_marketplace_date_idx ON ami_daily_traffic (marketplace, date);
+CREATE INDEX IF NOT EXISTS ami_daily_traffic_asin_date_idx ON ami_daily_traffic (asin, date);
+CREATE INDEX IF NOT EXISTS ami_daily_traffic_m_number_idx ON ami_daily_traffic (m_number, date);
+
+-- Computed daily velocity and trend alerts per ASIN+marketplace.
+-- Derived from ami_orders. Populated by core/amazon_intel/analytics/velocity.py.
+CREATE TABLE IF NOT EXISTS ami_velocity (
+    id                      SERIAL PRIMARY KEY,
+    marketplace             VARCHAR(10)     NOT NULL,
+    asin                    VARCHAR(20)     NOT NULL,
+    m_number                VARCHAR(20),
+    computed_date           DATE            NOT NULL,
+    velocity_7d             NUMERIC(8,3),
+    velocity_7d_prior       NUMERIC(8,3),
+    velocity_30d            NUMERIC(8,3),
+    trend_pct               NUMERIC(8,4),
+    units_7d                INTEGER,
+    revenue_7d              NUMERIC(12,4),
+    alert                   VARCHAR(30),
+    alert_acknowledged      BOOLEAN         NOT NULL DEFAULT FALSE,
+    alert_acknowledged_by   VARCHAR(100),
+    alert_acknowledged_at   TIMESTAMPTZ,
+    CONSTRAINT ami_velocity_unique UNIQUE (marketplace, asin, computed_date)
+);
+CREATE INDEX IF NOT EXISTS ami_velocity_alert_idx ON ami_velocity (alert, alert_acknowledged)
+    WHERE alert IS NOT NULL AND alert_acknowledged = FALSE;
+CREATE INDEX IF NOT EXISTS ami_velocity_date_idx ON ami_velocity (computed_date DESC);
 """
 
 
