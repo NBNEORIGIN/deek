@@ -191,7 +191,7 @@ def _get_latest_business_data() -> dict[str, dict]:
                 """SELECT upload_id, child_asin, sessions, page_views,
                           buy_box_percentage, units_ordered,
                           unit_session_percentage, ordered_product_sales
-                   FROM ami_business_report_data
+                   FROM ami_business_report_legacy
                    WHERE upload_id = %s""",
                 (upload_id,),
             )

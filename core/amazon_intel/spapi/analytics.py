@@ -119,28 +119,32 @@ def sync_analytics(region: Region = 'EU', days: int = 30) -> dict:
     errors: list[str] = []
     stored = 0
 
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            for row in rows:
-                try:
-                    cur.execute(
-                        """INSERT INTO ami_business_report_data
-                               (upload_id, parent_asin, child_asin, title,
-                                sessions, session_percentage, page_views,
-                                buy_box_percentage, units_ordered,
-                                unit_session_percentage, ordered_product_sales,
-                                total_order_items)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                        (upload_id, row['parent_asin'], row['child_asin'],
-                         row['title'], row['sessions'], row['session_percentage'],
-                         row['page_views'], row['buy_box_percentage'],
-                         row['units_ordered'], row['unit_session_percentage'],
-                         row['ordered_product_sales'], row['total_order_items']),
-                    )
-                    stored += 1
-                except Exception as e:
-                    errors.append(f"ASIN {row['child_asin']}: {e}")
-            conn.commit()
+    # LEGACY: retired 2026-04-07 — ami_business_report_data renamed to ami_business_report_legacy.
+    # 30-day rolling aggregates cause double-counting at 4x daily sync frequency.
+    # Replaced by ami_daily_traffic (DAY granularity) + ami_orders (order-level).
+    # build_snapshots() still reads ami_business_report_legacy until Sprint 2.
+    # with get_conn() as conn:
+    #     with conn.cursor() as cur:
+    #         for row in rows:
+    #             try:
+    #                 cur.execute(
+    #                     """INSERT INTO ami_business_report_legacy
+    #                            (upload_id, parent_asin, child_asin, title,
+    #                             sessions, session_percentage, page_views,
+    #                             buy_box_percentage, units_ordered,
+    #                             unit_session_percentage, ordered_product_sales,
+    #                             total_order_items)
+    #                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+    #                     (upload_id, row['parent_asin'], row['child_asin'],
+    #                      row['title'], row['sessions'], row['session_percentage'],
+    #                      row['page_views'], row['buy_box_percentage'],
+    #                      row['units_ordered'], row['unit_session_percentage'],
+    #                      row['ordered_product_sales'], row['total_order_items']),
+    #                 )
+    #                 stored += 1
+    #             except Exception as e:
+    #                 errors.append(f"ASIN {row['child_asin']}: {e}")
+    #         conn.commit()
 
     update_upload(upload_id, row_count=stored, skip_count=len(rows) - stored,
                   error_count=len(errors), errors=errors[:50])

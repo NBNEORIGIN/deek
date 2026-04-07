@@ -186,8 +186,11 @@ def parse_and_store_business_report(content: bytes, filename: str,
         with conn.cursor() as cur:
             for row in rows:
                 try:
+                    # LEGACY: retired 2026-04-07 — ami_business_report_data renamed to
+                    # ami_business_report_legacy. Manual business report uploads no longer
+                    # write here. Use SP-API daily traffic sync instead.
                     cur.execute(
-                        """INSERT INTO ami_business_report_data
+                        """INSERT INTO ami_business_report_legacy
                                (upload_id, parent_asin, child_asin, title,
                                 sessions, session_percentage, page_views,
                                 buy_box_percentage, units_ordered,

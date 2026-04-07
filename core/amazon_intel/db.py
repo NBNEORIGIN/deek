@@ -110,8 +110,12 @@ CREATE INDEX IF NOT EXISTS idx_ami_ff_sku ON ami_flatfile_data(sku);
 CREATE INDEX IF NOT EXISTS idx_ami_ff_asin ON ami_flatfile_data(asin);
 CREATE INDEX IF NOT EXISTS idx_ami_ff_upload ON ami_flatfile_data(upload_id);
 
--- Business report performance data
-CREATE TABLE IF NOT EXISTS ami_business_report_data (
+-- Business report performance data (legacy — retired 2026-04-07)
+-- Renamed from ami_business_report_data. 30-day rolling aggregates cause double-counting.
+-- Replaced by ami_daily_traffic (DAY granularity) + ami_orders (order-level).
+-- Still read by build_snapshots() for sessions/conversion/buy_box until Sprint 2.
+-- Do not write new data here. See core/amazon_intel/spapi/analytics.py (LEGACY comment).
+CREATE TABLE IF NOT EXISTS ami_business_report_legacy (
     id                      SERIAL PRIMARY KEY,
     upload_id               INTEGER REFERENCES ami_uploads(id) ON DELETE CASCADE,
     parent_asin             VARCHAR(20),
@@ -127,8 +131,8 @@ CREATE TABLE IF NOT EXISTS ami_business_report_data (
     total_order_items       INTEGER DEFAULT 0,
     created_at              TIMESTAMP DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_ami_biz_asin ON ami_business_report_data(child_asin);
-CREATE INDEX IF NOT EXISTS idx_ami_biz_upload ON ami_business_report_data(upload_id);
+CREATE INDEX IF NOT EXISTS idx_ami_biz_asin ON ami_business_report_legacy(child_asin);
+CREATE INDEX IF NOT EXISTS idx_ami_biz_upload ON ami_business_report_legacy(upload_id);
 
 -- Advertising report data
 CREATE TABLE IF NOT EXISTS ami_advertising_data (
