@@ -110,6 +110,7 @@ def sync_region(region: Region, force: bool = False) -> dict:
     from .inventory import sync_inventory
     from .analytics import sync_analytics
     from .advertising import sync_advertising, ADS_PROFILE_IDS
+    from .orders import sync_orders
 
     results = {}
 
@@ -140,6 +141,20 @@ def sync_region(region: Region, force: bool = False) -> dict:
             results['analytics'] = {'status': 'error', 'error': str(e)}
     else:
         results['analytics'] = {'status': 'skipped', 'reason': 'not due'}
+
+    # Orders
+    if force or _is_due('orders', region):
+        log_id = _log_start('orders', region)
+        try:
+            r = sync_orders(region, days_back=2)
+            _log_complete(log_id, r)
+            results['orders'] = {'status': 'complete', **r}
+        except Exception as e:
+            err = traceback.format_exc()
+            _log_error(log_id, err)
+            results['orders'] = {'status': 'error', 'error': str(e)}
+    else:
+        results['orders'] = {'status': 'skipped', 'reason': 'not due'}
 
     # Advertising (only if profile ID is configured)
     profile_id = ADS_PROFILE_IDS.get(region, '')
