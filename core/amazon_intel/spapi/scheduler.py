@@ -108,7 +108,7 @@ def sync_region(region: Region, force: bool = False) -> dict:
     Returns summary of what ran and results.
     """
     from .inventory import sync_inventory
-    from .analytics import sync_analytics
+    from .analytics import sync_analytics, sync_daily_traffic
     from .advertising import sync_advertising, ADS_PROFILE_IDS
     from .orders import sync_orders
 
@@ -141,6 +141,20 @@ def sync_region(region: Region, force: bool = False) -> dict:
             results['analytics'] = {'status': 'error', 'error': str(e)}
     else:
         results['analytics'] = {'status': 'skipped', 'reason': 'not due'}
+
+    # Daily traffic (DAY granularity → ami_daily_traffic)
+    if force or _is_due('daily_traffic', region):
+        log_id = _log_start('daily_traffic', region)
+        try:
+            r = sync_daily_traffic(region, days_back=7)
+            _log_complete(log_id, r)
+            results['daily_traffic'] = {'status': 'complete', **r}
+        except Exception as e:
+            err = traceback.format_exc()
+            _log_error(log_id, err)
+            results['daily_traffic'] = {'status': 'error', 'error': str(e)}
+    else:
+        results['daily_traffic'] = {'status': 'skipped', 'reason': 'not due'}
 
     # Orders
     if force or _is_due('orders', region):
@@ -177,7 +191,7 @@ def sync_region(region: Region, force: bool = False) -> dict:
     # Rebuild snapshots if any data sync completed
     data_synced = any(
         results.get(t, {}).get('status') == 'complete'
-        for t in ('inventory', 'analytics', 'advertising')
+        for t in ('inventory', 'analytics', 'daily_traffic', 'orders', 'advertising')
     )
     if data_synced:
         log_id = _log_start('snapshots', region)
@@ -192,8 +206,22 @@ def sync_region(region: Region, force: bool = False) -> dict:
             err = traceback.format_exc()
             _log_error(log_id, err)
             results['snapshots'] = {'status': 'error', 'error': str(e)}
+
+        # Velocity compute — runs after orders data is present
+        log_id = _log_start('velocity', region)
+        try:
+            from core.amazon_intel.analytics.velocity import compute_velocity
+            vel_result = compute_velocity()
+            _log_complete(log_id, vel_result)
+            results['velocity'] = {'status': 'complete', **vel_result}
+            logger.info("Velocity compute complete: %s", vel_result)
+        except Exception as e:
+            err = traceback.format_exc()
+            _log_error(log_id, err)
+            results['velocity'] = {'status': 'error', 'error': str(e)}
     else:
         results['snapshots'] = {'status': 'skipped', 'reason': 'no data synced'}
+        results['velocity'] = {'status': 'skipped', 'reason': 'no data synced'}
 
     return {'region': region, 'syncs': results}
 
