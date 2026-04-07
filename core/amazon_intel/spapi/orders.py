@@ -314,23 +314,22 @@ def _upsert_rows(rows: list[dict]) -> tuple[int, int]:
 
 
 def _resolve_missing_asins_and_m_numbers():
-    """Post-insert batch UPDATE from ami_sku_mapping."""
+    """Post-insert batch UPDATE from ami_sku_mapping (sku column, no marketplace filter)."""
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE ami_orders o
                 SET asin = s.asin
                 FROM ami_sku_mapping s
-                WHERE o.merchant_sku = s.merchant_sku
-                  AND o.marketplace = s.marketplace
+                WHERE o.merchant_sku = s.sku
                   AND o.asin IS NULL
+                  AND s.asin IS NOT NULL
             """)
             cur.execute("""
                 UPDATE ami_orders o
                 SET m_number = s.m_number
                 FROM ami_sku_mapping s
-                WHERE o.merchant_sku = s.merchant_sku
-                  AND o.marketplace = s.marketplace
+                WHERE o.merchant_sku = s.sku
                   AND o.m_number IS NULL
             """)
         conn.commit()

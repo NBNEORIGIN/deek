@@ -192,9 +192,9 @@ def _run_velocity(conn, compute_date: date) -> dict:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT m_number FROM ami_sku_mapping
-                    WHERE asin = %s AND marketplace = %s
+                    WHERE asin = %s
                     LIMIT 1
-                """, (asin, marketplace))
+                """, (asin,))
                 m_row = cur.fetchone()
             m_number = m_row[0] if m_row else None
 

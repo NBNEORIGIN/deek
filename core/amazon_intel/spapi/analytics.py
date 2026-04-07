@@ -291,14 +291,14 @@ def _upsert_daily_traffic(rows: list[dict]) -> int:
         with conn.cursor() as cur:
             execute_values(cur, sql, values, template=placeholders, page_size=500)
             affected = cur.rowcount
-            # M-number resolution
+            # M-number resolution (ami_sku_mapping has no marketplace column)
             cur.execute("""
                 UPDATE ami_daily_traffic t
                 SET m_number = s.m_number
                 FROM ami_sku_mapping s
                 WHERE t.asin = s.asin
-                  AND t.marketplace = s.marketplace
                   AND t.m_number IS NULL
+                  AND s.m_number IS NOT NULL
             """)
         conn.commit()
 
