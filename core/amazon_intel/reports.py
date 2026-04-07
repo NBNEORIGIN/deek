@@ -334,6 +334,9 @@ def build_cairn_context() -> dict:
 
     summary_text = _build_summary_text(stats, quick_wins, margin_alerts, content_audit)
 
+    # Revenue section from ami_orders (Sprint 1 — authoritative, no double-counting)
+    revenue = get_revenue_context()
+
     return {
         'module': 'amazon_intelligence',
         'generated_at': datetime.now().isoformat(),
@@ -343,4 +346,136 @@ def build_cairn_context() -> dict:
         'quick_wins': quick_wins,
         'margin_alerts': len(margin_alerts),
         'summary_text': summary_text,
+        'revenue': revenue,
     }
+
+
+def get_revenue_context() -> dict:
+    """
+    Pull clean revenue figures from ami_orders for Cairn chat context.
+    This replaces any revenue figures previously derived from ami_listing_snapshots.
+    Source: ami_orders (atomic order lines, UNIQUE on amazon_order_id+order_item_id).
+    No double-counting risk regardless of sync frequency.
+    """
+    from datetime import timedelta, timezone
+
+    def _sum_orders(conn, days: int) -> dict:
+        start = date.today() - timedelta(days=days)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    COALESCE(SUM(item_price_amount * quantity), 0) AS revenue,
+                    COALESCE(SUM(quantity), 0) AS units,
+                    MAX(item_price_currency) AS currency
+                FROM ami_orders
+                WHERE order_date >= %(start)s
+                  AND (shipment_status IS NULL OR shipment_status != 'Cancelled')
+            """, {'start': start})
+            row = cur.fetchone()
+        return {
+            'revenue': float(row[0]) if row and row[0] else 0.0,
+            'units': int(row[1]) if row and row[1] else 0,
+            'currency': row[2] if row and row[2] else 'GBP',
+        }
+
+    def _sum_orders_by_marketplace(conn, days: int) -> dict:
+        start = date.today() - timedelta(days=days)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT marketplace,
+                       COALESCE(SUM(item_price_amount * quantity), 0),
+                       COALESCE(SUM(quantity), 0)
+                FROM ami_orders
+                WHERE order_date >= %(start)s
+                  AND (shipment_status IS NULL OR shipment_status != 'Cancelled')
+                GROUP BY marketplace
+                ORDER BY SUM(item_price_amount * quantity) DESC NULLS LAST
+            """, {'start': start})
+            return {
+                row[0]: {'revenue': float(row[1]), 'units': int(row[2])}
+                for row in cur.fetchall()
+            }
+
+    def _top_products(conn, days: int, limit: int = 5) -> list:
+        start = date.today() - timedelta(days=days)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT asin, m_number, MAX(product_name), marketplace,
+                       SUM(quantity), COALESCE(SUM(item_price_amount * quantity), 0)
+                FROM ami_orders
+                WHERE order_date >= %(start)s
+                  AND (shipment_status IS NULL OR shipment_status != 'Cancelled')
+                  AND asin IS NOT NULL
+                GROUP BY asin, m_number, marketplace
+                ORDER BY SUM(item_price_amount * quantity) DESC NULLS LAST
+                LIMIT %(limit)s
+            """, {'start': start, 'limit': limit})
+            return [
+                {
+                    'asin': row[0],
+                    'm_number': row[1],
+                    'product_name': row[2],
+                    'marketplace': row[3],
+                    'units': int(row[4]),
+                    'revenue': float(row[5]),
+                }
+                for row in cur.fetchall()
+            ]
+
+    def _get_active_alerts(conn, limit: int = 5) -> list:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT marketplace, asin, m_number, alert, velocity_7d, velocity_7d_prior
+                FROM ami_velocity
+                WHERE alert IS NOT NULL AND alert_acknowledged = FALSE
+                ORDER BY computed_date DESC
+                LIMIT %s
+            """, (limit,))
+            return [
+                {
+                    'marketplace': row[0],
+                    'asin': row[1],
+                    'm_number': row[2],
+                    'alert': row[3],
+                    'velocity_7d': float(row[4]) if row[4] else None,
+                    'velocity_7d_prior': float(row[5]) if row[5] else None,
+                }
+                for row in cur.fetchall()
+            ]
+
+    def _get_last_order_date(conn):
+        with conn.cursor() as cur:
+            cur.execute("SELECT MAX(order_date) FROM ami_orders")
+            row = cur.fetchone()
+        return row[0].isoformat() if row and row[0] else None
+
+    try:
+        with get_conn() as conn:
+            today_data = _sum_orders(conn, days=1)
+            last_7 = _sum_orders(conn, days=7)
+            last_30 = _sum_orders(conn, days=30)
+            by_mkt = _sum_orders_by_marketplace(conn, days=30)
+            top5 = _top_products(conn, days=30, limit=5)
+            active_alerts = _get_active_alerts(conn, limit=5)
+            last_order = _get_last_order_date(conn)
+
+        return {
+            'source': 'ami_orders',
+            'double_count_risk': False,
+            'today': today_data,
+            'last_7_days': last_7,
+            'last_30_days': last_30,
+            'by_marketplace': by_mkt,
+            'top_5_products_30d': top5,
+            'active_alerts': active_alerts,
+            'last_order_date': last_order,
+        }
+    except Exception as e:
+        return {
+            'source': 'ami_orders',
+            'double_count_risk': False,
+            'error': str(e),
+            'today': None,
+            'last_7_days': None,
+            'last_30_days': None,
+        }
