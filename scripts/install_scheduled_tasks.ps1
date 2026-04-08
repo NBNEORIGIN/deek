@@ -101,12 +101,12 @@ if (-not (Test-Path $InboxScript)) {
         -Argument $InboxScript `
         -WorkingDirectory $ClawDir
 
-    # Every 15 minutes, starting now, indefinitely
+    # Every 15 minutes, starting now, for 10 years
     $inboxTrigger = New-ScheduledTaskTrigger `
         -Once `
         -At (Get-Date) `
         -RepetitionInterval (New-TimeSpan -Minutes 15) `
-        -RepetitionDuration ([TimeSpan]::MaxValue)
+        -RepetitionDuration (New-TimeSpan -Days 3650)
 
     $inboxSettings = New-ScheduledTaskSettingsSet `
         -ExecutionTimeLimit (New-TimeSpan -Minutes 10) `
