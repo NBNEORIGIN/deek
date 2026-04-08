@@ -138,18 +138,62 @@ update_memory(
   rejected=<what was considered and ruled out>,
   outcome=<committed|partial|failed|deferred>,
   model=<model that did the primary work>,
-  files_changed=[<list of files>]
+  files_changed=[<list of files>],
+  delegation_decision=<"Self — reason" | "Mixed — design self, implementation DeepSeek, review self" | "DeepSeek — reason">
 )
 ```
 
 The `rejected` field is as important as `decision`. An empty rejected field is a
 red flag — you almost always considered at least one alternative.
 
-**Wiki maintenance:** If this task changed a module's architecture, status,
-connections, key concepts, or tech stack:
-1. Update the wiki article: `wiki/modules/{module}.md`
-2. Trigger re-embedding: `POST http://localhost:8765/api/wiki/compile?scope=modules`
-3. This keeps the staff-facing knowledge base current with developer changes.
+The `delegation_decision` field records who did the work and why. Also note any
+wiki updates here, e.g. `"Self — protocol edit; updated wiki/modules/cairn.md"`.
+
+---
+
+### STEP 4a — Wiki write-back
+
+The Karpathy wiki layer is the structured face of Cairn's memory.
+Wiki articles must stay current with the underlying systems they describe,
+otherwise retrieval returns stale context and CC reads incorrect
+information into the next session.
+
+Wiki write-back is mandatory, parallel to memory write-back, not conditional.
+
+After every task that touched any of:
+
+- A module's tech stack, status, connections, or key concepts
+- Domain vocabulary (a new blank name, a new machine, a new product type,
+  a new tenant, a new client)
+- A significant decision affecting how a module works or how modules
+  interact with each other
+- Data schema changes (new tables, new columns, new API contracts)
+
+You must:
+
+1. Update the relevant wiki article. Most changes affect
+   `wiki/modules/{module}.md`. Some affect `wiki/products/`,
+   `wiki/clients/`, or `wiki/processes/`. When in doubt, update the
+   module article.
+
+2. Trigger re-embedding so the updated article reaches pgvector:
+   ```
+   POST http://localhost:8765/api/wiki/compile?scope=modules
+   ```
+   (Or `?scope=products`, `?scope=clients` etc. — match the scope to
+   the article you updated.)
+
+3. Note the wiki update in your memory write-back's `delegation_decision`
+   field, e.g. `"Self — multi-file refactor; updated wiki/modules/phloe.md"`.
+
+The "if" criteria above are permissive. When in doubt, update the wiki.
+A few seconds of unnecessary update cost is cheaper than a stale wiki
+article causing a confused session next week.
+
+**Skipping this step is the same red flag as skipping memory write-back.**
+The two are parallel tracks of the same discipline — semantic memory
+records what you did, wiki memory records what is now true about the
+system. Both are required.
 
 ---
 
@@ -214,6 +258,16 @@ context. The procedure is only as good as the index it queries.
 ## Session Start Checklist
 
 Run this at the start of every session before accepting any task:
+
+```
+# At session start, before any other retrieval:
+GET http://localhost:8765/api/cairn/catalogue
+```
+
+This tells you what modules exist, what wiki articles are available,
+which context endpoints are live, and what's in pgvector. Use it to
+orient yourself before making retrieval calls. It's faster than grepping
+the filesystem.
 
 ```
 1. get_project_status()          — confirm Cairn API is online
