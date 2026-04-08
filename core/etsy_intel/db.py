@@ -27,6 +27,38 @@ def ensure_schema():
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(_SQL_SCHEMA)
+            # Migration guard: add transaction_id if table was created before it existed
+            cur.execute("""
+                ALTER TABLE etsy_sales
+                    ADD COLUMN IF NOT EXISTS transaction_id BIGINT
+            """)
+            # Drop stale receipt_id unique constraint (receipt has many transactions)
+            cur.execute("""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = 'etsy_sales_receipt_id_key'
+                    ) THEN
+                        ALTER TABLE etsy_sales
+                            DROP CONSTRAINT etsy_sales_receipt_id_key;
+                    END IF;
+                END $$;
+            """)
+            # Add transaction_id unique constraint if missing
+            cur.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = 'etsy_sales_transaction_id_key'
+                    ) THEN
+                        ALTER TABLE etsy_sales
+                            ADD CONSTRAINT etsy_sales_transaction_id_key
+                            UNIQUE (transaction_id);
+                    END IF;
+                END $$;
+            """)
             conn.commit()
 
 
