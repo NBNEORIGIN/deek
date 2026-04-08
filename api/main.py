@@ -159,6 +159,22 @@ async def lifespan(app: FastAPI):
     except Exception as etsy_err:
         print(f'[CLAW startup] Etsy Intel schema failed: {etsy_err}')
 
+    # ── Notify / recompile queue schema ───────────────────────────────
+    try:
+        from api.routes.notify import ensure_notify_schema
+        ensure_notify_schema()
+    except Exception as notify_err:
+        print(f'[CLAW startup] Notify schema failed: {notify_err}')
+
+    # ── Recompile worker background task ──────────────────────────────
+    _recompile_task = None
+    try:
+        from api.routes.notify import run_recompile_worker
+        _recompile_task = asyncio.create_task(run_recompile_worker())
+        print('[CLAW startup] Recompile worker started')
+    except Exception as worker_err:
+        print(f'[CLAW startup] Recompile worker failed to start: {worker_err}')
+
     # ── Auto-index empty projects ───────────────────────────────────────
     skip_auto_index = os.getenv('CAIRN_SKIP_AUTO_INDEX', '').lower() in {
         '1', 'true', 'yes',
@@ -169,7 +185,7 @@ async def lifespan(app: FastAPI):
             for pid, agent in _agents.items():
                 await _auto_index_if_empty(pid, agent, db_url)
 
-    # ── Scheduled reindex background task ───────────────────────────────
+    # ── Scheduled reindex + daily audit background task ─────────────────
     reindex_hours = int(os.getenv('CAIRN_REINDEX_INTERVAL_HOURS', '24'))
     _reindex_task = None
     if reindex_hours > 0 and _agents:
@@ -177,10 +193,24 @@ async def lifespan(app: FastAPI):
             _scheduled_reindex_loop(_agents, interval_hours=reindex_hours)
         )
 
+    # ── Daily audit background task ──────────────────────────────────────
+    _audit_task = None
+    try:
+        _audit_task = asyncio.create_task(_daily_audit_loop())
+        print('[CLAW startup] Daily audit task started')
+    except Exception as audit_err:
+        print(f'[CLAW startup] Daily audit task failed to start: {audit_err}')
+
     yield
 
     if _reindex_task and not _reindex_task.done():
         _reindex_task.cancel()
+
+    if _recompile_task and not _recompile_task.done():
+        _recompile_task.cancel()
+
+    if _audit_task and not _audit_task.done():
+        _audit_task.cancel()
 
     for watcher in active_watchers:
         try:
@@ -369,6 +399,34 @@ async def _check_wiki_freshness() -> None:
     conn.close()
     if stale > 0:
         print(f'[Cairn] Wiki freshness: re-embedded {stale} stale articles')
+
+
+async def _daily_audit_loop() -> None:
+    """
+    Background task that runs the Cairn daily audit once per day at ~06:00 UTC.
+    Checks wiki staleness, endpoint reachability, and zero-chunk projects.
+    Writes results to wiki/_meta/last_audit.json (surfaced by /api/cairn/catalogue).
+    """
+    from datetime import timedelta
+
+    while True:
+        now = datetime.utcnow()
+        # Schedule next run at 06:00 UTC
+        next_run = now.replace(hour=6, minute=0, second=0, microsecond=0)
+        if now >= next_run:
+            next_run += timedelta(days=1)
+        wait_seconds = (next_run - now).total_seconds()
+        await asyncio.sleep(wait_seconds)
+
+        try:
+            from core.catalogue.builder import run_daily_audit
+            result = await run_daily_audit()
+            warnings = result.get('warnings', [])
+            print(f'[Cairn] Daily audit complete — {len(warnings)} warnings')
+            for w in warnings:
+                print(f'[Cairn] Audit warning: {w}')
+        except Exception as exc:
+            print(f'[Cairn] Daily audit failed: {exc}')
 
 
 # In-memory index run registry — tracks manual and auto index operations
@@ -2480,3 +2538,11 @@ app.include_router(etsy_router)
 # Register Wiki Layer routes
 from api.routes.wiki import router as wiki_router
 app.include_router(wiki_router)
+
+# Register Cairn notify endpoint
+from api.routes.notify import router as notify_router
+app.include_router(notify_router)
+
+# Register Cairn catalogue endpoint
+from api.routes.catalogue import router as catalogue_router
+app.include_router(catalogue_router)
