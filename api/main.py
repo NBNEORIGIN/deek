@@ -159,6 +159,14 @@ async def lifespan(app: FastAPI):
     except Exception as etsy_err:
         print(f'[CLAW startup] Etsy Intel schema failed: {etsy_err}')
 
+    # ── Email Ingestion schema ─────────────────────────────────────────
+    try:
+        from core.email_ingest.db import ensure_schema as email_ensure_schema
+        email_ensure_schema()
+        print('[CLAW startup] Email Ingest schema ready')
+    except Exception as email_err:
+        print(f'[CLAW startup] Email Ingest schema failed: {email_err}')
+
     # ── Auto-index empty projects ───────────────────────────────────────
     skip_auto_index = os.getenv('CAIRN_SKIP_AUTO_INDEX', '').lower() in {
         '1', 'true', 'yes',
@@ -2484,3 +2492,7 @@ app.include_router(wiki_router)
 # Register Render catalogue context routes
 from api.routes.render import router as render_router
 app.include_router(render_router)
+
+# Register Email Ingestion routes
+from api.routes.email import router as email_router
+app.include_router(email_router)

@@ -3,7 +3,8 @@
 # No admin required for current-user tasks.
 #
 # Tasks installed:
-#   Cairn-AMI-Sync  -- SP-API sync every 6 hours
+#   Cairn-AMI-Sync       -- SP-API sync every 6 hours
+#   CairnEmailInbox      -- cairn@ inbox poll every 15 minutes
 
 param(
     [string]$ClawDir = "D:\claw"
@@ -78,6 +79,64 @@ if ($registered) {
 } else {
     Write-Error "Task registration failed"
     exit 1
+}
+
+# ── CairnEmailInbox — cairn@ inbox poll every 15 minutes ──────────────────
+
+$InboxScript = Join-Path $ClawDir "scripts\process_cairn_inbox.py"
+
+if (-not (Test-Path $InboxScript)) {
+    Write-Warning "Inbox script not found at $InboxScript — skipping CairnEmailInbox"
+} else {
+    Write-Host "Installing Cairn email inbox scheduled task..."
+
+    $existingInbox = Get-ScheduledTask -TaskName "CairnEmailInbox" -ErrorAction SilentlyContinue
+    if ($existingInbox) {
+        Unregister-ScheduledTask -TaskName "CairnEmailInbox" -Confirm:$false
+        Write-Host "  Removed existing task"
+    }
+
+    $inboxAction = New-ScheduledTaskAction `
+        -Execute $PythonExe `
+        -Argument $InboxScript `
+        -WorkingDirectory $ClawDir
+
+    # Every 15 minutes, starting now, indefinitely
+    $inboxTrigger = New-ScheduledTaskTrigger `
+        -Once `
+        -At (Get-Date) `
+        -RepetitionInterval (New-TimeSpan -Minutes 15) `
+        -RepetitionDuration ([TimeSpan]::MaxValue)
+
+    $inboxSettings = New-ScheduledTaskSettingsSet `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 10) `
+        -RestartCount 1 `
+        -RestartInterval (New-TimeSpan -Minutes 2) `
+        -StartWhenAvailable `
+        -MultipleInstances IgnoreNew
+
+    Register-ScheduledTask `
+        -TaskName "CairnEmailInbox" `
+        -TaskPath "\Cairn\" `
+        -Action $inboxAction `
+        -Trigger $inboxTrigger `
+        -Settings $inboxSettings `
+        -Principal $principal `
+        -Description "Cairn: poll cairn@nbnesigns.com for new messages, ingest and embed. Every 15 minutes." `
+        | Out-Null
+
+    $registeredInbox = Get-ScheduledTask -TaskName "CairnEmailInbox" -ErrorAction SilentlyContinue
+    if ($registeredInbox) {
+        Write-Host "  [OK] CairnEmailInbox registered" -ForegroundColor Green
+        Write-Host "  Trigger: every 15 minutes"
+        Write-Host "  Script: $InboxScript"
+        Write-Host "  Logs: $ClawDir\logs\email_ingest\cairn_inbox.log"
+        Write-Host ""
+        Write-Host "NOTE: Requires IMAP_PASSWORD_CAIRN set in $ClawDir\.env" -ForegroundColor Yellow
+        Write-Host "NOTE: Set up IONOS forwarding from sales@ and toby@ to cairn@ before this runs." -ForegroundColor Yellow
+    } else {
+        Write-Warning "CairnEmailInbox registration failed — check PowerShell permissions"
+    }
 }
 
 Write-Host ""
