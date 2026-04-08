@@ -2480,3 +2480,7 @@ app.include_router(etsy_router)
 # Register Wiki Layer routes
 from api.routes.wiki import router as wiki_router
 app.include_router(wiki_router)
+
+# Register Render catalogue context routes
+from api.routes.render import router as render_router
+app.include_router(render_router)
