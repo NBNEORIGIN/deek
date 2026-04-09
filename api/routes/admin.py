@@ -180,30 +180,20 @@ def _embed_wiki_files(changed_only: bool = True) -> dict:
 @router.post('/wiki-sync')
 async def wiki_sync():
     """
-    Pull latest wiki articles from git and embed any new/changed ones.
+    Embed any new/changed wiki articles into claw_code_chunks.
 
-    Called by the local deploy_wiki.py script after pushing new articles,
-    and by the Hetzner cron job as a fallback.
+    Called by:
+      - deploy_wiki.py (Windows) after pushing new articles
+      - Hetzner cron (every 4h at :30) — preceded by git pull on the HOST
 
-    Steps:
-      1. git pull --ff-only origin master
-      2. Embed wiki files modified since last watermark
-      3. Update watermark
+    NOTE: git pull is intentionally NOT done here. The Cairn container
+    has wiki/modules volume-mounted from the host checkout at
+    /opt/nbne/cairn/wiki/modules. The cron and deploy_wiki.py handle
+    git pull on the host before calling this endpoint.
     """
     import asyncio
 
-    # git pull
-    try:
-        pull_ok, pull_msg = await asyncio.to_thread(_git_pull)
-    except Exception as exc:
-        pull_ok = False
-        pull_msg = str(exc)
-
-    if not pull_ok:
-        log.warning('/admin/wiki-sync: git pull failed: %s', pull_msg)
-        # Don't abort — we still embed whatever is on disk
-
-    # Embed
+    # Embed only files changed since last watermark
     try:
         result = await asyncio.to_thread(_embed_wiki_files, True)
     except Exception as exc:
@@ -211,8 +201,7 @@ async def wiki_sync():
         raise HTTPException(500, f'Embed failed: {exc}')
 
     return {
-        'git_pull': 'ok' if pull_ok else 'failed',
-        'git_pull_message': pull_msg,
+        'git_pull': 'n/a (handled by host)',
         **result,
     }
 

@@ -99,15 +99,21 @@ def notify_hetzner() -> bool:
     api_key = os.getenv('CAIRN_HETZNER_API_KEY') or os.getenv('CLAW_API_KEY', 'claw-dev-key-change-in-production')
 
     log.info('Notifying Hetzner Cairn via SSH: %s', hetzner_host)
+    # git pull on the HOST first (wiki/modules is volume-mounted into container),
+    # then call /admin/wiki-sync to embed the new files
+    remote_cmd = (
+        'cd /opt/nbne/cairn'
+        ' && git pull --ff-only origin master'
+        f' && curl -s -X POST http://localhost:8765/admin/wiki-sync'
+        f' -H "X-API-Key: {api_key}"'
+        f' --max-time 180'
+    )
     cmd = [
         'ssh',
         '-o', 'StrictHostKeyChecking=no',
         '-o', 'ConnectTimeout=10',
         hetzner_host,
-        f'curl -s -X POST http://localhost:8765/admin/wiki-sync'
-        f' -H "X-API-Key: {api_key}"'
-        f' -H "Content-Type: application/json"'
-        f' --max-time 180',
+        remote_cmd,
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=200)
