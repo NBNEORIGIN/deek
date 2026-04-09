@@ -2508,3 +2508,7 @@ app.include_router(email_router)
 # Register Wiki Generation routes
 from api.routes.wiki_gen import router as wiki_gen_router
 app.include_router(wiki_gen_router)
+
+# Register Admin routes (wiki-sync, operational endpoints)
+from api.routes.admin import router as admin_router
+app.include_router(admin_router)
