@@ -57,11 +57,11 @@ async def generate_direct_notes(background_tasks: BackgroundTasks):
 # Cluster generation
 # ---------------------------------------------------------------------------
 
-def _run_cluster_generation(topics: list[str] | None):
+def _run_cluster_generation(topics: list[str] | None, force: bool = False):
     global _cluster_running
     try:
         from core.wiki_gen.cluster import run_cluster_generation
-        result = run_cluster_generation(topics=topics)
+        result = run_cluster_generation(topics=topics, force=force)
         logger.info('Cluster generation complete: %s', result)
         try:
             import httpx
@@ -78,19 +78,24 @@ def _run_cluster_generation(topics: list[str] | None):
 async def generate_clusters(
     background_tasks: BackgroundTasks,
     topics: list[str] | None = None,
+    force: bool = False,
 ):
     """
     Run wiki article generation for all seed topics (or a supplied subset).
     One article per topic, quality-gated. Long-running — returns immediately.
+
+    force=true: re-run topics that already have a passing article (for refresh).
+    Default: skip already-completed topics (idempotent scheduled task behaviour).
     """
     global _cluster_running
     if _cluster_running:
         raise HTTPException(409, 'Cluster generation already running')
     _cluster_running = True
-    background_tasks.add_task(_run_cluster_generation, topics)
+    background_tasks.add_task(_run_cluster_generation, topics, force)
     return {
         'started': True,
         'topics': len(topics) if topics else 35,
+        'force': force,
         'message': 'Cluster wiki generation started. Poll /wiki/generate/status for progress.',
     }
 

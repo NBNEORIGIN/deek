@@ -134,14 +134,98 @@ def classify_module(title: str, content: str) -> str:
 # Quality gate (two-tier)
 # ---------------------------------------------------------------------------
 
-_NBNE_SIGNALS = [
-    'nbne', 'alnwick', 'northumberland', 'sign', 'print',
-    'vinyl', 'aluminium', 'fascia', 'channel', 'mimaki',
-    'mutoh', 'roland', 'amazon', 'etsy',
+# ---------------------------------------------------------------------------
+# Strong NBNE operational signals — at least one required for pass
+# ---------------------------------------------------------------------------
+_STRONG_NBNE_SIGNALS = [
+    'nbne', 'alnwick', 'northumberland', 'fascia', 'signmaker',
+    'mimaki', 'mutoh', 'roland', 'rolf',
+    'first lite', 'firstlite', 'first-lite',
+    'metamark', 'arlon', 'fellers', 'nationalsign',
+    'channel letter', 'halo-lit', 'backlit',
 ]
+
+# Weak signals — at least 2 required if no strong signal present
+_WEAK_NBNE_SIGNALS = [
+    'signage', 'vinyl', 'aluminium', 'acrylic', 'led module',
+    'led strip', 'powder coat', 'fabricat', 'substrate',
+    'amazon seller', 'etsy shop', 'ebay seller',
+    'supplier', 'quote', 'installation',
+]
+
+# Spam title patterns — reject immediately if title matches any of these
+_SPAM_TITLE_PATTERNS = [
+    r'(?i)\bweekly\b.{0,40}\b(update|digest|news|trade)\b',
+    r'(?i)\bdaily\b.{0,30}\b(update|digest|news)\b',
+    r'(?i)\b(feedback|satisfaction)\s+survey\b',
+    r'(?i)\bwebinar\b',
+    r'(?i)\bnewsletter\b',
+    r'(?i)\bunsubscribe\b',
+    r'(?i)\b(close\s+friend|friend\s+post)\b',
+    r'(?i)\bmarketing\s+list\b',
+    r'(?i)\bpromotional\s+offer\b',
+    r'(?i)\btrade\s+(update|deal|news)\b',
+    r'(?i)\bindustry\s+(news|insight|trend)\b',
+    r'(?i)\bq[1-4]\s+(wrap|round)[- ]up\b',
+    r'(?i)\b(star\s+buy|deal\s+of\s+the\s+(day|week))\b',
+    r'(?i)\brewards?\s+program\b',
+    r'(?i)\b(survey|questionnaire|feedback)\s+request\b',
+]
+
+# Spam body signals — reject if article contains 2+ of these
+_SPAM_BODY_SIGNALS = [
+    r'(?i)click\s+here\s+to\s+(unsubscribe|view|read)',
+    r'(?i)(if\s+you\s+(no longer|didn.t)\s+(wish|want)|to\s+opt[- ]out)',
+    r'(?i)view\s+(in|this|the)\s+(browser|online|email)',
+    r'(?i)this\s+(email|message)\s+(was|is)\s+(sent|delivered)\s+to\b',
+    r'(?i)\byou\s+(are|were|have\s+been)\s+subscribed\b',
+    r'(?i)\bsustainable\s+logistics\b',
+    r'(?i)\btrade\s+compliance\b',
+    r'(?i)\bcybersecurity\s+(tips|update|news)\b',
+]
+
+
+def is_spam_article(title: str, content: str) -> tuple[bool, str]:
+    """
+    Return (is_spam, reason). Runs entirely locally — no API calls.
+
+    Checks:
+      1. Title against known spam/newsletter patterns
+      2. Content for marketing boilerplate phrases
+      3. NBNE operational signal density
+    """
+    # 1. Title check
+    for pat in _SPAM_TITLE_PATTERNS:
+        if re.search(pat, title):
+            return True, f'spam_title:{pat[:40]}'
+
+    content_lower = content.lower()
+    title_lower = title.lower()
+    combined = title_lower + ' ' + content_lower
+
+    # 2. Body spam signals — reject if 2+ present
+    spam_hits = sum(
+        1 for pat in _SPAM_BODY_SIGNALS if re.search(pat, content)
+    )
+    if spam_hits >= 2:
+        return True, f'spam_body_signals:{spam_hits}'
+
+    # 3. NBNE signal density — must have strong signal OR 2+ weak signals
+    has_strong = any(s in combined for s in _STRONG_NBNE_SIGNALS)
+    if has_strong:
+        return False, ''
+
+    weak_count = sum(1 for s in _WEAK_NBNE_SIGNALS if s in combined)
+    if weak_count < 2:
+        return True, f'insufficient_nbne_signals:strong=0,weak={weak_count}'
+
+    return False, ''
+
 
 _QUALITY_CHECK_PROMPT = """Review this draft wiki article for NBNE's internal knowledge base.
 Return JSON only: {{"pass": true}} or {{"pass": false, "reason": "..."}}.
+
+NBNE is a sign fabrication and print company in Alnwick, Northumberland.
 
 This article was synthesised from real business emails spanning multiple years,
 so pricing figures will naturally vary — this is expected and acceptable.
@@ -149,6 +233,7 @@ so pricing figures will naturally vary — this is expected and acceptable.
 Reject ONLY if:
 - Specific bank account numbers, sort codes, passwords, or API credentials are present
 - The article is completely incoherent and cannot be understood
+- The article is primarily about a third-party company's promotions, not NBNE operations
 
 Do NOT reject for:
 - Pricing ranges or figures that differ across sections (historical variation is normal)
@@ -160,17 +245,17 @@ Article:
 """
 
 
-def quality_check(article: str) -> tuple[bool, str, int]:
+def quality_check(article: str, title: str = '') -> tuple[bool, str, int]:
     """
-    Two-tier quality gate. Returns (passed, reason, tokens_used).
-    Local heuristics run free. Claude is called only for financial content.
+    Three-tier quality gate. Returns (passed, reason, tokens_used).
+
+    Tier 1 — structural checks (free)
+    Tier 2 — spam/relevance checks via is_spam_article() (free)
+    Tier 3 — Claude for articles containing financial figures (paid)
     """
-    # Tier 1 — local heuristics
+    # Tier 1 — structural checks
     if len(article.split()) < 200:
         return False, 'too_short', 0
-
-    if not any(s in article.lower() for s in _NBNE_SIGNALS):
-        return False, 'no_nbne_signals', 0
 
     if re.search(r'\b[A-Z]{2}\d{2}[A-Z0-9]{11,}\b', article):
         return False, 'possible_iban', 0
@@ -178,24 +263,31 @@ def quality_check(article: str) -> tuple[bool, str, int]:
     if re.search(r'(?i)(password|passwd)\s*[:=]\s*\S{6,}', article):
         return False, 'possible_credential', 0
 
-    # Tier 2 — Claude for articles containing financial figures
+    # Tier 2 — spam/relevance check
+    # If title not provided, extract from first H1 line of article
+    if not title:
+        first_line = article.strip().splitlines()[0] if article.strip() else ''
+        title = first_line.lstrip('#').strip()
+
+    spam, spam_reason = is_spam_article(title, article)
+    if spam:
+        return False, spam_reason, 0
+
+    # Tier 3 — Claude for articles containing financial figures
     if re.search(r'£\d+|\biban\b|\baccount\b', article.lower()):
         try:
             response_text, tokens = call_claude(
                 _QUALITY_CHECK_PROMPT.format(article=article[:3000]),
                 max_tokens=256,
             )
-            # Extract JSON from response — Claude may wrap it in prose or code fences
             json_match = re.search(r'\{[^{}]+\}', response_text, re.DOTALL)
             if json_match:
                 result = json.loads(json_match.group())
                 return result.get('pass', False), result.get('reason', 'claude_fail'), tokens
-            # If no JSON found, treat as pass (article already cleared local checks)
             logger.warning('quality_check: no JSON in Claude response, defaulting to pass')
             return True, 'claude_no_json', tokens
         except Exception as exc:
             logger.warning('quality_check Claude call failed: %s', exc)
-            # Fail safe — don't block on API error; pass locally-clean articles
             return True, 'claude_unavailable', 0
 
     return True, 'local_pass', 0

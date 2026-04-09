@@ -26,7 +26,7 @@ from core.wiki_gen.generator import (
 
 logger = logging.getLogger(__name__)
 
-SIMILARITY_THRESHOLD = 0.45   # skip topic if fewer than 5 chunks meet this
+SIMILARITY_THRESHOLD = 0.55   # raised from 0.45 — stronger semantic match required
 MIN_QUALIFYING_CHUNKS = 5      # minimum chunks above threshold to proceed
 
 SEED_TOPICS = [
@@ -173,21 +173,55 @@ def _format_chunks_for_prompt(chunks: list[dict]) -> str:
     return '\n'.join(lines)
 
 
+def _get_completed_topics() -> set[str]:
+    """
+    Return topics that already have a passing wiki article in the generation log.
+    These are skipped in run_cluster_generation() to avoid re-running every 20 min.
+    Topics with failed or insufficient-data outcomes are eligible for retry.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT topic
+                FROM cairn_wiki_generation_log
+                WHERE source_type = 'cluster'
+                  AND quality_passed = TRUE
+                """
+            )
+            return {row[0] for row in cur.fetchall()}
+
+
 def run_cluster_generation(
     topics: list[str] | None = None,
     sleep_between: float = 1.0,
+    force: bool = False,
 ) -> dict:
     """
     Run wiki article generation for all seed topics (or a subset).
     Returns a summary of results.
+
+    Topics that already have a passing article in cairn_wiki_generation_log
+    are skipped unless force=True. This prevents the scheduled task from
+    re-processing all 35 topics every 20 minutes.
     """
     if topics is None:
         topics = SEED_TOPICS
 
+    # Already-processed gate: skip topics with a passing article
+    completed = set() if force else _get_completed_topics()
+    if completed:
+        logger.info(
+            'Skipping %d already-completed topics (pass force=True to override)',
+            len(completed & set(topics)),
+        )
+
     used_email_ids: set[int] = set()
     results = {
-        'topics_attempted': len(topics),
+        'topics_attempted': 0,
+        'topics_skipped_completed': len(completed & set(topics)),
         'topics_skipped_no_data': 0,
+        'topics_skipped_spam': 0,
         'articles_generated': 0,
         'articles_failed_quality': 0,
         'total_tokens': 0,
@@ -195,6 +229,11 @@ def run_cluster_generation(
     }
 
     for topic in topics:
+        # Skip topics already done
+        if topic in completed:
+            continue
+
+        results['topics_attempted'] += 1
         logger.info('Cluster generation: "%s"', topic)
 
         # Retrieve relevant email chunks
@@ -234,8 +273,29 @@ def run_cluster_generation(
         raw_title = lines[0].lstrip('#').strip() if lines else topic
         article_title = raw_title or topic
 
-        # Quality gate
-        passed, reason, qa_tokens = quality_check(article_text)
+        # Fast spam pre-check on title — avoids calling quality_check at all
+        from core.wiki_gen.generator import is_spam_article
+        spam, spam_reason = is_spam_article(article_title, article_text)
+        if spam:
+            logger.info(
+                'Pre-check spam rejected "%s": %s', article_title, spam_reason
+            )
+            results['topics_skipped_spam'] += 1
+            log_generation(
+                source_type='cluster',
+                topic=topic,
+                source_email_ids=source_email_ids,
+                article_title=article_title,
+                wiki_filename=None,
+                quality_passed=False,
+                quality_reason=spam_reason,
+                chunk_count=len(chunks),
+                tokens_used=gen_tokens,
+            )
+            continue
+
+        # Quality gate (passes title through so gate doesn't re-extract it)
+        passed, reason, qa_tokens = quality_check(article_text, title=article_title)
         total_tokens = gen_tokens + qa_tokens
         results['total_tokens'] += total_tokens
 
