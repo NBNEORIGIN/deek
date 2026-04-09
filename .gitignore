@@ -18,3 +18,7 @@ logs/
 *.log
 web/.env.local
 scripts/nssm.exe
+.claude/worktrees/
+wiki/_meta/last_sync.json
+*_CC_PROMPT.md
+*_CC_PROMPT*.md

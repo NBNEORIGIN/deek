@@ -113,6 +113,181 @@ If a junior model returns prose where a diff was required, reject it and re-prom
 
 ---
 
+# CLAUDE.md — Cost Discipline Addendum
+# To be inserted into the existing CLAUDE.md
+# Date: 7 April 2026
+# Purpose: Reduce monthly Anthropic spend by tightening existing protocol discipline
+
+---
+
+## Where this goes
+
+Insert this section into `CLAUDE.md` directly after the existing **STEP 2 — Classify and delegate** section, before STEP 3. It builds on the delegation hierarchy already in place — it does not replace it.
+
+---
+
+## STEP 2b — Cost discipline rules
+
+NBNE pays per token. Every prompt has a cost. The protocol below already
+defines a delegation hierarchy (Qwen → DeepSeek → Sonnet → Opus). These rules
+enforce it in practice.
+
+These rules apply on every prompt without exception. Violating them is the
+single biggest cause of unnecessary spend.
+
+### Rule 1 — Justify every non-delegation
+
+If you (Claude, the principal developer) decide to perform a task yourself
+instead of delegating it to DeepSeek or Qwen, you must include a one-sentence
+justification in the memory write-back under a new field called
+`delegation_decision`.
+
+The justification must be specific. Acceptable examples:
+
+- `"Architecture decision affecting three modules — needs principal developer judgement"`
+- `"Cross-file refactor requires holding the full call graph in working memory"`
+- `"Security-sensitive — credential handling code"`
+- `"DeepSeek failed this task twice in the last week with confused output"`
+
+Unacceptable examples:
+
+- `"Faster to do it myself"` — false economy, you cost ~10x more per token
+- `"Task seemed simple"` — simple tasks are exactly what should be delegated
+- `"Wanted to check the codebase first"` — that's a Step 1 retrieval, not a reason to skip delegation
+- `"Continuation of previous work"` — momentum is not a reason
+
+The act of writing the justification surfaces the cases where delegation was
+the right call but momentum carried you into doing it yourself. Re-evaluate
+when the justification feels weak. It is acceptable — and often correct — to
+stop mid-task, write the justification, realise it's weak, and re-delegate.
+
+The `delegation_decision` field is required on every memory write-back going
+forward. An empty field is treated the same as the existing empty `rejected`
+field — a red flag indicating the discipline was skipped.
+
+### Rule 2 — Retrieval defaults reduced
+
+The default `limit` parameter on all retrieval calls is now **5**, not 10.
+This applies to:
+
+```
+retrieve_codebase_context(query=..., project=..., limit=5)
+retrieve_chat_history(query=..., project=..., limit=5)
+GET /api/wiki/search?q=...&top_k=5
+```
+
+The wiki layer's structured articles mean fewer chunks usually carry more
+relevant context than a wider raw retrieval would. Trust the wiki boost.
+
+You may escalate to `limit=10` only when:
+
+- The task explicitly requires comparing multiple implementations or patterns
+- The first retrieval returned nothing relevant and you need a wider net
+- The task spans more than two modules and needs cross-cutting context
+
+When you escalate, note it in the memory write-back so the pattern is visible
+over time. If escalations become routine on a particular task type, that's a
+signal to revisit the wiki articles for that domain — they should be carrying
+the structured context that makes wider retrieval unnecessary.
+
+### Rule 3 — Session length awareness
+
+After 25 turns in a conversation, the cost per additional turn climbs steeply
+because the accumulated context is re-read on every subsequent call. A
+30-turn debugging session costs roughly 4x what a 15-turn session does for
+the same total work.
+
+At turn 25, evaluate:
+
+1. Is the current task at a natural breakpoint?
+2. Is the context accumulated so far worth preserving in memory?
+3. Would the next stage of work benefit from a fresh context window?
+
+If the answer to all three is yes, stop. Write back to memory with a
+detailed handover note covering:
+
+- What was accomplished in this session
+- What remains to do
+- Any decisions made and their rationale
+- Any rejected approaches and why
+- The next concrete step
+
+Then end the session. Toby (or you in a new session) starts a fresh
+conversation with the handover note as the starting context. The new session
+runs with a clean window and is meaningfully cheaper.
+
+Do not extend sessions out of sunk-cost reasoning. The cost has already been
+incurred — the question is whether the next 25 turns are worth more in a
+fresh session or a stale one. The answer is almost always fresh.
+
+Sessions exceeding 40 turns require explicit justification in the memory
+write-back. Above 50 turns, stop unconditionally and hand over.
+
+---
+
+## Updating the memory write-back schema
+
+The existing `update_memory` call gains one required field:
+
+```python
+update_memory(
+  project=<project>,
+  query=<original task>,
+  decision=<what was done and why>,
+  rejected=<what was considered and ruled out>,
+  outcome=<committed|partial|failed|deferred>,
+  model=<model that did the primary work>,
+  files_changed=[<list of files>],
+  delegation_decision=<one sentence: who did the work and why>  # NEW
+)
+```
+
+Examples of `delegation_decision`:
+
+- `"Delegated to DeepSeek — straightforward CRUD endpoint with clear schema"`
+- `"Delegated to Qwen — file rename and import path updates only"`
+- `"Self — multi-module refactor required holding cross-file invariants"`
+- `"Self — Sonnet judgment needed on attribution model design, then delegated implementation to DeepSeek"`
+
+The last example is the ideal pattern: design at the right tier, implement at
+the cheaper tier. Most non-trivial tasks should look like this — you do the
+thinking, DeepSeek does the typing.
+
+---
+
+## Why these rules exist
+
+NBNE's monthly Anthropic spend is approaching the level where it competes
+with other tooling budgets. The protocol is sound — the issue is that
+discipline erodes under momentum. These rules are friction designed to
+re-introduce the pause that good delegation requires.
+
+The honest framing is not "Anthropic is too expensive" but "we are using
+Anthropic for work that should be going elsewhere." The cheaper tiers are
+genuinely capable of most of the work. The principal developer role exists
+for the work the cheaper tiers cannot do — and that work is a smaller
+fraction of the total than current usage suggests.
+
+Track the impact: monthly spend should decline measurably within two weeks
+of these rules taking effect. If it doesn't, the rules need tightening
+further or the delegation infrastructure has a bug worth investigating.
+
+---
+
+## What these rules do NOT do
+
+These rules are about cost discipline, not quality reduction. The principal
+developer role still exists for genuinely complex work. Architecture
+decisions, security-sensitive changes, and cross-module integration patterns
+are still your responsibility. The bar is "would DeepSeek do this adequately"
+not "could DeepSeek do this perfectly."
+
+If a task is genuinely beyond DeepSeek's capability, do it yourself and write
+a clear justification. The point is not to delegate everything — the point is
+to stop doing easy work at expensive prices.
+
+The code stays in Northumberland. The budget stays in Northumberland too.
+
 ### STEP 3 — Do the work
 
 Execute the task at the appropriate tier. Apply diffs after reviewing them.
