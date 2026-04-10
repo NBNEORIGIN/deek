@@ -328,6 +328,16 @@ function AskPageInner() {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const pendingAutoSpeakRef = useRef<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const messageElsRef = useRef<Map<string, HTMLDivElement>>(new Map())
+  // When true, streaming tokens keep scrolling the view. Flipped off the
+  // moment the user scrolls up to read earlier messages, and restored once
+  // they scroll back near the bottom.
+  const autoFollowRef = useRef(true)
+  // ID of the user message that should be anchored to the top of the scroll
+  // container next paint — used when the user has just hit Send so the full
+  // question stays visible while the answer streams in below it.
+  const anchorUserMsgIdRef = useRef<string | null>(null)
   const esRef = useRef<EventSource | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -384,6 +394,17 @@ function AskPageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlSessionId])
 
+  // Jump the scroll container to its bottom after a fresh session is loaded
+  // from history. Uses rAF to wait for the DOM to lay out the new messages.
+  const scrollContainerToBottom = useCallback(() => {
+    requestAnimationFrame(() => {
+      const container = scrollContainerRef.current
+      if (!container) return
+      container.scrollTop = container.scrollHeight
+      autoFollowRef.current = true
+    })
+  }, [])
+
   const loadSession = useCallback(async (sid: string) => {
     setLoadingSession(true)
     try {
@@ -415,13 +436,19 @@ function AskPageInner() {
         } else {
           setChatTitle('New chat')
         }
+
+        // Suppress the anchor effect for this render pass and jump the
+        // scroll container to the bottom after layout — the most recent
+        // reply in the loaded session should be in view immediately.
+        anchorUserMsgIdRef.current = null
+        scrollContainerToBottom()
       }
     } catch {
       // Session not found — start fresh
     } finally {
       setLoadingSession(false)
     }
-  }, [])
+  }, [scrollContainerToBottom])
 
   // Lookup the stored title from the sessions list (used when selecting an
   // existing session — the list payload carries an explicit title if set).
@@ -565,9 +592,49 @@ function AskPageInner() {
     }
   }, [messages, speaking])
 
+  // Track whether the user is parked near the bottom of the scroll area.
+  // If they've deliberately scrolled up, streaming tokens must NOT yank the
+  // view back down — they're reading something.
+  const handleMessagesScroll = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    autoFollowRef.current = distanceFromBottom < 120
+  }, [])
+
+  // Scroll behaviour on message changes:
+  //   1. If we just appended a user message (Send was pressed), pin the TOP
+  //      of that user bubble to the top of the scroll container so the full
+  //      question stays visible while the answer streams in beneath it.
+  //      This is how ChatGPT behaves and prevents tall questions from
+  //      scrolling off the top of the window.
+  //   2. Otherwise (assistant tokens streaming in), only follow to the
+  //      bottom if the user hasn't scrolled up to read history.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const anchorId = anchorUserMsgIdRef.current
+    if (anchorId) {
+      const el = messageElsRef.current.get(anchorId)
+      if (el) {
+        // Position the top of the just-sent user bubble at the top of the
+        // scroll container (with a tiny gutter for breathing room).
+        const target = Math.max(0, el.offsetTop - 8)
+        container.scrollTo({ top: target, behavior: 'smooth' })
+        anchorUserMsgIdRef.current = null
+        // After an explicit anchor, the user is effectively "at the latest
+        // activity" — keep auto-follow on for the assistant stream.
+        autoFollowRef.current = true
+      }
+      return
+    }
+
+    if (autoFollowRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    }
   }, [messages])
+
 
   const sendMessage = useCallback(async (overrideText?: string) => {
     const text = (overrideText ?? input).trim()
@@ -578,12 +645,17 @@ function AskPageInner() {
       ? pendingFiles.map((f) => `📎 ${f.name}`).join('\n') + '\n'
       : ''
     const nowIso = new Date().toISOString()
+    const userMsgId = `u-${Date.now()}`
     const userMsg: Message = {
-      id: `u-${Date.now()}`,
+      id: userMsgId,
       role: 'user',
       content: fileLabel + text,
       timestamp: nowIso,
     }
+    // Anchor the top of this just-sent user bubble to the top of the scroll
+    // container on the next effect pass — guarantees the user can still see
+    // the full question they typed, no matter how long it is.
+    anchorUserMsgIdRef.current = userMsgId
     setMessages((prev) => {
       // Derive the header title from the first user message in a new session
       if (prev.length === 0 && (chatTitle === 'New chat' || chatTitle === 'Loading...')) {
@@ -898,7 +970,11 @@ function AskPageInner() {
           <>
             {/* Message list — flex-1 + min-h-0 is what lets the internal
                 overflow-y-auto actually scroll inside a column flex. */}
-            <div className="flex-1 min-h-0 overflow-y-auto space-y-4 py-4 px-4 max-w-[960px] mx-auto w-full">
+            <div
+              ref={scrollContainerRef}
+              onScroll={handleMessagesScroll}
+              className="flex-1 min-h-0 overflow-y-auto space-y-4 py-4 px-4 max-w-[960px] mx-auto w-full"
+            >
               {messages.length === 0 && (
                 <div className="flex items-center justify-center h-full px-4">
                   <p className="text-sm text-slate-400 text-center">
@@ -917,8 +993,16 @@ function AskPageInner() {
                     })
                   : undefined
                 const isCopied = copiedMsgId === msg.id
+                const setMsgRef = (el: HTMLDivElement | null) => {
+                  if (el) messageElsRef.current.set(msg.id, el)
+                  else messageElsRef.current.delete(msg.id)
+                }
                 return msg.role === 'user' ? (
-                  <div key={msg.id} className="group flex justify-end items-start gap-1.5">
+                  <div
+                    key={msg.id}
+                    ref={setMsgRef}
+                    className="group flex justify-end items-start gap-1.5 scroll-mt-2"
+                  >
                     <button
                       type="button"
                       onClick={() => copyMessage(msg.id, msg.content)}
@@ -936,7 +1020,11 @@ function AskPageInner() {
                     </div>
                   </div>
                 ) : (
-                  <div key={msg.id} className="group flex justify-start items-start gap-1.5">
+                  <div
+                    key={msg.id}
+                    ref={setMsgRef}
+                    className="group flex justify-start items-start gap-1.5 scroll-mt-2"
+                  >
                     <div
                       className="max-w-[85%] md:max-w-[75%] bg-white border border-slate-200 text-slate-800 text-sm px-3 py-2.5 md:px-4 md:py-3 rounded-2xl rounded-tl-sm shadow-sm"
                       title={hoverTime}
