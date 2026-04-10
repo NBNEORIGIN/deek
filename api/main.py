@@ -2512,3 +2512,15 @@ app.include_router(wiki_gen_router)
 # Register Admin routes (wiki-sync, operational endpoints)
 from api.routes.admin import router as admin_router
 app.include_router(admin_router)
+
+# Register Cairn Social routes (drafting + proof-reading assistant for Jo)
+from api.routes.social import router as social_router
+app.include_router(social_router)
+
+# Best-effort: ensure social_* tables exist on startup. Failure here must
+# not block API startup — the /social/migrate endpoint can repair if needed.
+try:
+    from core.social.db import ensure_schema as _ensure_social_schema
+    _ensure_social_schema()
+except Exception as _social_schema_exc:  # pragma: no cover
+    print(f'[Cairn] social schema bootstrap skipped: {_social_schema_exc}')
