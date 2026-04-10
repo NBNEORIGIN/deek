@@ -181,6 +181,38 @@ function generateSessionId() {
   return `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+// Clipboard / check icon used by the copy buttons on message bubbles.
+function CopyIcon({ done }: { done: boolean }) {
+  if (done) {
+    return (
+      <svg
+        className="w-3.5 h-3.5 text-emerald-500"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+        strokeWidth={2.5}
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+      </svg>
+    )
+  }
+  return (
+    <svg
+      className="w-3.5 h-3.5"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+      strokeWidth={2}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+      />
+    </svg>
+  )
+}
+
 // Collapse upstream model IDs into a short tag for the message footer:
 // "claude-opus-4-6" → "opus", "claude-sonnet-4-5" → "sonnet",
 // "claude-haiku-4-5-20251001" → "haiku", etc. Falls back to the raw string.
@@ -267,6 +299,31 @@ function AskPageInner() {
   const [uploadState, setUploadState] = useState<'idle' | 'uploading'>('idle')
   const [uploadFilename, setUploadFilename] = useState('')
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null)
+
+  const copyMessage = useCallback(async (msgId: string, text: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+      } else {
+        // Fallback for older browsers / non-secure contexts
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      setCopiedMsgId(msgId)
+      setTimeout(() => {
+        setCopiedMsgId((current) => (current === msgId ? null : current))
+      }, 1500)
+    } catch {
+      // silent — copy isn't critical
+    }
+  }, [])
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const pendingAutoSpeakRef = useRef<string | null>(null)
@@ -762,11 +819,21 @@ function AskPageInner() {
   }, [voiceState, startRecording, stopRecording])
 
   return (
-    <div className="flex h-[calc(100dvh-56px-3rem)]" onDragOver={handleDragOver} onDrop={handleDrop}>
+    <div
+      // Cancel the authenticated layout's p-4 md:p-6 padding and lock the
+      // height to exactly the visible area below the fixed header. This
+      // prevents the outer <main> from ever scrolling the ask page so the
+      // chat title cannot disappear off the top of the window.
+      className="flex -m-4 md:-m-6 h-[calc(100dvh-56px)] overflow-hidden"
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       {/* Main chat area */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Toolbar: current chat title (click-to-edit) + mobile history toggle */}
-        <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-100 flex-shrink-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+        {/* Toolbar: current chat title (click-to-edit) + mobile history toggle.
+            Sticky + z-20 so the title stays pinned even if any ancestor ends
+            up scrolling for unexpected reasons. */}
+        <div className="sticky top-0 z-20 flex items-center gap-3 px-4 py-2 border-b border-slate-100 bg-white flex-shrink-0">
           <div className="flex-1 min-w-0">
             {editingTitle ? (
               <input
@@ -824,13 +891,14 @@ function AskPageInner() {
 
         {/* Loading state for session */}
         {loadingSession ? (
-          <div className="flex-1 flex items-center justify-center">
+          <div className="flex-1 flex items-center justify-center min-h-0">
             <p className="text-sm text-slate-400 animate-pulse">Loading conversation...</p>
           </div>
         ) : (
           <>
-            {/* Message list */}
-            <div className="flex-1 overflow-y-auto space-y-4 pb-4 px-4 max-w-[960px] mx-auto w-full">
+            {/* Message list — flex-1 + min-h-0 is what lets the internal
+                overflow-y-auto actually scroll inside a column flex. */}
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-4 py-4 px-4 max-w-[960px] mx-auto w-full">
               {messages.length === 0 && (
                 <div className="flex items-center justify-center h-full px-4">
                   <p className="text-sm text-slate-400 text-center">
@@ -848,8 +916,18 @@ function AskPageInner() {
                       minute: '2-digit',
                     })
                   : undefined
+                const isCopied = copiedMsgId === msg.id
                 return msg.role === 'user' ? (
-                  <div key={msg.id} className="flex justify-end">
+                  <div key={msg.id} className="group flex justify-end items-start gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => copyMessage(msg.id, msg.content)}
+                      className="opacity-0 group-hover:opacity-100 focus:opacity-100 mt-1.5 p-1 rounded text-slate-300 hover:text-indigo-600 transition-opacity"
+                      title={isCopied ? 'Copied' : 'Copy message'}
+                      aria-label="Copy user message"
+                    >
+                      <CopyIcon done={isCopied} />
+                    </button>
                     <div
                       className="max-w-[85%] md:max-w-[75%] bg-indigo-600 text-white text-sm px-3 py-2.5 md:px-4 md:py-3 rounded-2xl rounded-tr-sm whitespace-pre-wrap"
                       title={hoverTime}
@@ -858,7 +936,7 @@ function AskPageInner() {
                     </div>
                   </div>
                 ) : (
-                  <div key={msg.id} className="flex justify-start">
+                  <div key={msg.id} className="group flex justify-start items-start gap-1.5">
                     <div
                       className="max-w-[85%] md:max-w-[75%] bg-white border border-slate-200 text-slate-800 text-sm px-3 py-2.5 md:px-4 md:py-3 rounded-2xl rounded-tl-sm shadow-sm"
                       title={hoverTime}
@@ -868,6 +946,14 @@ function AskPageInner() {
                           <AssistantBubble content={msg.content} isError={msg.isError} />
                           {!msg.isError && !sending && (
                             <div className="mt-2 pt-2 border-t border-slate-100 flex items-center gap-3 flex-wrap">
+                              <button
+                                onClick={() => copyMessage(msg.id, msg.content)}
+                                className="text-xs text-slate-400 hover:text-indigo-600 transition-colors flex items-center gap-1"
+                                title={isCopied ? 'Copied' : 'Copy reply'}
+                              >
+                                <CopyIcon done={isCopied} />
+                                {isCopied ? 'Copied' : 'Copy'}
+                              </button>
                               <button
                                 onClick={() => speakMessage(msg.id)}
                                 className="text-xs text-slate-400 hover:text-indigo-600 transition-colors"
