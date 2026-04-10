@@ -12,9 +12,66 @@ Stores:
 """
 import sqlite3
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+# Regex patterns used to strip context-injection blocks from stored user messages
+# when deriving session titles or previews. The web-business /api/chat/stream
+# route prepends [PERSONALITY], [LIVE BUSINESS DATA], [WIKI CONTEXT], [CRM DATA]
+# and similar directive blocks to every user message so the LLM gets live
+# context — but the DB ends up with those blocks at the start of the first
+# user message, which makes every session title read "[PERSONALITY] You are
+# the NB…". We strip them here so titles reflect the actual user question.
+_INJECTION_BLOCK_PATTERNS = [
+    re.compile(r'\[PERSONALITY\][\s\S]*?\[END PERSONALITY\]\s*', re.IGNORECASE),
+    re.compile(r'\[LIVE BUSINESS DATA[\s\S]*?\[END LIVE DATA\]\s*', re.IGNORECASE),
+    re.compile(r'\[WIKI CONTEXT[\s\S]*?\[END WIKI CONTEXT\]\s*', re.IGNORECASE),
+    re.compile(r'\[CRM DATA[\s\S]*?\[END CRM DATA\]\s*', re.IGNORECASE),
+    re.compile(r'\[IMPORTANT:[\s\S]*?\]\s*', re.IGNORECASE),
+    re.compile(r'\[FILE UPLOADED:[^\]]*\]\s*'),
+    re.compile(r'\[FILE UPLOAD FAILED:[^\]]*\]\s*'),
+]
+
+# Markers that indicate a bracketed block whose closing tag may have been
+# lost (for example when the raw first-user row is truncated to 72 chars).
+# If stripping completes and the text still starts with one of these, we
+# know the whole block is malformed and drop the bracketed header entirely.
+_TRUNCATED_BLOCK_MARKERS = re.compile(
+    r'^\s*\[(PERSONALITY|LIVE BUSINESS DATA|WIKI CONTEXT|CRM DATA|IMPORTANT)',
+    re.IGNORECASE,
+)
+
+
+def _strip_injected_blocks(content: str) -> str:
+    """Remove [PERSONALITY]/[LIVE DATA]/[WIKI]/[CRM]/[IMPORTANT]/[FILE…] blocks.
+
+    Idempotent and defensive: handles truncated blocks (where the closing tag
+    was cut off by an earlier length cap) by dropping the entire leading
+    bracketed header if a known marker is still visible after the first pass.
+    """
+    if not content:
+        return content
+    stripped = content
+    for pat in _INJECTION_BLOCK_PATTERNS:
+        stripped = pat.sub('', stripped)
+    stripped = stripped.lstrip()
+
+    # If a truncated block is still clinging to the front, drop until the
+    # next newline or, failing that, return an empty string so callers fall
+    # back to their own placeholder.
+    if _TRUNCATED_BLOCK_MARKERS.match(stripped):
+        nl = stripped.find('\n')
+        if nl >= 0:
+            stripped = stripped[nl + 1:].lstrip()
+            # One more pass in case the next block is also truncated
+            if _TRUNCATED_BLOCK_MARKERS.match(stripped):
+                return ''
+        else:
+            return ''
+    return stripped
 
 
 class MemoryStore:
@@ -376,9 +433,10 @@ class MemoryStore:
         self,
         text: str | None,
         fallback: str = 'New chat',
-        max_len: int = 72,
+        max_len: int = 40,
     ) -> str:
-        compact = ' '.join((text or '').split())
+        cleaned = _strip_injected_blocks(text or '')
+        compact = ' '.join(cleaned.split())
         if not compact:
             return fallback
         if len(compact) <= max_len:
@@ -612,7 +670,22 @@ class MemoryStore:
                 last_preview = r[7] or ''
                 explicit_title = r[8] if len(r) > 8 else None
 
-            derived_title = self._compact_session_text(first_user)
+            derived_title = self._compact_session_text(first_user, max_len=40)
+            # If an explicit title was set previously but is itself polluted
+            # (e.g. the user auto-renamed from the old leaky derived title),
+            # strip injected blocks from it as well.
+            if explicit_title:
+                explicit_title = self._compact_session_text(
+                    explicit_title,
+                    fallback='',
+                    max_len=60,
+                ) or None
+
+            first_user_preview = self._compact_session_text(
+                first_user,
+                fallback='',
+                max_len=120,
+            )
 
             return {
                 'session_id': r[0],
@@ -622,10 +695,10 @@ class MemoryStore:
                 'subproject_id': r[4],
                 'archived': is_archived,
                 'title': explicit_title or derived_title,
-                'preview': self._compact_session_text(
+                'preview': first_user_preview or self._compact_session_text(
                     last_preview,
                     fallback=derived_title,
-                    max_len=96,
+                    max_len=120,
                 ),
             }
 
@@ -730,6 +803,56 @@ class MemoryStore:
         )
         self.conn.commit()
         return result.rowcount > 0
+
+    def retitle_sessions(self, project_id: str) -> dict:
+        """Retroactively clean session titles polluted with context blocks.
+
+        For every session in this project whose stored `title` is missing,
+        empty, or starts with a known injection marker like `[PERSONALITY`,
+        compute a fresh title from the first user message (after stripping
+        the same injection blocks) and write it to the `sessions.title`
+        column. Returns counts for reporting.
+        """
+        rows = self.conn.execute("""
+            SELECT s.session_id, s.title, (
+                SELECT c.content
+                FROM conversations c
+                WHERE c.session_id = s.session_id
+                  AND c.role = 'user'
+                ORDER BY c.id ASC
+                LIMIT 1
+            ) AS first_user
+            FROM sessions s
+            WHERE s.project_id = ?
+        """, (project_id,)).fetchall()
+
+        scanned = 0
+        updated = 0
+        for session_id, current_title, first_user in rows:
+            scanned += 1
+            needs_update = False
+            if not current_title:
+                needs_update = True
+            elif _TRUNCATED_BLOCK_MARKERS.match(current_title):
+                needs_update = True
+            elif '[PERSONALITY' in current_title or '[LIVE BUSINESS DATA' in current_title:
+                needs_update = True
+            if not needs_update:
+                continue
+            new_title = self._compact_session_text(
+                first_user,
+                fallback='',
+                max_len=60,
+            )
+            if not new_title:
+                continue
+            self.conn.execute(
+                "UPDATE sessions SET title = ? WHERE session_id = ?",
+                (new_title, session_id),
+            )
+            updated += 1
+        self.conn.commit()
+        return {'scanned': scanned, 'updated': updated}
 
     def delete_session(self, session_id: str) -> bool:
         """Hard delete a session and its messages from both active and archived tables."""

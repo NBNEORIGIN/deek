@@ -978,6 +978,22 @@ async def delete_session(
     return {'session_id': session_id, 'deleted': True}
 
 
+@app.post("/projects/{project}/sessions/retitle")
+async def retitle_sessions(
+    project: str,
+    _: bool = Depends(verify_api_key),
+):
+    """One-off migration: recompute titles for sessions polluted with
+    context-injection blocks (e.g. '[PERSONALITY] You are the NB…').
+
+    Idempotent — skips any session whose stored title is already clean.
+    Returns {'scanned': N, 'updated': M}.
+    """
+    agent = get_agent(project)
+    result = agent.memory.retitle_sessions(project_id=project)
+    return {'project': project, **result}
+
+
 @app.get("/projects/{project}/files")
 def get_project_files(
     project: str,

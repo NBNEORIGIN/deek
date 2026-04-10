@@ -3,26 +3,48 @@
 import { useState, useRef, useEffect } from 'react'
 import type { SessionSummary } from '@/types/chat'
 
-function cleanTitle(raw: string): string {
-  // Strip everything between [PERSONALITY] and [END PERSONALITY]
-  let cleaned = raw.replace(/\[PERSONALITY\][\s\S]*?\[END PERSONALITY\]\s*/g, '')
-  // Strip [LIVE BUSINESS DATA...] blocks
-  cleaned = cleaned.replace(/\[LIVE BUSINESS DATA[\s\S]*?\[END LIVE DATA\]\s*/g, '')
-  // Strip [WIKI CONTEXT...] blocks
-  cleaned = cleaned.replace(/\[WIKI CONTEXT[\s\S]*?\[END WIKI CONTEXT\]\s*/g, '')
-  // Strip [CRM DATA...] blocks
-  cleaned = cleaned.replace(/\[CRM DATA[\s\S]*?\[END CRM DATA\]\s*/g, '')
-  // Strip [IMPORTANT:...] blocks
-  cleaned = cleaned.replace(/\[IMPORTANT:[\s\S]*?\]\s*/g, '')
-  // Strip [FILE UPLOADED:...] prefix
-  cleaned = cleaned.replace(/\[FILE UPLOADED:[^\]]*\]\s*/g, '')
-  // Strip [FILE UPLOAD FAILED:...] prefix
-  cleaned = cleaned.replace(/\[FILE UPLOAD FAILED:[^\]]*\]\s*/g, '')
-  // Clean up leading whitespace and newlines
-  cleaned = cleaned.trim()
-  // Take first line only as title, max 60 chars
-  const firstLine = cleaned.split('\n')[0] ?? ''
-  return firstLine.slice(0, 60) || 'New conversation'
+// Shared with ask/page.tsx — strips context-injection blocks that the chat
+// stream route prepends to user messages ([PERSONALITY], [LIVE BUSINESS DATA],
+// [WIKI CONTEXT], [CRM DATA], [IMPORTANT:…], [FILE UPLOADED:…]). Handles the
+// case where the block is truncated so the closing tag is missing.
+const INJECTION_PATTERNS: RegExp[] = [
+  /\[PERSONALITY\][\s\S]*?\[END PERSONALITY\]\s*/gi,
+  /\[LIVE BUSINESS DATA[\s\S]*?\[END LIVE DATA\]\s*/gi,
+  /\[WIKI CONTEXT[\s\S]*?\[END WIKI CONTEXT\]\s*/gi,
+  /\[CRM DATA[\s\S]*?\[END CRM DATA\]\s*/gi,
+  /\[IMPORTANT:[\s\S]*?\]\s*/gi,
+  /\[FILE UPLOADED:[^\]]*\]\s*/gi,
+  /\[FILE UPLOAD FAILED:[^\]]*\]\s*/gi,
+]
+
+const TRUNCATED_BLOCK_PREFIX =
+  /^\s*\[(PERSONALITY|LIVE BUSINESS DATA|WIKI CONTEXT|CRM DATA|IMPORTANT)/i
+
+export function stripInjectionBlocks(raw: string): string {
+  let cleaned = raw ?? ''
+  for (const pat of INJECTION_PATTERNS) {
+    cleaned = cleaned.replace(pat, '')
+  }
+  cleaned = cleaned.replace(/^\s+/, '')
+  // If a truncated block is still clinging to the front, drop the first
+  // line. One more check in case two blocks were both truncated.
+  if (TRUNCATED_BLOCK_PREFIX.test(cleaned)) {
+    const nl = cleaned.indexOf('\n')
+    if (nl >= 0) {
+      cleaned = cleaned.slice(nl + 1).replace(/^\s+/, '')
+      if (TRUNCATED_BLOCK_PREFIX.test(cleaned)) return ''
+    } else {
+      return ''
+    }
+  }
+  return cleaned
+}
+
+export function cleanTitle(raw: string): string {
+  const stripped = stripInjectionBlocks(raw).trim()
+  if (!stripped) return 'New conversation'
+  const firstLine = stripped.split('\n')[0] ?? ''
+  return firstLine.slice(0, 40) || 'New conversation'
 }
 
 function timeAgo(dateStr: string): string {
@@ -117,9 +139,21 @@ export default function SessionItem({
             <p className="text-sm text-slate-800 truncate font-medium leading-tight">
               {cleanTitle(session.title)}
             </p>
-            <p className="text-xs text-slate-400 truncate mt-0.5">
+            {(() => {
+              const previewText = stripInjectionBlocks(session.preview ?? '')
+                .replace(/\s+/g, ' ')
+                .trim()
+              if (previewText) {
+                return (
+                  <p className="text-xs text-slate-500 truncate mt-0.5">
+                    {previewText}
+                  </p>
+                )
+              }
+              return null
+            })()}
+            <p className="text-[10px] text-slate-400 truncate mt-0.5">
               {timeAgo(session.last_message_at)}
-              {session.message_count > 0 && ` \u00b7 ${session.message_count} msgs`}
             </p>
           </>
         )}

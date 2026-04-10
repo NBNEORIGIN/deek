@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import ChatHistorySidebar from '@/components/chat/ChatHistorySidebar'
+import { cleanTitle, stripInjectionBlocks } from '@/components/chat/SessionItem'
 import type { SessionMessage } from '@/types/chat'
 
 interface Message {
@@ -11,6 +12,8 @@ interface Message {
   content: string
   isError?: boolean
   saved?: boolean
+  model_used?: string
+  timestamp?: string
 }
 
 type VoiceState = 'idle' | 'recording' | 'transcribing' | 'error'
@@ -178,6 +181,20 @@ function generateSessionId() {
   return `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+// Collapse upstream model IDs into a short tag for the message footer:
+// "claude-opus-4-6" → "opus", "claude-sonnet-4-5" → "sonnet",
+// "claude-haiku-4-5-20251001" → "haiku", etc. Falls back to the raw string.
+function formatModelLabel(rawModel: string): string {
+  const m = rawModel.toLowerCase()
+  if (m.includes('opus')) return 'opus'
+  if (m.includes('sonnet')) return 'sonnet'
+  if (m.includes('haiku')) return 'haiku'
+  if (m.includes('deepseek')) return 'deepseek'
+  if (m.includes('qwen')) return 'qwen'
+  if (m.includes('gpt')) return 'gpt'
+  return rawModel
+}
+
 // ---- Mic button --------------------------------------------------------------
 
 function MicButton({ voiceState, onToggle }: { voiceState: VoiceState; onToggle: () => void }) {
@@ -242,6 +259,10 @@ function AskPageInner() {
     urlSessionId || generateSessionId()
   )
   const [loadingSession, setLoadingSession] = useState(false)
+  const [chatTitle, setChatTitle] = useState<string>('New chat')
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  const titleInputRef = useRef<HTMLInputElement>(null)
 
   const [uploadState, setUploadState] = useState<'idle' | 'uploading'>('idle')
   const [uploadFilename, setUploadFilename] = useState('')
@@ -301,31 +322,65 @@ function AskPageInner() {
     if (urlSessionId && urlSessionId !== sessionId) {
       setSessionId(urlSessionId)
       loadSession(urlSessionId)
+      lookupSessionTitle(urlSessionId)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlSessionId])
 
-  async function loadSession(sid: string) {
+  const loadSession = useCallback(async (sid: string) => {
     setLoadingSession(true)
     try {
       const res = await fetch(`/api/chat/sessions/${sid}`)
       if (res.ok) {
         const data = await res.json()
-        const msgs: Message[] = (data.messages ?? [])
-          .filter((m: SessionMessage) => m.role === 'user' || m.role === 'assistant')
-          .map((m: SessionMessage, i: number) => ({
+        const raw: SessionMessage[] = data.messages ?? []
+        const msgs: Message[] = raw
+          .filter((m) => m.role === 'user' || m.role === 'assistant')
+          .map((m, i) => ({
             id: `loaded-${i}`,
             role: m.role as 'user' | 'assistant',
-            content: m.content,
+            // Strip any injection blocks that leaked into stored user
+            // messages so old conversations don't render with the personality
+            // prompt hanging off the top of each user bubble.
+            content: m.role === 'user'
+              ? stripInjectionBlocks(m.content).trim() || m.content
+              : m.content,
+            model_used: m.model_used,
+            timestamp: m.timestamp,
           }))
         setMessages(msgs)
         isNewSession.current = false
+
+        // Derive title from first user message for the header bar
+        const firstUser = msgs.find((m) => m.role === 'user')
+        if (firstUser) {
+          setChatTitle(cleanTitle(firstUser.content))
+        } else {
+          setChatTitle('New chat')
+        }
       }
     } catch {
       // Session not found — start fresh
     } finally {
       setLoadingSession(false)
     }
-  }
+  }, [])
+
+  // Lookup the stored title from the sessions list (used when selecting an
+  // existing session — the list payload carries an explicit title if set).
+  const lookupSessionTitle = useCallback(async (sid: string) => {
+    try {
+      const res = await fetch('/api/chat/sessions')
+      if (!res.ok) return
+      const data = await res.json()
+      const found = (data.sessions ?? []).find(
+        (s: { session_id: string; title?: string }) => s.session_id === sid,
+      )
+      if (found?.title) setChatTitle(cleanTitle(found.title))
+    } catch {
+      // silently fail
+    }
+  }, [])
 
   function handleSelectSession(sid: string) {
     if (sid === sessionId) return
@@ -334,9 +389,12 @@ function AskPageInner() {
     setSending(false)
     setSessionId(sid)
     setMessages([])
+    setEditingTitle(false)
+    setChatTitle('Loading...')
     isNewSession.current = false
     router.replace(`/ask?s=${sid}`, { scroll: false })
     loadSession(sid)
+    lookupSessionTitle(sid)
   }
 
   function handleNewChat() {
@@ -345,9 +403,37 @@ function AskPageInner() {
     const newId = generateSessionId()
     setSessionId(newId)
     setMessages([])
+    setEditingTitle(false)
+    setChatTitle('New chat')
     isNewSession.current = true
     router.replace('/ask', { scroll: false })
   }
+
+  const saveTitle = useCallback(async (nextTitle: string) => {
+    const trimmed = nextTitle.trim().slice(0, 80)
+    if (!trimmed || trimmed === chatTitle) {
+      setEditingTitle(false)
+      return
+    }
+    setChatTitle(trimmed)
+    setEditingTitle(false)
+    try {
+      await fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: trimmed }),
+      })
+    } catch {
+      // silently fail — title stays updated locally
+    }
+  }, [chatTitle, sessionId])
+
+  useEffect(() => {
+    if (editingTitle && titleInputRef.current) {
+      titleInputRef.current.focus()
+      titleInputRef.current.select()
+    }
+  }, [editingTitle])
 
   const saveToMemory = useCallback(async (msgId: string) => {
     const idx = messages.findIndex((m) => m.id === msgId)
@@ -434,8 +520,20 @@ function AskPageInner() {
     const fileLabel = pendingFiles.length > 0
       ? pendingFiles.map((f) => `📎 ${f.name}`).join('\n') + '\n'
       : ''
-    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: fileLabel + text }
-    setMessages((prev) => [...prev, userMsg])
+    const nowIso = new Date().toISOString()
+    const userMsg: Message = {
+      id: `u-${Date.now()}`,
+      role: 'user',
+      content: fileLabel + text,
+      timestamp: nowIso,
+    }
+    setMessages((prev) => {
+      // Derive the header title from the first user message in a new session
+      if (prev.length === 0 && (chatTitle === 'New chat' || chatTitle === 'Loading...')) {
+        setChatTitle(cleanTitle(text))
+      }
+      return [...prev, userMsg]
+    })
     setInput('')
     setSending(true)
 
@@ -469,7 +567,15 @@ function AskPageInner() {
     }
 
     const assistantId = `a-${Date.now()}`
-    setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '' }])
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        timestamp: new Date().toISOString(),
+      },
+    ])
 
     if (voiceMode) pendingAutoSpeakRef.current = assistantId
 
@@ -537,11 +643,16 @@ function AskPageInner() {
                 )
               }
             } else if (type === 'complete') {
+              const completedModel: string = parsed.model_used ?? ''
               setMessages((prev) =>
                 prev.map((m) => {
                   if (m.id !== assistantId) return m
-                  if (m.content) return m
-                  return { ...m, content: parsed.response ?? '' }
+                  const nextContent = m.content || (parsed.response ?? '')
+                  return {
+                    ...m,
+                    content: nextContent,
+                    model_used: completedModel || m.model_used,
+                  }
                 })
               )
               if (pendingAutoSpeakRef.current === assistantId) {
@@ -573,7 +684,7 @@ function AskPageInner() {
       esRef.current = null
       setSending(false)
     }
-  }, [input, sending, sessionId, router, speakMessage, voiceMode])
+  }, [input, sending, sessionId, router, speakMessage, voiceMode, pendingFiles, chatTitle])
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -654,26 +765,60 @@ function AskPageInner() {
     <div className="flex h-[calc(100dvh-56px-3rem)]" onDragOver={handleDragOver} onDrop={handleDrop}>
       {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Toolbar */}
-        <div className="flex items-center justify-end gap-3 px-4 py-2 border-b border-slate-100 flex-shrink-0">
+        {/* Toolbar: current chat title (click-to-edit) + mobile history toggle */}
+        <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-100 flex-shrink-0">
+          <div className="flex-1 min-w-0">
+            {editingTitle ? (
+              <input
+                ref={titleInputRef}
+                type="text"
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={() => saveTitle(titleDraft)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    saveTitle(titleDraft)
+                  } else if (e.key === 'Escape') {
+                    setEditingTitle(false)
+                  }
+                }}
+                maxLength={80}
+                className="w-full text-base font-semibold text-slate-800 bg-white border border-indigo-300 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setTitleDraft(chatTitle === 'New chat' ? '' : chatTitle)
+                  setEditingTitle(true)
+                }}
+                title="Click to rename this chat"
+                className="group flex items-center gap-1.5 text-left max-w-full min-w-0 text-base font-semibold text-slate-800 hover:text-indigo-700 transition-colors truncate"
+              >
+                <span className="truncate">{chatTitle}</span>
+                <svg
+                  className="w-3.5 h-3.5 text-slate-300 group-hover:text-indigo-400 flex-shrink-0"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 11l6.293-6.293a1 1 0 011.414 0l2.586 2.586a1 1 0 010 1.414L13 15H9v-4z" />
+                </svg>
+              </button>
+            )}
+          </div>
+
           <button
             onClick={() => setHistoryOpen(!historyOpen)}
-            className="lg:hidden flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors"
+            className="lg:hidden flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors flex-shrink-0"
             title="Chat history"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             History
-          </button>
-          <button
-            onClick={handleNewChat}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            New chat
           </button>
         </div>
 
@@ -685,7 +830,7 @@ function AskPageInner() {
         ) : (
           <>
             {/* Message list */}
-            <div className="flex-1 overflow-y-auto space-y-4 pb-4 px-4 max-w-3xl mx-auto w-full">
+            <div className="flex-1 overflow-y-auto space-y-4 pb-4 px-4 max-w-[960px] mx-auto w-full">
               {messages.length === 0 && (
                 <div className="flex items-center justify-center h-full px-4">
                   <p className="text-sm text-slate-400 text-center">
@@ -694,21 +839,35 @@ function AskPageInner() {
                 </div>
               )}
 
-              {messages.map((msg) =>
-                msg.role === 'user' ? (
+              {messages.map((msg) => {
+                const hoverTime = msg.timestamp
+                  ? new Date(msg.timestamp).toLocaleString('en-GB', {
+                      day: 'numeric',
+                      month: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })
+                  : undefined
+                return msg.role === 'user' ? (
                   <div key={msg.id} className="flex justify-end">
-                    <div className="max-w-[85%] md:max-w-[75%] bg-indigo-600 text-white text-sm px-3 py-2.5 md:px-4 md:py-3 rounded-2xl rounded-tr-sm">
+                    <div
+                      className="max-w-[85%] md:max-w-[75%] bg-indigo-600 text-white text-sm px-3 py-2.5 md:px-4 md:py-3 rounded-2xl rounded-tr-sm whitespace-pre-wrap"
+                      title={hoverTime}
+                    >
                       {msg.content}
                     </div>
                   </div>
                 ) : (
                   <div key={msg.id} className="flex justify-start">
-                    <div className="max-w-[85%] md:max-w-[75%] bg-white border border-slate-200 text-slate-800 text-sm px-3 py-2.5 md:px-4 md:py-3 rounded-2xl rounded-tl-sm shadow-sm">
+                    <div
+                      className="max-w-[85%] md:max-w-[75%] bg-white border border-slate-200 text-slate-800 text-sm px-3 py-2.5 md:px-4 md:py-3 rounded-2xl rounded-tl-sm shadow-sm"
+                      title={hoverTime}
+                    >
                       {msg.content ? (
                         <>
                           <AssistantBubble content={msg.content} isError={msg.isError} />
                           {!msg.isError && !sending && (
-                            <div className="mt-2 pt-2 border-t border-slate-100 flex items-center gap-3">
+                            <div className="mt-2 pt-2 border-t border-slate-100 flex items-center gap-3 flex-wrap">
                               <button
                                 onClick={() => speakMessage(msg.id)}
                                 className="text-xs text-slate-400 hover:text-indigo-600 transition-colors"
@@ -727,6 +886,14 @@ function AskPageInner() {
                                   {saving === msg.id ? 'Saving...' : 'Remember this'}
                                 </button>
                               )}
+                              {msg.model_used && (
+                                <span
+                                  className="text-[10px] text-slate-300 ml-auto"
+                                  title={`Answered by ${msg.model_used}`}
+                                >
+                                  {formatModelLabel(msg.model_used)}
+                                </span>
+                              )}
                             </div>
                           )}
                         </>
@@ -736,7 +903,7 @@ function AskPageInner() {
                     </div>
                   </div>
                 )
-              )}
+              })}
               <div ref={bottomRef} />
             </div>
 
@@ -775,7 +942,7 @@ function AskPageInner() {
 
             {/* Pending files indicator */}
             {pendingFiles.length > 0 && uploadState !== 'uploading' && (
-              <div className="px-3 py-2 mb-2 bg-slate-50 border border-slate-200 rounded-lg max-w-3xl mx-auto w-full space-y-1">
+              <div className="px-3 py-2 mb-2 bg-slate-50 border border-slate-200 rounded-lg max-w-[960px] mx-auto w-full space-y-1">
                 {pendingFiles.map((file, i) => (
                   <div key={`${file.name}-${i}`} className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-xs text-slate-600 font-medium">
@@ -797,7 +964,7 @@ function AskPageInner() {
 
             {/* File uploading indicator */}
             {uploadState === 'uploading' && (
-              <div className="flex items-center gap-2 px-3 py-2 mb-2 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-600 font-medium max-w-3xl mx-auto w-full">
+              <div className="flex items-center gap-2 px-3 py-2 mb-2 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-600 font-medium max-w-[960px] mx-auto w-full">
                 <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
@@ -807,7 +974,7 @@ function AskPageInner() {
             )}
 
             {/* Input bar */}
-            <div className="bg-white border border-slate-200 rounded-xl p-2.5 md:p-3 flex gap-2 md:gap-3 items-end shadow-sm flex-shrink-0 max-w-3xl mx-auto w-full">
+            <div className="bg-white border border-slate-200 rounded-xl p-2.5 md:p-3 flex gap-2 md:gap-3 items-end shadow-sm flex-shrink-0 max-w-[960px] mx-auto w-full">
               {/* File attach button */}
               <input
                 ref={fileInputRef}
@@ -828,15 +995,20 @@ function AskPageInner() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                 </svg>
               </button>
-              <textarea
-                className="flex-1 resize-none text-sm text-slate-800 placeholder-slate-400 focus:outline-none min-h-[40px] max-h-[160px] overflow-y-auto px-1 md:px-0"
-                rows={1}
-                placeholder="Ask anything..."
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                disabled={sending}
-              />
+              <div className="flex-1 flex flex-col min-w-0">
+                <textarea
+                  className="w-full resize-none text-sm text-slate-800 placeholder-slate-400 focus:outline-none min-h-[40px] max-h-[160px] overflow-y-auto px-1 md:px-0 bg-transparent"
+                  rows={1}
+                  placeholder="Ask anything..."
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  disabled={sending}
+                />
+                <span className="hidden md:block text-[10px] text-slate-300 mt-0.5 select-none">
+                  Press Enter to send, Shift+Enter for a new line
+                </span>
+              </div>
               <MicButton voiceState={voiceState} onToggle={handleVoiceToggle} />
               <button
                 onClick={() => sendMessage()}

@@ -17,6 +17,7 @@ function groupByTime(sessions: SessionSummary[]): Record<string, SessionSummary[
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const yesterday = new Date(today.getTime() - 86400000)
   const weekAgo = new Date(today.getTime() - 7 * 86400000)
+  const monthAgo = new Date(today.getTime() - 30 * 86400000)
 
   const groups: Record<string, SessionSummary[]> = {}
 
@@ -26,6 +27,7 @@ function groupByTime(sessions: SessionSummary[]): Record<string, SessionSummary[
     if (d >= today) label = 'Today'
     else if (d >= yesterday) label = 'Yesterday'
     else if (d >= weekAgo) label = 'Previous 7 days'
+    else if (d >= monthAgo) label = 'Previous 30 days'
     else label = 'Older'
 
     if (!groups[label]) groups[label] = []
@@ -35,7 +37,32 @@ function groupByTime(sessions: SessionSummary[]): Record<string, SessionSummary[
   return groups
 }
 
-const GROUP_ORDER = ['Today', 'Yesterday', 'Previous 7 days', 'Older']
+const GROUP_ORDER = [
+  'Today',
+  'Yesterday',
+  'Previous 7 days',
+  'Previous 30 days',
+  'Older',
+]
+
+// Retroactively fix titles polluted with [PERSONALITY]/[LIVE BUSINESS DATA]/
+// etc. Idempotent — backend skips sessions whose title is already clean.
+// Runs once per browser session (guarded by sessionStorage) so reopening the
+// sidebar doesn't hammer the endpoint.
+let retitleRan = false
+async function runRetitleMigration(): Promise<void> {
+  if (retitleRan) return
+  retitleRan = true
+  if (typeof window !== 'undefined') {
+    if (window.sessionStorage.getItem('cairn.retitle.done')) return
+    window.sessionStorage.setItem('cairn.retitle.done', '1')
+  }
+  try {
+    await fetch('/api/chat/sessions/retitle', { method: 'POST' })
+  } catch {
+    // silent — the display-side cleanTitle still hides the pollution
+  }
+}
 
 export default function ChatHistorySidebar({
   isOpen,
@@ -65,7 +92,13 @@ export default function ChatHistorySidebar({
   }, [])
 
   useEffect(() => {
-    if (isOpen) fetchSessions()
+    if (isOpen) {
+      // Fire-and-forget the one-off retitle migration the first time the
+      // sidebar opens in this browser session, then refresh.
+      runRetitleMigration().finally(() => {
+        fetchSessions()
+      })
+    }
   }, [isOpen, fetchSessions])
 
   const handleRename = useCallback(async (sessionId: string, title: string) => {
@@ -124,40 +157,45 @@ export default function ChatHistorySidebar({
         className="flex flex-col bg-white border-l border-slate-200 z-40 transition-all duration-200 shrink-0 overflow-hidden"
         style={{ width: isOpen ? '288px' : '0px' }}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-3 py-3 border-b border-slate-100">
-          <h2 className="text-sm font-semibold text-slate-700">Chats</h2>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={onNewChat}
-              className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
-              title="New chat"
-            >
-              <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-            </button>
+        {/* Pinned header: title + New chat + (mobile) close */}
+        <div className="flex-shrink-0 bg-white border-b border-slate-100">
+          <div className="flex items-center justify-between px-3 pt-3 pb-1">
+            <h2 className="text-sm font-semibold text-slate-700">Chats</h2>
             <button
               onClick={onClose}
               className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors lg:hidden"
               title="Close"
+              aria-label="Close chat history"
             >
               <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>
-        </div>
 
-        {/* Search */}
-        <div className="px-3 py-2">
-          <input
-            type="text"
-            placeholder="Search chats..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full text-xs text-slate-700 placeholder-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-300"
-          />
+          {/* Pinned + New chat button — always visible at the top of the sidebar */}
+          <div className="px-3 pt-2 pb-2">
+            <button
+              onClick={onNewChat}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-sm"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.25}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              New chat
+            </button>
+          </div>
+
+          {/* Sticky search — stays pinned below the New chat button */}
+          <div className="px-3 pb-2">
+            <input
+              type="text"
+              placeholder="Search chats..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full text-xs text-slate-700 placeholder-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+            />
+          </div>
         </div>
 
         {/* Session list */}
