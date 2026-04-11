@@ -401,16 +401,19 @@ class CounterfactualMemory:
                 cur.execute(sql, params)
                 rows = cur.fetchall()
 
-            # Related wiki lookup — same query embedding, run against
-            # claw_code_chunks. Kept inside the same connection to
-            # avoid a second socket open.
-            if include_related_wiki:
-                related_wiki = self._lookup_related_wiki(
-                    cur=cur,
-                    vec=vec,
-                    top_k=max(1, int(related_wiki_top_k)),
-                    project_ids=wiki_project_ids or ['claw'],
-                )
+                # Related wiki lookup — same query embedding, run
+                # against claw_code_chunks on the same cursor so we
+                # don't open a second socket. Must stay inside the
+                # cursor context manager to avoid using a closed
+                # cursor (which fails silently under the broad
+                # exception catch in the helper).
+                if include_related_wiki:
+                    related_wiki = self._lookup_related_wiki(
+                        cur=cur,
+                        vec=vec,
+                        top_k=max(1, int(related_wiki_top_k)),
+                        project_ids=wiki_project_ids or ['claw'],
+                    )
 
         results: list[dict] = []
         for row in rows:
