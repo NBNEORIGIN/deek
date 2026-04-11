@@ -19,6 +19,15 @@ services:
       retries: 5
 
   cairn-api:
+    # Pull everything in deploy/.env into the container env (API
+    # keys, DATABASE_URL pieces, SMTP_* creds for the email-triage
+    # digest sender, etc). Without this the explicit `environment:`
+    # block below would be the only source, and any variable not
+    # listed there (e.g. SMTP_PASS) would silently vanish on every
+    # `docker compose up -d` — which is exactly the bug that burned
+    # 8 triage rows on 2026-04-11.
+    env_file:
+      - .env
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
