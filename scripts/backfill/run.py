@@ -81,6 +81,9 @@ def _load_source(
     if name == 'xero':
         from .sources.xero import XeroSource
         return XeroSource(db_url=os.getenv('LEDGER_DATABASE_URL'))
+    if name == 'amazon':
+        from .sources.amazon import AmazonSource
+        return AmazonSource(db_url=os.getenv('DATABASE_URL'))
     raise ValueError(
         f"unknown source '{name}' in _load_source — "
         'add the loader alongside the others above'
@@ -172,7 +175,7 @@ def preflight(sources: list[str], data_dir: Path, commit_mode: bool) -> list[str
                 )
 
     # 6. Source must be built. Extend built_sources as each phase lands.
-    built_sources = {'synthetic', 'disputes', 'b2b_quotes', 'principles', 'xero'}
+    built_sources = {'synthetic', 'disputes', 'b2b_quotes', 'principles', 'xero', 'amazon'}
     for source in sources:
         if source not in built_sources:
             failures.append(
