@@ -226,10 +226,32 @@ The CRM already has an "AI Knowledge Search (Powered by RAG)" panel. This should
 
 ### 1. Cairn Context API Endpoint
 
-**Endpoint**: `GET /api/cairn/context`
-**Auth**: Bearer token via `CAIRN_API_KEY` environment variable
+**Required from day one.** CRM v2 must not go live without this endpoint —
+Cairn's module federation loop polls it every 15 minutes and without a
+snapshot route CRM is invisible to the business brain.
 
-This is the read endpoint Cairn calls to understand CRM state. Returns a structured JSON summary.
+**Primary endpoint**: `GET /api/cairn/snapshot`
+**Auth**: Bearer token via `CAIRN_API_KEY` environment variable
+**Response type**: `text/markdown` (pre-rendered summary the Cairn embedder
+ingests directly into `claw_code_chunks` with `chunk_type='module_snapshot'`)
+
+The snapshot body is a short markdown report covering pipeline totals, stage
+breakdown, overdue follow-ups, new leads in the last 7 days, the top
+opportunity, and the email digest. Keep it under ~6 000 characters so the
+full body fits in a single embedding call. The exact schema mirrors the
+`manufacture` snapshot at `D:/manufacture/backend/core/cairn_views.py` —
+match that pattern for consistency.
+
+**Registration**: add the module to `D:/claw/deploy/modules.json` alongside
+Manufacture, with `snapshot_url` set to the production CRM URL and
+`auth_header_env` set to `CAIRN_MODULE_TOKEN`. Cairn's poll loop
+(`api/routes/cairn_federation.py`) does the rest.
+
+**Companion endpoint (optional, structured)**: `GET /api/cairn/context`
+Returns the same data as JSON for clients that prefer structured access.
+The snapshot markdown route is the one Cairn federation uses.
+
+Example JSON payload for the companion `/api/cairn/context` endpoint:
 
 ```json
 {

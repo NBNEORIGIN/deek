@@ -193,10 +193,21 @@ async def lifespan(app: FastAPI):
             _scheduled_reindex_loop(_agents, interval_hours=reindex_hours)
         )
 
+    # ── Module snapshot federation poll loop ───────────────────────────
+    _snapshot_task = None
+    try:
+        from api.routes.cairn_federation import snapshot_poll_loop
+        _snapshot_task = asyncio.create_task(snapshot_poll_loop())
+        print('[CLAW startup] Module snapshot poll loop started')
+    except Exception as fed_err:
+        print(f'[CLAW startup] Snapshot poll loop disabled: {fed_err}')
+
     yield
 
     if _reindex_task and not _reindex_task.done():
         _reindex_task.cancel()
+    if _snapshot_task and not _snapshot_task.done():
+        _snapshot_task.cancel()
 
     for watcher in active_watchers:
         try:
@@ -2532,6 +2543,10 @@ app.include_router(admin_router)
 # Register Cairn Social routes (drafting + proof-reading assistant for Jo)
 from api.routes.social import router as social_router
 app.include_router(social_router)
+
+# Register Cairn module federation routes (/api/cairn/*)
+from api.routes.cairn_federation import router as cairn_federation_router
+app.include_router(cairn_federation_router)
 
 # Best-effort: ensure social_* tables exist on startup. Failure here must
 # not block API startup — the /social/migrate endpoint can repair if needed.
