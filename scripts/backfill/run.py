@@ -84,6 +84,9 @@ def _load_source(
     if name == 'amazon':
         from .sources.amazon import AmazonSource
         return AmazonSource(db_url=os.getenv('DATABASE_URL'))
+    if name == 'crm_lessons':
+        from .sources.crm_lessons import CrmLessonsSource
+        return CrmLessonsSource()
     raise ValueError(
         f"unknown source '{name}' in _load_source — "
         'add the loader alongside the others above'
@@ -94,13 +97,14 @@ KNOWN_SOURCES = {
     # Phase 2
     'synthetic': {'needs_llm': False, 'needs_data_file': None, 'needs_ledger_db': False},
     # Phase 3+ — stubs so preflight can flag unbuilt sources clearly.
-    'disputes':   {'needs_llm': True,  'needs_data_file': 'disputes.yml',   'needs_ledger_db': False},
-    'principles': {'needs_llm': True,  'needs_data_file': None,             'needs_ledger_db': False},
-    'm_numbers':  {'needs_llm': False, 'needs_data_file': None,             'needs_ledger_db': False},
-    'b2b_quotes': {'needs_llm': True,  'needs_data_file': 'b2b_quotes.yml', 'needs_ledger_db': False},
-    'emails':     {'needs_llm': True,  'needs_data_file': None,             'needs_ledger_db': False},
-    'xero':       {'needs_llm': True,  'needs_data_file': None,             'needs_ledger_db': True},
-    'amazon':     {'needs_llm': True,  'needs_data_file': None,             'needs_ledger_db': False},
+    'disputes':    {'needs_llm': True,  'needs_data_file': 'disputes.yml',   'needs_ledger_db': False},
+    'principles':  {'needs_llm': True,  'needs_data_file': None,             'needs_ledger_db': False},
+    'm_numbers':   {'needs_llm': False, 'needs_data_file': None,             'needs_ledger_db': False},
+    'b2b_quotes':  {'needs_llm': True,  'needs_data_file': 'b2b_quotes.yml', 'needs_ledger_db': False},
+    'emails':      {'needs_llm': True,  'needs_data_file': None,             'needs_ledger_db': False},
+    'xero':        {'needs_llm': True,  'needs_data_file': None,             'needs_ledger_db': True},
+    'amazon':      {'needs_llm': True,  'needs_data_file': None,             'needs_ledger_db': False},
+    'crm_lessons': {'needs_llm': True,  'needs_data_file': None,             'needs_ledger_db': False},
 }
 
 
@@ -175,7 +179,7 @@ def preflight(sources: list[str], data_dir: Path, commit_mode: bool) -> list[str
                 )
 
     # 6. Source must be built. Extend built_sources as each phase lands.
-    built_sources = {'synthetic', 'disputes', 'b2b_quotes', 'principles', 'xero', 'amazon'}
+    built_sources = {'synthetic', 'disputes', 'b2b_quotes', 'principles', 'xero', 'amazon', 'crm_lessons'}
     for source in sources:
         if source not in built_sources:
             failures.append(
