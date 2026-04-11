@@ -32,6 +32,8 @@ COPY api/ ./api/
 COPY core/ ./core/
 COPY projects/ ./projects/
 COPY wiki/ ./wiki/
+COPY scripts/ ./scripts/
+COPY deploy/modules.json ./deploy/modules.json
 # Create data dir
 RUN mkdir -p ./data
 

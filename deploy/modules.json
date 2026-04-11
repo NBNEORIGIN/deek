@@ -1,10 +1,10 @@
 {
-  "_comment": "Cairn module federation registry. Each entry is a business module Cairn polls for a live snapshot. Snapshot endpoint must return markdown (text/plain or text/markdown) or JSON {module, snapshot_md, generated_at}. Auth: set auth_header_env to an env var name; its value is passed as Bearer token. Set enabled=false to pause without removing.",
+  "_comment": "Cairn module federation registry. Each entry is a business module Cairn polls for a live snapshot. Snapshot endpoint must return markdown (text/plain or text/markdown) or JSON {module, snapshot_md, generated_at}. Auth: set auth_header_env to an env var name; its value is passed as Bearer token. Per CAIRN_MODULES.md the shared secret is named CAIRN_API_KEY — set the SAME value in Cairn .env and each module's env (e.g. Manufacture's settings.CAIRN_API_KEY). Set enabled=false to pause without removing.",
   "modules": [
     {
       "name": "manufacture",
       "snapshot_url": "https://manufacture.nbnesigns.co.uk/api/cairn/snapshot",
-      "auth_header_env": "CAIRN_MODULE_TOKEN",
+      "auth_header_env": "CAIRN_API_KEY",
       "interval_minutes": 15,
       "enabled": true,
       "notes": "Open orders, stock by marketplace, in-flight production, last-N FBA shipments. See D:/manufacture/backend/core/cairn_views.py"
