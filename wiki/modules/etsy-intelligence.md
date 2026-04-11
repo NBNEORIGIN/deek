@@ -19,13 +19,14 @@ is handled by [[modules/render]] via its own Etsy OAuth + API integration.
 - Etsy API: v3, API key auth (read-only), 5 QPS rate limiting via asyncio semaphore
 
 ## Connections
-- **Feeds data to:** [[modules/cairn]] (context endpoint)
+- **Feeds data to:** [[modules/cairn]] (context endpoint), [[modules/manufacturing]] (sales velocity cross-module read via `/etsy/sales`)
 - **Receives listings from:** [[modules/render]] (Render creates listings, Etsy Intel tracks health)
 - **Context endpoint:** `GET /etsy/cairn/context` — listing health, sales data
+- **Sales read endpoint:** `GET /etsy/sales?days=N&shop_id=X` — pre-aggregated 30-day sales by listing, consumed by manufacture's Sales Velocity module. Gated by `X-API-Key` header (all other `/etsy/*` routes are currently unauthenticated).
 
 ## Current Status
 - Build phase: Phase 1 complete (API-driven ingestion)
-- Last significant change: Phase 1 implementation (2026-04-04)
+- Last significant change: 2026-04-11 — added `/etsy/sales` cross-module read endpoint for manufacture Sales Velocity feature
 - Known issues: Receipt/sales endpoint requires OAuth token — currently degrades gracefully with API key only
 
 ## Architecture: Two Etsy Systems

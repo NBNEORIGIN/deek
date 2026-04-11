@@ -9,12 +9,17 @@ import hashlib
 import base64
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse, HTMLResponse
 from typing import Optional
+import logging
 import httpx
 
+from api.middleware.auth import verify_api_key
+
 router = APIRouter(prefix="/etsy", tags=["Etsy Intelligence"])
+
+log = logging.getLogger(__name__)
 
 ETSY_AUTH_URL = 'https://www.etsy.com/oauth/connect'
 ETSY_TOKEN_URL = 'https://api.etsy.com/v3/public/oauth/token'
@@ -230,6 +235,103 @@ async def get_listing_detail(listing_id: int):
     if not listing:
         raise HTTPException(404, f"No listing found with ID {listing_id}")
     return listing
+
+
+# ── Sales (cross-module read for manufacture sales-velocity feature) ────────
+
+@router.get("/sales")
+async def list_sales(
+    days: int = Query(
+        30, ge=1, le=365,
+        description="Rolling window size in days. Default 30.",
+    ),
+    shop_id: Optional[int] = Query(
+        None,
+        description="Filter to a single shop. Default: all configured shops.",
+    ),
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Pre-aggregated Etsy sales for the last `days` days, grouped by listing_id.
+
+    Returns one row per Etsy listing that had any sales in the window, with
+    the listing's stored SKU plus total units. Built for the manufacture app's
+    Sales Velocity module (Phase 2B.3) which consumes it via HTTP as a
+    cross-module read — manufacture does not query Cairn's Postgres directly,
+    per the hard rule in `CLAUDE.md`.
+
+    Requires `X-API-Key` header matching `CLAW_API_KEY`. The other `/etsy/*`
+    routes are currently unauthenticated; this endpoint is explicitly gated
+    because it crosses a module boundary.
+
+    Defensive behaviour: rows where `etsy_listings.sku` is NULL or contains
+    a comma (indicating Cairn's `skus[0]` ingest collapsed a multi-SKU
+    variation — see `core/etsy_intel/sync.py::_parse_receipts`) are
+    excluded from the result and counted in the returned `skipped_*`
+    fields so callers can detect data-quality regressions.
+    """
+    from core.etsy_intel.db import get_conn
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                sql = """
+                    SELECT el.shop_id,
+                           el.listing_id,
+                           el.sku AS external_sku,
+                           SUM(es.quantity)::int AS total_quantity,
+                           MIN(es.sale_date) AS first_sale_date,
+                           MAX(es.sale_date) AS last_sale_date
+                    FROM etsy_sales es
+                    JOIN etsy_listings el ON el.listing_id = es.listing_id
+                    WHERE es.sale_date >= NOW() - make_interval(days => %s)
+                      AND (%s IS NULL OR el.shop_id = %s)
+                    GROUP BY el.shop_id, el.listing_id, el.sku
+                    ORDER BY el.listing_id
+                """
+                cur.execute(sql, (days, shop_id, shop_id))
+                raw_rows = cur.fetchall()
+    except Exception as e:
+        log.exception("Failed to query etsy_sales aggregate")
+        raise HTTPException(500, f"etsy_sales query failed: {e}")
+
+    rows = []
+    skipped_null_sku = 0
+    skipped_multi_sku = 0
+    for shop, listing, sku, qty, first_sale, last_sale in raw_rows:
+        if sku is None or sku == "":
+            skipped_null_sku += 1
+            continue
+        if "," in sku:
+            # Cairn's ingest collapsed a multi-SKU variation into a single
+            # cell. We cannot safely attribute per-variation sales without a
+            # schema change upstream — skip and count, so a regression shows.
+            log.warning(
+                "etsy /sales: skipping listing %s with multi-SKU value %r "
+                "(expected single-SKU-per-listing model)",
+                listing, sku,
+            )
+            skipped_multi_sku += 1
+            continue
+        rows.append({
+            "shop_id": shop,
+            "listing_id": listing,
+            "external_sku": sku,
+            "total_quantity": qty,
+            "first_sale_date": first_sale.isoformat() if first_sale else None,
+            "last_sale_date": last_sale.isoformat() if last_sale else None,
+        })
+
+    window_end = datetime.now(timezone.utc)
+    return {
+        "rows": rows,
+        "window_days": days,
+        "window_end": window_end.isoformat(),
+        "shop_id_filter": shop_id,
+        "row_count": len(rows),
+        "skipped_null_sku": skipped_null_sku,
+        "skipped_multi_sku": skipped_multi_sku,
+    }
 
 
 # ── Underperformers ──────────────────────────────────────────────────────────
