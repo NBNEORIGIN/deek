@@ -1,6 +1,32 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react'
+import { useState, useRef, useEffect, useCallback, KeyboardEvent, ReactNode } from 'react'
+import {
+  FileText,
+  Folder,
+  Code2,
+  MessageSquare,
+  Pin,
+  Globe,
+  BookOpen,
+  Search,
+  PencilLine,
+  FlaskConical,
+  Zap,
+  Package,
+  Wrench,
+  ArrowRight,
+  BarChart3,
+  CheckCircle2,
+  AlertTriangle,
+  Loader2,
+  CircleDot,
+  X,
+  ChevronDown,
+  ChevronRight,
+  Minus,
+  Plus,
+} from 'lucide-react'
 import { MessageBubble, Message, MessageMetadata, ToolCallRecord } from './MessageBubble'
 import { PendingToolCall } from './ToolApproval'
 import { SessionSidebar, Subproject } from './SessionSidebar'
@@ -79,58 +105,77 @@ const TOKEN_TRIM_THRESHOLD = 40_000
 
 function TokenBar({ tokens }: { tokens: number }) {
   const pct = Math.min(100, (tokens / TOKEN_TRIM_THRESHOLD) * 100)
+  const warn = tokens >= TOKEN_TRIM_THRESHOLD
   return (
-    <div className="border-b border-slate-200 bg-white/70 px-5 py-3 text-[11px] text-slate-600">
+    <div className="border-b border-slate-200 bg-white px-5 py-2.5 text-2xs text-slate-600">
       <div className="flex items-center gap-3">
-        <span className="font-semibold uppercase tracking-[0.18em] text-slate-500">Context</span>
-        <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-200">
+        <span className="label-xs">Context</span>
+        <div className="h-1 flex-1 overflow-hidden rounded-sm bg-slate-100">
           <div
-            className={`h-full rounded-full transition-all ${tokens >= TOKEN_TRIM_THRESHOLD ? 'bg-rose-500' : 'bg-sky-500'}`}
+            className={`h-full transition-all ${warn ? 'bg-red-500' : 'bg-accent'}`}
             style={{ width: `${pct}%` }}
           />
         </div>
-        <span className="font-medium text-slate-700">{tokens.toLocaleString()} / {TOKEN_TRIM_THRESHOLD.toLocaleString()} tokens</span>
+        <span className="font-medium tabular-nums text-slate-700">
+          {tokens.toLocaleString()} / {TOKEN_TRIM_THRESHOLD.toLocaleString()}
+        </span>
       </div>
     </div>
   )
 }
 
+const ICON_SIZE = 14
+
 function MentionPill({ mention, onRemove }: { mention: Mention; onRemove: () => void }) {
-  const icon = mention.type === 'file' ? '📄' : mention.type === 'folder' ? '📁' :
-    mention.type === 'symbol' ? '⚙' : mention.type === 'session' ? '💬' :
-    mention.type === 'core' ? '📌' : '🌐'
+  const Icon =
+    mention.type === 'file' ? FileText :
+    mention.type === 'folder' ? Folder :
+    mention.type === 'symbol' ? Code2 :
+    mention.type === 'session' ? MessageSquare :
+    mention.type === 'core' ? Pin :
+    Globe
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-700">
-      {icon} {mention.display}
-      <button onClick={onRemove} className="ml-1 leading-none text-sky-400 hover:text-sky-700" aria-label="Remove mention">✕</button>
+    <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-2xs font-medium text-slate-700">
+      <Icon size={12} className="shrink-0 text-slate-500" />
+      <span className="truncate max-w-[160px]">{mention.display}</span>
+      <button
+        onClick={onRemove}
+        className="ml-0.5 text-slate-400 hover:text-slate-700"
+        aria-label="Remove mention"
+      >
+        <X size={12} />
+      </button>
     </span>
   )
 }
 
-function toolIcon(tool: string): string {
-  if (tool === 'read_file') return '📖'
-  if (tool === 'search_code') return '🔍'
-  if (tool === 'edit_file' || tool === 'create_file') return '✏️'
-  if (tool === 'run_tests') return '🧪'
-  if (tool === 'run_command' || tool === 'run_migration') return '⚡'
-  if (tool === 'git_add' || tool === 'git_commit' || tool === 'git_push' || tool === 'git_branch' || tool === 'git_stash') return '📦'
-  if (tool === 'git_status' || tool === 'git_diff' || tool === 'git_log') return '📖'
-  if (tool === 'web_fetch' || tool === 'web_check_status') return '🌐'
-  if (tool === 'web_search') return '🔍'
-  return '🔧'
+function toolIconComponent(tool: string) {
+  if (tool === 'read_file') return BookOpen
+  if (tool === 'search_code') return Search
+  if (tool === 'edit_file' || tool === 'create_file') return PencilLine
+  if (tool === 'run_tests') return FlaskConical
+  if (tool === 'run_command' || tool === 'run_migration') return Zap
+  if (tool === 'git_add' || tool === 'git_commit' || tool === 'git_push' || tool === 'git_branch' || tool === 'git_stash') return Package
+  if (tool === 'git_status' || tool === 'git_diff' || tool === 'git_log') return BookOpen
+  if (tool === 'web_fetch' || tool === 'web_check_status') return Globe
+  if (tool === 'web_search') return Search
+  return Wrench
 }
 
-function activityIcon(event: ActivityEvent): string {
-  if (event.type === 'status') return '·'
-  if (event.type === 'routing') return '→'
-  if (event.type === 'tokens') return '📊'
-  if (event.type === 'tool_start' || event.type === 'tool_end') return toolIcon(event.tool || '')
-  if (event.type === 'tool_queued') return toolIcon(event.tool || '')
-  if (event.type === 'validation') return '✓'
-  if (event.type === 'escalation') return '⚡'
-  if (event.type === 'wiggum_iteration') return '↑'
-  if (event.type === 'error') return '⚠'
-  return '·'
+function renderActivityIcon(event: ActivityEvent): ReactNode {
+  const cn = 'shrink-0 text-slate-500'
+  if (event.type === 'status') return <CircleDot size={ICON_SIZE} className={cn} />
+  if (event.type === 'routing') return <ArrowRight size={ICON_SIZE} className={cn} />
+  if (event.type === 'tokens') return <BarChart3 size={ICON_SIZE} className={cn} />
+  if (event.type === 'tool_start' || event.type === 'tool_end' || event.type === 'tool_queued') {
+    const I = toolIconComponent(event.tool || '')
+    return <I size={ICON_SIZE} className={cn} />
+  }
+  if (event.type === 'validation') return <CheckCircle2 size={ICON_SIZE} className="shrink-0 text-emerald-600" />
+  if (event.type === 'escalation') return <Zap size={ICON_SIZE} className="shrink-0 text-amber-600" />
+  if (event.type === 'wiggum_iteration') return <ArrowRight size={ICON_SIZE} className={cn} />
+  if (event.type === 'error') return <AlertTriangle size={ICON_SIZE} className="shrink-0 text-red-600" />
+  return <CircleDot size={ICON_SIZE} className={cn} />
 }
 
 function activityText(event: ActivityEvent): string {
@@ -194,25 +239,29 @@ function ActivityLog({
   if (events.length === 0 && !live) return null
 
   return (
-    <div className="my-3 overflow-hidden rounded-[22px] border border-slate-200 bg-white text-xs shadow-sm">
+    <div className="my-3 overflow-hidden rounded-lg border border-slate-200 bg-white text-2xs">
       {/* Header */}
       <button
         onClick={onToggle}
-        className="flex w-full items-center justify-between bg-slate-50/90 px-4 py-3 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+        className="flex w-full items-center justify-between bg-slate-50 px-3.5 py-2 text-slate-600 transition-colors hover:bg-slate-100"
       >
-        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Activity</span>
+        <span className="label-xs">Activity</span>
         <span className="flex items-center gap-2">
           {live && (
-            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" title="Streaming" />
+            <span className="inline-flex items-center gap-1 text-emerald-600">
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+              <span className="text-2xs font-medium">live</span>
+            </span>
           )}
-          <span className="text-slate-400">{collapsed ? '▸' : '▾'}</span>
+          {collapsed
+            ? <ChevronRight size={14} className="text-slate-400" />
+            : <ChevronDown size={14} className="text-slate-400" />}
         </span>
       </button>
 
       {!collapsed && (
-        <div className="divide-y divide-slate-100 border-t border-slate-200">
+        <div className="divide-y divide-slate-100 border-t border-slate-200 font-mono">
           {events.map((ev, i) => {
-            const icon = activityIcon(ev)
             const text = activityText(ev)
             const isRunning = live && i === events.length - 1 && ev.type === 'tool_start'
             const isError = ev.type === 'error'
@@ -221,25 +270,25 @@ function ActivityLog({
             return (
               <div
                 key={i}
-                className={`flex items-start gap-3 px-4 py-2.5 ${
-                  isError ? 'text-rose-600' : isQueued ? 'text-amber-700' : 'text-slate-600'
+                className={`flex items-center gap-2.5 px-3.5 py-2 ${
+                  isError ? 'text-red-700' : isQueued ? 'text-amber-700' : 'text-slate-600'
                 }`}
               >
-                <span className="w-4 shrink-0 text-center">{icon}</span>
+                {renderActivityIcon(ev)}
                 <span className={`flex-1 truncate ${isRunning ? 'animate-pulse' : ''}`}>
                   {text}
                 </span>
                 {isRunning && (
-                  <span className="shrink-0 text-slate-400">⟳</span>
+                  <Loader2 size={12} className="shrink-0 animate-spin text-slate-400" />
                 )}
               </div>
             )
           })}
 
           {live && (
-            <div className="flex items-center gap-3 px-4 py-2.5 text-slate-400 animate-pulse">
-              <span className="w-4 shrink-0 text-center">⟳</span>
-              <span>thinking…</span>
+            <div className="flex items-center gap-2.5 px-3.5 py-2 text-slate-400">
+              <Loader2 size={12} className="shrink-0 animate-spin" />
+              <span className="animate-pulse">thinking…</span>
             </div>
           )}
         </div>
@@ -713,7 +762,7 @@ export function ChatWindow() {
         setLiveDraftText('')
         setMessages(prev => [...prev, {
           id: generateId(), role: 'assistant',
-          content: `⚠ ${event.message || 'Stream error'}`,
+          content: `Error: ${event.message || 'Stream error'}`,
         }])
         return
       }
@@ -742,7 +791,7 @@ export function ChatWindow() {
 
   const _handleChatResponse = useCallback((data: Record<string, unknown>) => {
     if (data.error) {
-      setMessages(prev => [...prev, { id: generateId(), role: 'assistant', content: `⚠ ${data.error}` }])
+      setMessages(prev => [...prev, { id: generateId(), role: 'assistant', content: `Error: ${data.error}` }])
       return
     }
     const isLocal = ((data.model_used as string) || '').toLowerCase().includes('qwen')
@@ -807,7 +856,7 @@ export function ChatWindow() {
   const _handleNetworkError = useCallback(() => {
     setMessages(prev => [...prev, {
       id: generateId(), role: 'assistant',
-      content: `⚠ Network error — API unreachable. Restart uvicorn and refresh.`,
+      content: `Error: network error — API unreachable. Restart uvicorn and refresh.`,
     }])
   }, [])
 
@@ -864,7 +913,7 @@ export function ChatWindow() {
   }, [projectId])
 
   return (
-    <div className="flex h-full bg-transparent text-slate-900">
+    <div className="flex h-full min-h-0 bg-slate-50 text-slate-900">
       <SessionSidebar
         projectId={projectId}
         activeSessionId={sessionId}
@@ -873,37 +922,58 @@ export function ChatWindow() {
         onSubprojectChange={(spId) => setActiveSubprojectId(spId)}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col bg-transparent">
+      <div className="flex min-w-0 flex-1 flex-col">
         {/* Header */}
-        <div className="border-b border-slate-200 bg-white/80 px-5 py-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="min-w-[220px]">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-sky-700">Cairn</div>
-              <div className="text-sm text-slate-500">Sovereign AI agent for NBNE</div>
+        <header className="flex-shrink-0 border-b border-slate-200 bg-white px-5 py-3">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            {/* Brand + selectors — left group */}
+            <div className="flex items-center gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-900">
+                {/* Stacked-stone mark — matches the PWA icon */}
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-white">
+                  <rect x="4"   y="18" width="16" height="3" rx="1.2"/>
+                  <rect x="5.5" y="13" width="13" height="3" rx="1.2"/>
+                  <rect x="7"   y="8"  width="10" height="3" rx="1.2"/>
+                  <rect x="9"   y="3"  width="6"  height="3" rx="1.2"/>
+                </svg>
+              </div>
+              <div className="leading-tight">
+                <div className="text-sm font-semibold tracking-tight text-slate-900">Cairn</div>
+                <div className="text-2xs text-slate-500">Sovereign agent · NBNE</div>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Project</label>
-              <select value={projectId} onChange={e => setProjectId(e.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-sky-300">
-              {projects.length === 0 && <option value="">No projects</option>}
-              {projects.map(p => <option key={p.id} value={p.id}>{p.id}</option>)}
-            </select>
-          </div>
+            <div className="h-6 w-px bg-slate-200" aria-hidden />
 
-          {visibleSubprojects.length > 0 && (
             <div className="flex items-center gap-2">
-              <label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Client</label>
-              <select value={activeSubprojectId || ''} onChange={e => setActiveSubprojectId(e.target.value || null)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-sky-300">
-                <option value="">All clients</option>
-                {visibleSubprojects.map(sp => <option key={sp.id} value={sp.id}>{sp.display_name}</option>)}
+              <label className="label-xs">Project</label>
+              <select
+                value={projectId}
+                onChange={e => setProjectId(e.target.value)}
+                className="focus-ring rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800"
+              >
+                {projects.length === 0 && <option value="">No projects</option>}
+                {projects.map(p => <option key={p.id} value={p.id}>{p.id}</option>)}
               </select>
             </div>
-          )}
 
-          {visibleSkills.length > 0 && (
-            <div className="flex min-w-[240px] flex-wrap items-center gap-2">
-              <label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Skills</label>
-              <div className="flex flex-wrap gap-1.5">
+            {visibleSubprojects.length > 0 && (
+              <div className="flex items-center gap-2">
+                <label className="label-xs">Client</label>
+                <select
+                  value={activeSubprojectId || ''}
+                  onChange={e => setActiveSubprojectId(e.target.value || null)}
+                  className="focus-ring rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800"
+                >
+                  <option value="">All clients</option>
+                  {visibleSubprojects.map(sp => <option key={sp.id} value={sp.id}>{sp.display_name}</option>)}
+                </select>
+              </div>
+            )}
+
+            {visibleSkills.length > 0 && (
+              <div className="flex min-w-[220px] flex-wrap items-center gap-1.5">
+                <label className="label-xs mr-1">Skills</label>
                 {visibleSkills.slice(0, 6).map(skill => {
                   const active = activeSkillIds.includes(skill.skill_id)
                   return (
@@ -915,10 +985,10 @@ export function ChatWindow() {
                           ? prev.filter(id => id !== skill.skill_id)
                           : [...prev, skill.skill_id].slice(0, 2)
                       ))}
-                      className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                      className={`focus-ring rounded-md border px-2 py-1 text-2xs font-medium transition-colors ${
                         active
-                          ? 'border-sky-300 bg-sky-50 text-sky-700'
-                          : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700'
+                          ? 'border-slate-900 bg-slate-900 text-white'
+                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'
                       }`}
                       title={skill.description}
                     >
@@ -930,59 +1000,90 @@ export function ChatWindow() {
                   <button
                     type="button"
                     onClick={() => setActiveSkillIds([])}
-                    className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
+                    className="focus-ring rounded-md px-2 py-1 text-2xs font-medium text-slate-500 hover:text-slate-900"
                   >
                     Clear
                   </button>
                 )}
               </div>
-            </div>
-          )}
+            )}
 
-          <div className="ml-auto flex flex-wrap items-center gap-3">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 shadow-sm">
-              <span className="font-semibold text-slate-700">${sessionCost.toFixed(4)}</span> spend
+            {/* Right group — metrics + new chat */}
+            <div className="ml-auto flex flex-wrap items-center gap-1.5">
+              <div className="chip" title="Session spend">
+                <span className="label-xs">$</span>
+                <span className="chip-value">{sessionCost.toFixed(4)}</span>
+              </div>
+              <div className="chip" title="Local / API calls">
+                <span className="chip-value">{localCalls}</span>
+                <span className="text-slate-400">/</span>
+                <span className="chip-value">{apiCalls}</span>
+              </div>
+              <div className="chip font-mono" title={`Session ${sessionId}`}>
+                <span className="chip-value">{sessionId.slice(0, 8)}</span>
+              </div>
+              <div
+                className={`chip ${
+                  indexChunks === null ? 'text-slate-400'
+                  : indexChunks > 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : 'border-amber-200 bg-amber-50 text-amber-700'
+                }`}
+                title={indexChunks !== null ? `${indexChunks} indexed chunks` : 'Index status unknown'}
+              >
+                <span className="label-xs">idx</span>
+                <span className="chip-value">{indexChunks === null ? '—' : indexChunks}</span>
+              </div>
+              <button
+                onClick={newSession}
+                className="focus-ring ml-1 inline-flex items-center gap-1.5 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-700"
+              >
+                <Plus size={14} />
+                New chat
+              </button>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 shadow-sm">
-              <span className="font-semibold text-slate-700">{localCalls}</span> local / <span className="font-semibold text-slate-700">{apiCalls}</span> API
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 shadow-sm">
-              Session <span className="font-mono text-slate-700">{sessionId.slice(0, 8)}…</span>
-            </div>
-            <div className={`rounded-2xl border px-3 py-2 text-xs shadow-sm ${
-              indexChunks === null ? 'border-slate-200 bg-slate-50 text-slate-400'
-              : indexChunks > 0 ? 'border-green-200 bg-green-50 text-green-700'
-              : 'border-amber-200 bg-amber-50 text-amber-700'
-            }`} title={indexChunks !== null ? `${indexChunks} indexed chunks` : 'Index status unknown'}>
-              {indexChunks === null ? '… idx' : indexChunks > 0 ? `${indexChunks} idx` : '0 idx'}
-            </div>
-            <button onClick={newSession} className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-sky-700">New chat</button>
           </div>
-        </div>
-        </div>
+        </header>
 
         {sessionTokens > 0 && <TokenBar tokens={sessionTokens} />}
 
         {archiveBanner && (
-          <div className="flex items-center justify-between border-b border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">
-            <span>Session archived — summary added to context</span>
-            <button onClick={() => setArchiveBanner(null)} className="ml-4 text-emerald-500 hover:text-emerald-700">✕</button>
+          <div className="flex items-center justify-between border-b border-emerald-200 bg-emerald-50 px-5 py-2 text-xs text-emerald-800">
+            <span className="flex items-center gap-2">
+              <CheckCircle2 size={14} className="shrink-0" />
+              Session archived — summary added to context
+            </span>
+            <button
+              onClick={() => setArchiveBanner(null)}
+              className="ml-4 text-emerald-500 hover:text-emerald-700"
+              aria-label="Dismiss"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
 
         {indexWarning && !indexDismissed && (
-          <div className="flex items-center justify-between border-b border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-800">
-            <div>
-              <span className="font-semibold">Project {indexWarning.project} has no indexed content.</span>{' '}
-              <span className="text-amber-700">Responses may be less accurate.</span>{' '}
-              <span className="text-amber-600">{indexWarning.message}</span>
+          <div className="flex items-center justify-between border-b border-amber-200 bg-amber-50 px-5 py-2 text-xs text-amber-800">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={14} className="shrink-0" />
+              <span>
+                <span className="font-semibold">Project {indexWarning.project} has no indexed content.</span>{' '}
+                <span className="text-amber-700">Responses may be less accurate.</span>{' '}
+                <span className="text-amber-600">{indexWarning.message}</span>
+              </span>
             </div>
-            <button onClick={() => setIndexDismissed(true)} className="ml-4 text-amber-500 hover:text-amber-700" aria-label="Dismiss">✕</button>
+            <button
+              onClick={() => setIndexDismissed(true)}
+              className="ml-4 text-amber-500 hover:text-amber-700"
+              aria-label="Dismiss"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto bg-[linear-gradient(180deg,rgba(248,250,252,0.9),rgba(241,245,249,0.95))] px-8 py-6">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 px-6 py-5 md:px-10 md:py-7">
           {messages.map((msg, msgIdx) => (
             <div key={msg.id}>
               <MessageBubble
@@ -1025,18 +1126,32 @@ export function ChatWindow() {
         </div>
 
         {/* Input area */}
-        <div className="border-t border-slate-200 bg-white/85 px-5 py-4">
+        <div className="flex-shrink-0 border-t border-slate-200 bg-white px-5 py-3">
           {pastedImage && (
             <div className="relative mb-2 inline-block">
-              <img src={`data:${pastedImageType};base64,${pastedImage}`} alt="Pasted screenshot" className="max-h-28 rounded-2xl border border-slate-200 shadow-sm" />
-              <button onClick={() => setPastedImage(null)} className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-white text-sm leading-none text-slate-500 shadow-md hover:text-slate-700">×</button>
+              <img
+                src={`data:${pastedImageType};base64,${pastedImage}`}
+                alt="Pasted screenshot"
+                className="max-h-28 rounded-md border border-slate-200"
+              />
+              <button
+                onClick={() => setPastedImage(null)}
+                className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-subtle hover:text-slate-900"
+                aria-label="Remove image"
+              >
+                <X size={12} />
+              </button>
             </div>
           )}
 
           {mentions.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mb-2">
+            <div className="mb-2 flex flex-wrap gap-1.5">
               {mentions.map((m, i) => (
-                <MentionPill key={`${m.type}:${m.value}`} mention={m} onRemove={() => setMentions(prev => prev.filter((_, j) => j !== i))} />
+                <MentionPill
+                  key={`${m.type}:${m.value}`}
+                  mention={m}
+                  onRemove={() => setMentions(prev => prev.filter((_, j) => j !== i))}
+                />
               ))}
             </div>
           )}
@@ -1044,85 +1159,127 @@ export function ChatWindow() {
           {/* @ mention dropdown */}
           {mentionQuery !== null && (
             <div className="relative mb-2">
-              <div className="absolute bottom-0 left-0 right-0 z-50 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
-                <div className="flex border-b border-slate-200">
+              <div className="absolute bottom-0 left-0 right-0 z-50 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-pop">
+                <div className="flex border-b border-slate-200 bg-slate-50">
                   {(['files', 'folders', 'symbols', 'sessions'] as const).map(tab => (
-                    <button key={tab} onClick={() => { setMentionTab(tab); setMentionIndex(0) }}
-                      className={`flex-1 py-2 text-[11px] font-semibold capitalize transition-colors ${mentionTab === tab ? 'bg-sky-50 text-sky-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}>
+                    <button
+                      key={tab}
+                      onClick={() => { setMentionTab(tab); setMentionIndex(0) }}
+                      className={`flex-1 py-2 text-2xs font-medium capitalize transition-colors ${
+                        mentionTab === tab
+                          ? 'border-b-2 border-slate-900 bg-white text-slate-900'
+                          : 'text-slate-500 hover:text-slate-900'
+                      }`}
+                    >
                       {tab}
                     </button>
                   ))}
                 </div>
                 {mentionItems.length === 0 ? (
-                  <div className="px-3 py-3 text-xs italic text-slate-500">
+                  <div className="px-3 py-3 text-2xs italic text-slate-500">
                     {mentionQuery ? `No ${mentionTab} matching "${mentionQuery}"` : `Type to search ${mentionTab}…`}
                   </div>
                 ) : (
                   <div className="max-h-48 overflow-y-auto">
                     {mentionItems.map((item, i) => (
-                      <button key={`${item.type}:${item.value}`} onClick={() => selectMentionItem(item)}
-                        className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors ${i === mentionIndex ? 'bg-sky-50 text-slate-800' : 'text-slate-600 hover:bg-slate-50'}`}>
-                        <span className="truncate font-medium text-slate-700">{item.display}</span>
-                        {item.detail && <span className="ml-auto max-w-[40%] shrink-0 truncate text-[10px] text-slate-400">{item.detail}</span>}
+                      <button
+                        key={`${item.type}:${item.value}`}
+                        onClick={() => selectMentionItem(item)}
+                        className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
+                          i === mentionIndex
+                            ? 'bg-slate-100 text-slate-900'
+                            : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="truncate font-medium">{item.display}</span>
+                        {item.detail && (
+                          <span className="ml-auto max-w-[40%] shrink-0 truncate font-mono text-2xs text-slate-400">
+                            {item.detail}
+                          </span>
+                        )}
                       </button>
                     ))}
                   </div>
                 )}
-                <div className="border-t border-slate-200 px-3 py-2 text-[10px] text-slate-400">↑↓ navigate · Enter to add · Esc to close</div>
+                <div className="border-t border-slate-200 bg-slate-50 px-3 py-1.5 text-2xs text-slate-400">
+                  ↑↓ navigate · ↵ add · esc close
+                </div>
               </div>
             </div>
           )}
 
-          <div className="flex items-end gap-3 rounded-[26px] border border-slate-200 bg-slate-50/70 p-3 shadow-[0_10px_24px_-18px_rgba(15,23,42,0.35)]">
+          <div className="flex items-end gap-2 rounded-lg border border-slate-200 bg-white p-2 focus-within:border-slate-400">
             <textarea
               ref={textareaRef}
               value={input}
               onChange={handleTextareaChange}
               onKeyDown={handleKeyDown}
-              placeholder={projectId ? (activeSubproject ? `Ask Cairn about ${activeSubproject.display_name}… (@ to pin context)` : `Ask Cairn about ${projectId}… (@ to pin context)`) : 'Select a project first'}
+              placeholder={projectId ? (activeSubproject ? `Ask about ${activeSubproject.display_name}…` : `Ask about ${projectId}…`) : 'Select a project first'}
               disabled={!projectId || loading}
               rows={1}
-              className="min-h-[44px] max-h-[120px] flex-1 resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-sky-300 placeholder:text-slate-400 disabled:opacity-50"
+              className="min-h-[36px] max-h-[120px] flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 disabled:opacity-50"
             />
 
             {/* Model selector */}
             <div ref={modelDropdownRef} className="relative shrink-0">
-              <button onClick={() => setModelDropdownOpen(o => !o)}
-                className={`flex h-[44px] items-center gap-1 rounded-2xl border px-3 text-xs transition-colors ${modelOverride !== 'auto' ? 'border-sky-200 bg-sky-50 text-sky-700' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}
-                title="Select model for this message">
-                {selectedModel.label} <span className="text-slate-400">▾</span>
+              <button
+                onClick={() => setModelDropdownOpen(o => !o)}
+                className={`focus-ring inline-flex h-9 items-center gap-1 rounded-md border px-2.5 text-xs transition-colors ${
+                  modelOverride !== 'auto'
+                    ? 'border-slate-900 bg-slate-900 text-white'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                }`}
+                title="Model override"
+              >
+                {selectedModel.label}
+                <ChevronDown size={12} className="opacity-70" />
               </button>
               {modelDropdownOpen && (
-                <div className="absolute bottom-full right-0 z-50 mb-2 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
+                <div className="absolute bottom-full right-0 z-50 mb-2 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-pop">
                   {MODEL_OPTIONS.map(opt => (
-                    <button key={opt.value} onClick={() => { setModelOverride(opt.value); setModelDropdownOpen(false) }}
-                      className={`flex w-full items-center justify-between px-3 py-2.5 text-left text-xs transition-colors ${modelOverride === opt.value ? 'bg-sky-50 text-slate-800' : 'text-slate-600 hover:bg-slate-50'}`}>
+                    <button
+                      key={opt.value}
+                      onClick={() => { setModelOverride(opt.value); setModelDropdownOpen(false) }}
+                      className={`flex w-full items-center justify-between px-3 py-2 text-left text-xs transition-colors ${
+                        modelOverride === opt.value
+                          ? 'bg-slate-100 text-slate-900'
+                          : 'text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
                       <span className="flex items-center gap-2">
-                        <span className={modelOverride === opt.value ? 'text-sky-600' : 'text-slate-300'}>{modelOverride === opt.value ? '●' : '○'}</span>
-                        <span>{opt.label}</span>
-                        <span className="text-[10px] text-slate-400">{opt.detail}</span>
+                        {modelOverride === opt.value
+                          ? <CircleDot size={12} className="text-slate-900" />
+                          : <Minus size={12} className="rotate-90 text-slate-300" />
+                        }
+                        <span className="font-medium">{opt.label}</span>
+                        <span className="text-2xs text-slate-400">{opt.detail}</span>
                       </span>
-                      {opt.cost && <span className="ml-2 shrink-0 text-[10px] text-slate-400">{opt.cost}</span>}
+                      {opt.cost && <span className="ml-2 shrink-0 font-mono text-2xs text-slate-400">{opt.cost}</span>}
                     </button>
                   ))}
                 </div>
               )}
             </div>
 
-            <button onClick={handleSubmit} disabled={(!input.trim() && !pastedImage) || loading || !projectId}
-              className="h-[44px] shrink-0 rounded-2xl bg-sky-600 px-5 text-sm font-medium text-white transition-colors hover:bg-sky-700 disabled:opacity-40">
+            <button
+              onClick={handleSubmit}
+              disabled={(!input.trim() && !pastedImage) || loading || !projectId}
+              className="focus-ring h-9 shrink-0 rounded-md bg-slate-900 px-4 text-xs font-medium text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+            >
               Send
             </button>
             {loading && (
               <button
                 onClick={stopGeneration}
-                className="h-[44px] shrink-0 rounded-2xl border border-rose-200 bg-white px-5 text-sm font-medium text-rose-600 transition-colors hover:border-rose-300 hover:bg-rose-50"
+                className="focus-ring h-9 shrink-0 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50"
               >
                 Stop
               </button>
             )}
           </div>
-          <p className="mt-2 px-1 text-xs text-slate-400">Enter to send · Shift+Enter for newline · @ to pin context</p>
+          <p className="mt-1.5 px-0.5 text-2xs text-slate-400">
+            ↵ send · ⇧↵ newline · @ pin context
+          </p>
         </div>
       </div>
     </div>

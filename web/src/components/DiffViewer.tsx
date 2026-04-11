@@ -10,12 +10,12 @@ export function DiffViewer({ diff }: DiffViewerProps) {
   const lines = diff.split('\n')
 
   return (
-    <pre className="max-h-48 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-950 p-3 font-mono text-xs leading-5 shadow-inner">
+    <pre className="max-h-48 overflow-y-auto rounded-md border border-slate-800 bg-slate-950 p-3 font-mono text-2xs leading-5">
       {lines.map((line, i) => {
         let cls = 'text-slate-300'
         if (line.startsWith('+') && !line.startsWith('+++')) cls = 'text-emerald-400'
-        else if (line.startsWith('-') && !line.startsWith('---')) cls = 'text-rose-400'
-        else if (line.startsWith('@@')) cls = 'text-sky-400'
+        else if (line.startsWith('-') && !line.startsWith('---')) cls = 'text-red-400'
+        else if (line.startsWith('@@')) cls = 'text-blue-400'
         else if (line.startsWith('---') || line.startsWith('+++')) cls = 'text-slate-500'
         return (
           <span key={i} className={cls + ' block'}>

@@ -1,6 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import { AlertTriangle, CheckCircle2, Clock, TerminalSquare } from 'lucide-react'
 import { ToolApproval, PendingToolCall } from './ToolApproval'
 
 export interface ToolCallRecord {
@@ -58,6 +59,8 @@ interface MessageBubbleProps {
   onReject?: (toolCall: PendingToolCall) => void
 }
 
+// ── Markdown rendering ────────────────────────────────────────────────
+
 function renderMarkdown(text: string) {
   const parts: ReactNode[] = []
   let key = 0
@@ -69,7 +72,7 @@ function renderMarkdown(text: string) {
       parts.push(
         <pre
           key={key++}
-          className="my-3 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-950 px-4 py-3 text-xs leading-5 text-slate-100 shadow-inner"
+          className="my-3 overflow-x-auto rounded-md border border-slate-800 bg-slate-950 px-4 py-3 text-2xs leading-5 text-slate-100"
         >
           {inner}
         </pre>,
@@ -81,7 +84,7 @@ function renderMarkdown(text: string) {
           parts.push(
             <code
               key={key++}
-              className="rounded-md bg-sky-50 px-1.5 py-0.5 text-xs font-medium text-sky-700"
+              className="rounded-sm border border-slate-200 bg-slate-50 px-1 py-0.5 font-mono text-2xs text-slate-800"
             >
               {ip.slice(1, -1)}
             </code>,
@@ -108,6 +111,8 @@ function modelLabel(m: string): string {
   return 'Claude'
 }
 
+// ── Memory + cost info ────────────────────────────────────────────────
+
 function MemoryInfoLine({ metadata, costUsd, modelRouting }: { metadata?: MessageMetadata; costUsd?: number; modelRouting?: string }) {
   const memory = metadata?.memory
   if (!memory) return null
@@ -123,10 +128,10 @@ function MemoryInfoLine({ metadata, costUsd, modelRouting }: { metadata?: Messag
     ? `${chunks} chunks (${bothHits} exact+semantic)`
     : `${chunks} chunks`
 
-  const parts = [provider, cost, routing, '|', hitSummary, `${budgetPct}% budget`].filter(Boolean)
+  const parts = [provider, cost, routing, '·', hitSummary, `${budgetPct}% budget`].filter(Boolean)
 
   return (
-    <div className="mt-1 text-[11px] text-slate-400">
+    <div className="ml-auto font-mono text-2xs tabular-nums text-slate-400">
       {parts.join(' ')}
     </div>
   )
@@ -149,71 +154,71 @@ function MemorySummary({ metadata }: { metadata?: MessageMetadata }) {
   const chunks = memory.chunks || 0
 
   return (
-    <details className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/80">
-      <summary className="cursor-pointer list-none px-4 py-3 text-xs text-slate-600">
+    <details className="mt-3 overflow-hidden rounded-md border border-slate-200 bg-slate-50">
+      <summary className="cursor-pointer list-none px-3.5 py-2 text-xs text-slate-600 hover:bg-slate-100">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold text-slate-700">Memory breakdown</span>
-          <span className="ml-auto text-[11px] font-medium text-slate-500">
+          <span className="font-medium text-slate-700">Memory breakdown</span>
+          <span className="ml-auto font-mono text-2xs tabular-nums text-slate-500">
             {memory.budget_pct ?? 0}% budget
           </span>
         </div>
       </summary>
-      <div className="border-t border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
-        <div className="space-y-1.5">
+      <div className="border-t border-slate-200 bg-white px-3.5 py-3 font-mono text-2xs tabular-nums text-slate-600">
+        <div className="space-y-1">
           <div className="flex justify-between">
-            <span>Core rules:</span>
-            <span className="font-semibold text-slate-800">
-              {coreTokens > 0 ? `${coreTokens.toLocaleString()} tokens` : '\u2014'}
-              {coreTokens > 0 && <span className="ml-1.5 text-emerald-600">[cached]</span>}
+            <span>core rules</span>
+            <span className="font-medium text-slate-900">
+              {coreTokens > 0 ? `${coreTokens.toLocaleString()} tokens` : '—'}
+              {coreTokens > 0 && <span className="ml-1 text-emerald-600">cached</span>}
             </span>
           </div>
           <div className="flex justify-between">
-            <span>Skill context:</span>
-            <span className="font-semibold text-slate-800">
-              {skillTokens > 0 ? `${skillTokens.toLocaleString()} tokens` : '\u2014'}
-              {skillTokens > 0 && <span className="ml-1.5 text-emerald-600">[cached]</span>}
+            <span>skill context</span>
+            <span className="font-medium text-slate-900">
+              {skillTokens > 0 ? `${skillTokens.toLocaleString()} tokens` : '—'}
+              {skillTokens > 0 && <span className="ml-1 text-emerald-600">cached</span>}
             </span>
           </div>
           <div className="flex justify-between">
-            <span>Recent msgs:</span>
-            <span className="font-semibold text-slate-800">
+            <span>recent msgs</span>
+            <span className="font-medium text-slate-900">
               {historyMessages > 0
                 ? `${(memory.estimated_tokens ? memory.estimated_tokens - coreTokens - skillTokens - mentionTokens - retrievedTokens : 0).toLocaleString()} tokens`
-                : '\u2014'}
+                : '—'}
             </span>
           </div>
           <div className="flex justify-between">
-            <span>Retrieved:</span>
-            <span className="font-semibold text-slate-800">
-              {chunks > 0 ? `${chunks} chunks / ${retrievedTokens.toLocaleString()} tokens` : '\u2014'}
+            <span>retrieved</span>
+            <span className="font-medium text-slate-900">
+              {chunks > 0 ? `${chunks} chunks / ${retrievedTokens.toLocaleString()} tokens` : '—'}
             </span>
           </div>
           {chunks > 0 && (
-            <div className="ml-4 text-[11px] text-slate-500">
-              {bothHits > 0 && <span>{bothHits} exact+semantic</span>}
-              {bothHits > 0 && (semanticHits > 0 || exactHits > 0) && <span> &middot; </span>}
-              {semanticHits > 0 && <span>{semanticHits} semantic</span>}
-              {semanticHits > 0 && exactHits > 0 && <span> &middot; </span>}
+            <div className="ml-4 text-slate-500">
+              {bothHits > 0 && <span>{bothHits} exact+sem</span>}
+              {bothHits > 0 && (semanticHits > 0 || exactHits > 0) && <span> · </span>}
+              {semanticHits > 0 && <span>{semanticHits} sem</span>}
+              {semanticHits > 0 && exactHits > 0 && <span> · </span>}
               {exactHits > 0 && <span>{exactHits} exact</span>}
             </div>
           )}
           {budgetTotal > 0 && (
-            <div className="mt-2 flex justify-between border-t border-slate-100 pt-2">
-              <span>Budget:</span>
-              <span className="font-semibold text-slate-800">
-                {budgetUsed.toLocaleString()} / {budgetTotal.toLocaleString()} tokens ({Math.round(memory.budget_pct ?? 0)}%)
+            <div className="mt-2 flex justify-between border-t border-slate-200 pt-2">
+              <span>budget</span>
+              <span className="font-medium text-slate-900">
+                {budgetUsed.toLocaleString()} / {budgetTotal.toLocaleString()} ({Math.round(memory.budget_pct ?? 0)}%)
               </span>
             </div>
           )}
         </div>
         {(memory.active_skills || []).length > 0 && (
           <div className="mt-3">
-            <div className="mb-1 font-semibold text-slate-700">Active skills</div>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="mb-1 font-sans text-2xs font-medium text-slate-700">Active skills</div>
+            <div className="flex flex-wrap gap-1">
               {memory.active_skills!.map(skill => (
                 <span
                   key={skill}
-                  className="rounded-full bg-sky-50 px-2.5 py-1 font-medium text-[11px] text-sky-700"
+                  className="rounded-sm border border-slate-200 bg-white px-1.5 py-0.5 text-2xs text-slate-700"
                 >
                   {skill}
                 </span>
@@ -223,12 +228,12 @@ function MemorySummary({ metadata }: { metadata?: MessageMetadata }) {
         )}
         {memory.retrieved_files && memory.retrieved_files.length > 0 && (
           <div className="mt-3">
-            <div className="mb-1 font-semibold text-slate-700">Top retrieved files</div>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="mb-1 font-sans text-2xs font-medium text-slate-700">Top retrieved files</div>
+            <div className="flex flex-wrap gap-1">
               {memory.retrieved_files.map(file => (
                 <span
                   key={file}
-                  className="rounded-full bg-slate-100 px-2.5 py-1 font-mono text-[11px] text-slate-600"
+                  className="rounded-sm border border-slate-200 bg-white px-1.5 py-0.5 font-mono text-2xs text-slate-600"
                 >
                   {file}
                 </span>
@@ -240,6 +245,8 @@ function MemorySummary({ metadata }: { metadata?: MessageMetadata }) {
     </details>
   )
 }
+
+// ── Accomplishment footer ─────────────────────────────────────────────
 
 function AccomplishmentFooter({ toolCalls, costUsd }: { toolCalls?: ToolCallRecord[]; costUsd?: number }) {
   if (!toolCalls || toolCalls.length === 0) return null
@@ -273,51 +280,61 @@ function AccomplishmentFooter({ toolCalls, costUsd }: { toolCalls?: ToolCallReco
   if (parts.length === 0) return null
 
   return (
-    <div className="mt-3 border-t border-slate-100 pt-2 text-[11px] text-slate-400">
+    <div className="mt-3 border-t border-slate-100 pt-2 font-mono text-2xs tabular-nums text-slate-500">
       <div>{parts.join(' · ')}</div>
       {(costUsd ?? 0) > 0 && (
-        <div className="mt-0.5">${costUsd!.toFixed(4)} total</div>
+        <div className="mt-0.5 text-slate-400">${costUsd!.toFixed(4)} total</div>
       )}
     </div>
   )
 }
 
+// ── Validation banner ─────────────────────────────────────────────────
+
 function ValidationBanner({ metadata }: { metadata?: MessageMetadata }) {
   if (!metadata) return null
   if (metadata.stopped) {
     return (
-      <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-        Generation stopped before Cairn finished the response.
+      <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <Clock size={14} className="mt-0.5 shrink-0" />
+        <span>Generation stopped before Cairn finished the response.</span>
       </div>
     )
   }
   if (metadata.timed_out) {
     return (
-      <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-        Cairn hit the request deadline and returned early.
+      <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <Clock size={14} className="mt-0.5 shrink-0" />
+        <span>Cairn hit the request deadline and returned early.</span>
       </div>
     )
   }
   if (metadata.validation_recovered) {
     return (
-      <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-800">
-        Validation recovered this answer{metadata.validation_retries ? ` after ${metadata.validation_retries} retry${metadata.validation_retries === 1 ? '' : 'ies'}` : ''}.
+      <div className="mt-3 flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+        <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
+        <span>
+          Validation recovered this answer
+          {metadata.validation_retries ? ` after ${metadata.validation_retries} retry${metadata.validation_retries === 1 ? '' : 'ies'}` : ''}.
+        </span>
       </div>
     )
   }
   return null
 }
 
+// ── MessageBubble — the main component ───────────────────────────────
+
 export function MessageBubble({ message, onApprove, onReject }: MessageBubbleProps) {
   if (message.role === 'user') {
     return (
       <div className="mb-4 flex justify-end">
-        <div className="max-w-[78%] rounded-[24px] border border-sky-200 bg-gradient-to-br from-sky-500 to-blue-600 px-4 py-3 text-sm leading-relaxed text-white shadow-[0_12px_30px_-18px_rgba(37,99,235,0.9)]">
+        <div className="max-w-[78%] rounded-lg border border-slate-900 bg-slate-900 px-3.5 py-2.5 text-sm leading-relaxed text-white">
           {message.imagePreview && (
             <img
               src={message.imagePreview}
               alt="Attached screenshot"
-              className="mb-3 max-h-44 rounded-2xl border border-white/40 shadow-sm"
+              className="mb-2.5 max-h-44 rounded-md border border-slate-700"
             />
           )}
           <div className="whitespace-pre-wrap break-words">{message.content}</div>
@@ -329,31 +346,34 @@ export function MessageBubble({ message, onApprove, onReject }: MessageBubblePro
   if (message.role === 'system') {
     return (
       <div className="mb-3 flex justify-center">
-        <span className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs text-slate-500 shadow-sm">
+        <span className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-2xs font-medium text-slate-500">
           {message.content}
         </span>
       </div>
     )
   }
 
+  // Assistant
+  const isError = message.content.startsWith('Error:')
+
   return (
     <div className="mb-4">
-      <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_16px_40px_-24px_rgba(15,23,42,0.28)]">
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-3">
-          <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-700">
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-subtle">
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50 px-3.5 py-2">
+          <span className="inline-flex items-center gap-1.5 rounded-sm border border-slate-200 bg-white px-1.5 py-0.5 text-2xs font-medium uppercase tracking-wide text-slate-700">
             {message.modelUsed ? modelLabel(message.modelUsed) : 'Cairn'}
           </span>
           {message.modelUsed && (
-            <span className="text-xs text-slate-500">{message.modelUsed}</span>
+            <span className="font-mono text-2xs text-slate-500">{message.modelUsed}</span>
           )}
           {(message.costUsd ?? 0) > 0 && (
-            <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
+            <span className="font-mono text-2xs tabular-nums text-slate-600">
               ${message.costUsd!.toFixed(4)}
             </span>
           )}
           {(message.metadata?.model_routing || message.modelRouting) === 'manual' && (
-            <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">
-              Manual model
+            <span className="rounded-sm border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-2xs font-medium text-amber-700">
+              Manual
             </span>
           )}
           <MemoryInfoLine
@@ -363,7 +383,13 @@ export function MessageBubble({ message, onApprove, onReject }: MessageBubblePro
           />
         </div>
 
-        <div className="px-5 py-4 text-[15px] leading-7 text-slate-700">
+        <div className={`px-4 py-3.5 text-[14px] leading-[1.65] ${isError ? 'text-red-700' : 'text-slate-800'}`}>
+          {isError && (
+            <div className="mb-2 flex items-center gap-2 text-red-700">
+              <AlertTriangle size={14} />
+              <span className="text-2xs font-medium uppercase tracking-wide">Error</span>
+            </div>
+          )}
           {renderMarkdown(message.content)}
           <ValidationBanner metadata={message.metadata} />
           <MemorySummary metadata={message.metadata} />
@@ -380,17 +406,18 @@ export function MessageBubble({ message, onApprove, onReject }: MessageBubblePro
       )}
 
       {message.toolCalls && message.toolCalls.length > 0 && (
-        <details className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-slate-600">
-            Tools used · {message.toolCalls.length}
+        <details className="mt-2 overflow-hidden rounded-md border border-slate-200 bg-white">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2 text-xs text-slate-600 hover:bg-slate-50">
+            <TerminalSquare size={14} className="text-slate-500" />
+            Tools used <span className="font-mono text-2xs tabular-nums text-slate-400">· {message.toolCalls.length}</span>
           </summary>
-          <div className="space-y-2 border-t border-slate-200 bg-slate-50 p-3">
+          <div className="space-y-2 border-t border-slate-200 bg-slate-50 p-2.5">
             {message.toolCalls.map((tc, i) => (
-              <div key={i} className="rounded-2xl border border-slate-200 bg-white p-3">
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-sky-700">
+              <div key={i} className="rounded-md border border-slate-200 bg-white p-2.5">
+                <div className="mb-1 font-mono text-2xs font-medium uppercase tracking-wide text-slate-700">
                   {tc.tool_name}
                 </div>
-                <div className="whitespace-pre-wrap break-words text-xs leading-6 text-slate-600">
+                <div className="whitespace-pre-wrap break-words font-mono text-2xs leading-5 text-slate-600">
                   {tc.result.length > 400 ? tc.result.slice(0, 400) + '…' : tc.result}
                 </div>
               </div>
