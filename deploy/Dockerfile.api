@@ -27,6 +27,20 @@ RUN pip install --no-cache-dir \
     mcp>=1.0.0 \
     openpyxl>=3.1.0
 
+# Cache-bust the application code layers on every build where the
+# caller passes a fresh GIT_COMMIT arg. Without this, BuildKit's
+# content-addressable layer cache has been observed to serve stale
+# files under core/ even after a git pull updated them on disk —
+# the symptom was "build finished in 0.5s, image has the old
+# enquiry_analyzer.py inside". The RUN step below changes every
+# time GIT_COMMIT changes, which invalidates all subsequent COPY
+# layers. Pass the commit hash from the build script:
+#   docker compose build \
+#       --build-arg GIT_COMMIT=$(git rev-parse HEAD) cairn-api
+# Or use deploy/build-cairn-api.sh which does this for you.
+ARG GIT_COMMIT=dev
+RUN echo "cairn-api build git_commit=${GIT_COMMIT}" > /app/.build_commit
+
 # Copy application code
 COPY api/ ./api/
 COPY core/ ./core/

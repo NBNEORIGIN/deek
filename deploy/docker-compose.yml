@@ -22,6 +22,13 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
+      args:
+        # Cache-bust the COPY layers when the caller passes a
+        # fresh hash. Defaults to 'dev' which caches normally.
+        # The helper script deploy/build-cairn-api.sh sets this
+        # to $(git rev-parse HEAD) so every pull → build cycle
+        # invalidates the code layers correctly.
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
     restart: unless-stopped
     depends_on:
       cairn-db:

@@ -571,7 +571,7 @@ def _analyze_enquiry(
         )
 
     # Provenance footer
-    footer = (
+    provenance = (
         '\n\n---\n'
         '_Provenance:_\n'
         f'- job_size: {job_size} (max_tokens={max_tokens_budget})\n'
@@ -583,7 +583,36 @@ def _analyze_enquiry(
         f'(from wiki/modules/nbne-rate-card.md)\n'
         f'- synthesis model: {sonnet_model}'
     )
-    return brief + footer
+
+    # Strict-verbatim wrapper. The chat agent consumes this whole
+    # string as a tool result and uses it to write its next response.
+    # The inline instruction tells the model NOT to re-wrap the brief
+    # with commentary, risks footers, or summary sections — all of
+    # which were observed in prior runs where the agent felt free to
+    # elaborate on the analyzer's output. The sentinel markers make
+    # it easy for the model to see where the verbatim content starts
+    # and ends.
+    return (
+        '⚠️ STRICT VERBATIM OUTPUT — DO NOT MODIFY OR APPEND ⚠️\n\n'
+        'The strategic brief between the sentinel markers below has '
+        'been produced by the analyzer with a size-calibrated '
+        'template, rate-card grounding, and precedent filtering. '
+        'Return it to the user ESSENTIALLY VERBATIM. Specifically:\n'
+        '- Do NOT add a "Risks / Notes" section. The analyzer already '
+        'handled risks inline if the job size warranted it.\n'
+        '- Do NOT add a summary or "Recommended Next Steps" footer. '
+        'The analyzer has a Bottom Line section that already serves '
+        'that purpose.\n'
+        '- Do NOT re-phrase, re-structure, or re-order the sections.\n'
+        '- Do NOT add a closing "good luck!" or similar pleasantry.\n'
+        '- You MAY prefix with one short intro line (max 12 words) '
+        'like "Here\'s the analyzer brief:" — nothing more.\n'
+        '- Emit everything between the sentinel markers exactly as '
+        'written, including the Provenance footer.\n\n'
+        '<<<ANALYZER_BRIEF_START>>>\n'
+        + brief + provenance + '\n'
+        '<<<ANALYZER_BRIEF_END>>>'
+    )
 
 
 def _first_text(resp: Any) -> str:
