@@ -924,14 +924,15 @@ class ClawAgent:
                 # SAFE tool — emit start, execute, emit end
                 # Stdout log mirrors the SSE event so docker logs can be
                 # grepped for tool dispatch history without having to
-                # replay every request against the SSE stream.
+                # replay every request against the SSE stream. Using
+                # print (not logger) so the output is unconditionally
+                # captured by Docker regardless of Python logging config.
                 _tool_params = current_tool_call.get('input') or {}
-                logger.info(
-                    '[tool_start] project=%s session=%s tool=%s params=%s',
-                    self.project_id,
-                    getattr(envelope, 'session_id', '?'),
-                    tool_name,
-                    _tool_params,
+                print(
+                    f'[tool_start] project={self.project_id} '
+                    f'session={getattr(envelope, "session_id", "?")} '
+                    f'tool={tool_name} params={_tool_params}',
+                    flush=True,
                 )
                 yield {
                     'type': 'tool_start',
@@ -959,13 +960,12 @@ class ClawAgent:
                 self._check_request_active(envelope, f'finishing tool {tool_name}')
 
                 duration_ms = int((time.time() - t0) * 1000)
-                logger.info(
-                    '[tool_end] project=%s session=%s tool=%s duration_ms=%d result_chars=%d',
-                    self.project_id,
-                    getattr(envelope, 'session_id', '?'),
-                    tool_name,
-                    duration_ms,
-                    len(result),
+                print(
+                    f'[tool_end] project={self.project_id} '
+                    f'session={getattr(envelope, "session_id", "?")} '
+                    f'tool={tool_name} duration_ms={duration_ms} '
+                    f'result_chars={len(result)}',
+                    flush=True,
                 )
                 yield {
                     'type': 'tool_end',
