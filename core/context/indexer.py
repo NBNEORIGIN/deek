@@ -86,10 +86,14 @@ class CodeIndexer:
             """)
             self.conn.commit()
 
-            # Defensive migration — add subproject_id if missing from existing table
+            # Defensive migration — add columns if missing from existing table
             cur.execute("""
                 ALTER TABLE claw_code_chunks
                     ADD COLUMN IF NOT EXISTS subproject_id VARCHAR(200);
+            """)
+            cur.execute("""
+                ALTER TABLE claw_code_chunks
+                    ADD COLUMN IF NOT EXISTS last_modified TIMESTAMP;
             """)
             self.conn.commit()
 
