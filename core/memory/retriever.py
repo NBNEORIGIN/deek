@@ -346,13 +346,16 @@ class HybridRetriever:
                     ),
                 )
                 rows = cur.fetchall()
+            # Defend against NULL similarity — happens when the embedder
+            # returns None for an empty query or when pgvector can't
+            # compute distance against a NULL vector.
             return [
                 RetrievedChunk(
                     file=row[0],
                     content=row[1],
                     chunk_type=row[2],
                     chunk_name=row[3],
-                    score=float(row[4]),
+                    score=float(row[4]) if row[4] is not None else 0.0,
                     cosine_rank=rank,
                 )
                 for rank, row in enumerate(rows)
