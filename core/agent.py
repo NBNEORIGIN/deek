@@ -2341,6 +2341,7 @@ class ClawAgent:
             search_wiki_tool,
         )
         from .tools.intel_tools import retrieve_similar_decisions_tool
+        from .tools.crm_tools import search_crm_tool
         for tool in [
             # File
             read_file_tool, edit_file_tool, create_file_tool,
@@ -2365,5 +2366,7 @@ class ClawAgent:
             search_wiki_tool,
             # Counterfactual intelligence (past decisions retrieval)
             retrieve_similar_decisions_tool,
+            # Live CRM hybrid search (projects, clients, lessons, quotes, emails)
+            search_crm_tool,
         ]:
             self.tools.register(tool)

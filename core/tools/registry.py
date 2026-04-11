@@ -44,6 +44,7 @@ DEFAULT_PERMISSIONS = {
         'query_amazon_intel',
         'get_module_snapshot', 'search_emails', 'search_wiki',
         'retrieve_similar_decisions',
+        'search_crm',
     ],
 }
 
@@ -386,6 +387,33 @@ TOOL_SCHEMAS: dict[str, dict] = {
                     'Optional source_type filter — one or more of: '
                     'dispute, b2b_quote, email, m_number, xero, amazon, '
                     'principle. Omit to search all sources.'
+                ),
+            },
+        },
+        'required': ['query'],
+    },
+    'search_crm': {
+        'type': 'object',
+        'properties': {
+            'query': {
+                'type': 'string',
+                'description': (
+                    'Free-text search term — client name, project name, '
+                    'material, topic, lesson keyword.'
+                ),
+            },
+            'limit': {
+                'type': 'integer',
+                'description': 'Max results to return (default 5, max 20)',
+                'default': 5,
+            },
+            'types': {
+                'type': 'array',
+                'items': {'type': 'string'},
+                'description': (
+                    "Optional source_type filter — one or more of: "
+                    "'project', 'client', 'material', 'kb' (lessons), "
+                    "'quote', 'email'. Omit to search all."
                 ),
             },
         },

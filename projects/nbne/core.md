@@ -52,6 +52,7 @@ itself, not the host machine.** Use the right tool for each question.
 | **Inbox** — cairn@nbnesigns.com messages, forwarded threads, direct notes | `search_emails(query="...")` | Hybrid semantic + lexical search over embedded email chunks, refreshed every 15 min |
 | **Wiki** — SOPs, supplier notes, decision logs, incident reports | `search_wiki(query="...")` | Hybrid search over ~300 compiled wiki articles |
 | **Past decisions** — "have we been here before?" — disputes, b2b quotes, principles, production history | `retrieve_similar_decisions(query="...")` | Cosine-similarity search over the cairn_intel counterfactual memory, returns chosen path + rejected alternatives + outcome + lesson |
+| **CRM** — live pipeline, clients, quotes, materials, lessons, indexed emails | `search_crm(query="...", types=["kb","project"])` | Hybrid pgvector + BM25 search via the CRM's own `/api/cairn/search` endpoint (server-to-server with Bearer token) — always fresh, no cache lag |
 | **Codebase** — function lookups, config literals | `search_code(query="...")` | Ripgrep over project files |
 
 When answering business questions:
