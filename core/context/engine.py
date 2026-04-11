@@ -66,10 +66,27 @@ class ContextEngine:
         return 'keyword'
 
     def _get_connection(self):
+        """Return the cached retrieval connection, opening it if needed.
+
+        The connection runs in ``autocommit=True`` mode. This is
+        deliberate: every caller of ``_get_connection`` is a read-only
+        retrieval path (embedding lookups, wiki search, chunk fetch),
+        and none of them needs a transaction. Running without
+        autocommit caused ``idle in transaction`` leaks — a caller
+        would ``cur.execute(SELECT ...)`` + ``cur.fetchall()`` inside
+        a ``with conn.cursor()`` block, and on exit the cursor closed
+        but the implicit transaction on the shared connection stayed
+        open indefinitely. This blocked DDL migrations (``ALTER TABLE
+        claw_code_chunks``) that wait on ACCESS EXCLUSIVE and caused
+        two separate multi-hour Cairn outages (LAN DB and Hetzner
+        cairn-db). autocommit eliminates the class of bug across
+        every read-only caller at once.
+        """
         if not self._conn or self._conn.closed:
             import psycopg2
             from pgvector.psycopg2 import register_vector
             self._conn = psycopg2.connect(self.db_url, connect_timeout=5)
+            self._conn.autocommit = True
             register_vector(self._conn)
         return self._conn
 
