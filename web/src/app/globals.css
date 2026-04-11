@@ -2,23 +2,115 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Design tokens ────────────────────────────────────────────────────
+   Flat neutral surfaces, single accent, tight spacing, tabular numerics.
+   We stay light-mode-only for now (dark mode is a later pass).
+*/
+
 @layer base {
-  html { @apply h-full; }
+  :root {
+    /* Neutral palette (slate) */
+    --bg-app:        #f8fafc;   /* slate-50 */
+    --bg-surface:    #ffffff;
+    --bg-subtle:     #f1f5f9;   /* slate-100 */
+    --bg-inset:      #f8fafc;   /* slate-50 */
+
+    --border-default: #e2e8f0;  /* slate-200 */
+    --border-strong:  #cbd5e1;  /* slate-300 */
+
+    --text-primary:   #0f172a;  /* slate-900 */
+    --text-secondary: #475569;  /* slate-600 */
+    --text-muted:     #64748b;  /* slate-500 */
+    --text-faint:     #94a3b8;  /* slate-400 */
+
+    /* Single accent — used for primary actions and active states only */
+    --accent:         #2563eb;  /* blue-600 */
+    --accent-hover:   #1d4ed8;  /* blue-700 */
+    --accent-soft:    #eff6ff;  /* blue-50 */
+    --accent-border:  #bfdbfe;  /* blue-200 */
+
+    /* State colours — desaturated, used sparingly */
+    --ok:        #059669;       /* emerald-600 */
+    --ok-soft:   #ecfdf5;       /* emerald-50 */
+    --warn:      #d97706;       /* amber-600 */
+    --warn-soft: #fffbeb;       /* amber-50 */
+    --err:       #dc2626;       /* red-600 */
+    --err-soft:  #fef2f2;       /* red-50 */
+  }
+
+  html {
+    @apply h-full;
+    /* Enable tabular figures globally for number-heavy UI */
+    font-feature-settings: 'tnum', 'ss01';
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
-    @apply h-full text-slate-900;
-    font-family: "Segoe UI Variable", "Segoe UI", "Inter", system-ui, sans-serif;
-    background:
-      radial-gradient(circle at top left, rgba(191, 219, 254, 0.55), transparent 28%),
-      radial-gradient(circle at top right, rgba(226, 232, 240, 0.8), transparent 24%),
-      linear-gradient(180deg, #f5f9ff 0%, #eef3fb 100%);
+    @apply h-full;
+    color: var(--text-primary);
+    background: var(--bg-app);
+    font-family: var(--font-sans), "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Headings inherit sans but slightly tighter tracking */
+  h1, h2, h3, h4, h5, h6 {
+    letter-spacing: -0.01em;
+  }
+
+  code, kbd, pre, samp {
+    font-family: var(--font-mono), "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
 }
 
-/* Diff syntax highlighting */
-.diff-add { @apply text-emerald-700; }
-.diff-del { @apply text-rose-700; }
+/* ── Components ───────────────────────────────────────────────────── */
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { @apply bg-slate-100; }
-::-webkit-scrollbar-thumb { @apply bg-slate-300 rounded; }
+@layer components {
+  /* A neutral chip used in headers for metrics */
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600;
+  }
+  .chip-value {
+    @apply font-medium text-slate-900 tabular-nums;
+  }
+
+  /* A subdued section label — replaces the earlier tracking-[0.22em] shouting caps */
+  .label-xs {
+    @apply text-[10px] font-medium uppercase tracking-wider text-slate-500;
+  }
+
+  /* Focus ring used across inputs/buttons */
+  .focus-ring {
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-1 focus-visible:ring-offset-white;
+  }
+}
+
+/* ── Utilities ────────────────────────────────────────────────────── */
+
+/* Diff syntax highlighting */
+.diff-add { color: var(--ok); }
+.diff-del { color: var(--err); }
+
+/* Thin monochrome scrollbars */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+/* Firefox */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-default) transparent;
+}
+
+/* Respect safe areas on iOS when running as installed PWA */
+@supports (padding: max(0px)) {
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
