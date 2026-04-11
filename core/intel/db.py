@@ -128,6 +128,40 @@ CREATE TABLE IF NOT EXISTS cairn_intel.backfill_runs (
     errors              JSONB,
     status              TEXT NOT NULL
 );
+
+-- Email triage ledger — one row per email the triage pipeline has
+-- seen. Unique by email_message_id for idempotency; on re-run the
+-- triage pipeline skips rows that already exist.
+CREATE TABLE IF NOT EXISTS cairn_intel.email_triage (
+    id                    BIGSERIAL PRIMARY KEY,
+    email_message_id      TEXT UNIQUE NOT NULL,
+    email_mailbox         TEXT NOT NULL,
+    email_sender          TEXT,
+    email_subject         TEXT,
+    email_received_at     TIMESTAMPTZ,
+    classification        TEXT NOT NULL,  -- new_enquiry | existing_project_reply | automation | personal | unclassified | error
+    classification_confidence TEXT,        -- high | medium | low
+    classification_reason TEXT,
+    client_name_guess     TEXT,
+    project_id            TEXT,            -- matched CRM project if any
+    project_match_score   REAL,
+    analyzer_brief        TEXT,            -- full analyzer output if classification == new_enquiry
+    analyzer_job_size     TEXT,            -- small | mid | large, from analyzer provenance
+    processed_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sent_to_toby_at       TIMESTAMPTZ,    -- when the digest email went out; NULL if not yet sent
+    send_dry_run          BOOLEAN DEFAULT FALSE,  -- true if SMTP was unavailable and the "send" was logged only
+    send_error            TEXT,            -- most recent send error, if any
+    crm_recommendation_id TEXT,            -- ID from CRM /api/cairn/memory response
+    skip_reason           TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_triage_unsent
+    ON cairn_intel.email_triage(processed_at DESC)
+    WHERE sent_to_toby_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_email_triage_classification
+    ON cairn_intel.email_triage(classification);
+CREATE INDEX IF NOT EXISTS idx_email_triage_received
+    ON cairn_intel.email_triage(email_received_at DESC);
 """
 
 
@@ -169,6 +203,132 @@ def ensure_schema(db_url: str | None = None, schema: str = 'cairn_intel') -> Non
                     idx_sql = idx_sql.replace('cairn_intel', schema)
                 cur.execute(idx_sql)
                 conn.commit()
+
+
+# ── Email triage helpers ────────────────────────────────────────────────
+
+
+def upsert_email_triage(
+    row: dict,
+    db_url: str | None = None,
+    schema: str = 'cairn_intel',
+) -> int:
+    """Insert or update a row in ``cairn_intel.email_triage``.
+
+    Upsert key is ``email_message_id``. Returns the row id. Used by
+    ``scripts.email_triage.triage_runner`` to record every classification
+    attempt exactly once per email.
+    """
+    sql = f"""
+    INSERT INTO {schema}.email_triage (
+        email_message_id, email_mailbox, email_sender, email_subject,
+        email_received_at, classification, classification_confidence,
+        classification_reason, client_name_guess, project_id,
+        project_match_score, analyzer_brief, analyzer_job_size,
+        skip_reason
+    ) VALUES (
+        %(email_message_id)s, %(email_mailbox)s, %(email_sender)s,
+        %(email_subject)s, %(email_received_at)s, %(classification)s,
+        %(classification_confidence)s, %(classification_reason)s,
+        %(client_name_guess)s, %(project_id)s, %(project_match_score)s,
+        %(analyzer_brief)s, %(analyzer_job_size)s, %(skip_reason)s
+    )
+    ON CONFLICT (email_message_id) DO UPDATE SET
+        classification            = EXCLUDED.classification,
+        classification_confidence = EXCLUDED.classification_confidence,
+        classification_reason     = EXCLUDED.classification_reason,
+        client_name_guess         = EXCLUDED.client_name_guess,
+        project_id                = EXCLUDED.project_id,
+        project_match_score       = EXCLUDED.project_match_score,
+        analyzer_brief            = EXCLUDED.analyzer_brief,
+        analyzer_job_size         = EXCLUDED.analyzer_job_size,
+        skip_reason               = EXCLUDED.skip_reason,
+        processed_at              = NOW()
+    RETURNING id
+    """
+    with get_conn(db_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, row)
+            new_id = cur.fetchone()[0]
+            conn.commit()
+    return int(new_id)
+
+
+def load_unsent_triage_drafts(
+    db_url: str | None = None,
+    limit: int = 100,
+    schema: str = 'cairn_intel',
+) -> list[dict]:
+    """Return triage rows that have not yet been sent to Toby.
+
+    Used by the digest sender cron. Only returns rows with a non-empty
+    analyzer_brief OR rows classified as existing_project_reply (those
+    also get a summary email).
+    """
+    sql = f"""
+    SELECT id, email_message_id, email_mailbox, email_sender,
+           email_subject, email_received_at, classification,
+           classification_confidence, client_name_guess, project_id,
+           analyzer_brief, analyzer_job_size, processed_at
+    FROM {schema}.email_triage
+    WHERE sent_to_toby_at IS NULL
+      AND classification IN ('new_enquiry', 'existing_project_reply')
+    ORDER BY email_received_at DESC NULLS LAST
+    LIMIT %s
+    """
+    with get_conn(db_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (limit,))
+            col_names = [d[0] for d in cur.description]
+            return [dict(zip(col_names, row)) for row in cur.fetchall()]
+
+
+def mark_triage_sent(
+    triage_id: int,
+    dry_run: bool = False,
+    send_error: str | None = None,
+    crm_recommendation_id: str | None = None,
+    db_url: str | None = None,
+    schema: str = 'cairn_intel',
+) -> None:
+    """Mark a triage row as delivered to Toby (or dry-run logged)."""
+    sql = f"""
+    UPDATE {schema}.email_triage
+    SET sent_to_toby_at       = NOW(),
+        send_dry_run          = %s,
+        send_error            = %s,
+        crm_recommendation_id = COALESCE(%s, crm_recommendation_id)
+    WHERE id = %s
+    """
+    with get_conn(db_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (bool(dry_run), send_error, crm_recommendation_id, triage_id),
+            )
+            conn.commit()
+
+
+def already_triaged_message_ids(
+    message_ids: list[str],
+    db_url: str | None = None,
+    schema: str = 'cairn_intel',
+) -> set[str]:
+    """Return the subset of message_ids already present in email_triage.
+
+    Used by the runner to skip already-processed emails without hitting
+    Haiku again.
+    """
+    if not message_ids:
+        return set()
+    sql = f"""
+    SELECT email_message_id FROM {schema}.email_triage
+    WHERE email_message_id = ANY(%s)
+    """
+    with get_conn(db_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (message_ids,))
+            return {row[0] for row in cur.fetchall()}
 
 
 def drop_schema(db_url: str | None = None, schema: str = 'cairn_intel_test') -> None:
