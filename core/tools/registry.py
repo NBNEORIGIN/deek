@@ -427,10 +427,16 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 'type': 'string',
                 'description': (
                     'The full enquiry text — paste the email, phone '
-                    'note, or quote request verbatim. The tool will '
-                    'retrieve matching CRM context + counterfactual '
-                    'memory + wiki policy, then synthesise a strategy '
-                    'brief with citations.'
+                    'note, or quote request verbatim (including '
+                    'sender, subject, body if available). The tool '
+                    'will retrieve matching CRM context + counterfactual '
+                    'memory + wiki policy + rate card, classify job '
+                    'size, and synthesise a size-calibrated brief '
+                    'with citations. Call this whenever the user '
+                    'asks to "analyse", "assess", "review", "look at", '
+                    '"how should I handle", or "help me respond to" '
+                    'any client enquiry or pastes an email-shaped '
+                    'message asking for advice.'
                 ),
             },
             'focus': {
