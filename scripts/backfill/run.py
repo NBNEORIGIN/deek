@@ -87,6 +87,9 @@ def _load_source(
     if name == 'crm_lessons':
         from .sources.crm_lessons import CrmLessonsSource
         return CrmLessonsSource()
+    if name == 'crm_reflection':
+        from .sources.crm_reflection import CrmReflectionSource
+        return CrmReflectionSource()
     raise ValueError(
         f"unknown source '{name}' in _load_source — "
         'add the loader alongside the others above'
@@ -104,7 +107,8 @@ KNOWN_SOURCES = {
     'emails':      {'needs_llm': True,  'needs_data_file': None,             'needs_ledger_db': False},
     'xero':        {'needs_llm': True,  'needs_data_file': None,             'needs_ledger_db': True},
     'amazon':      {'needs_llm': True,  'needs_data_file': None,             'needs_ledger_db': False},
-    'crm_lessons': {'needs_llm': True,  'needs_data_file': None,             'needs_ledger_db': False},
+    'crm_lessons':    {'needs_llm': True,  'needs_data_file': None, 'needs_ledger_db': False},
+    'crm_reflection': {'needs_llm': True,  'needs_data_file': None, 'needs_ledger_db': False},
 }
 
 
@@ -179,7 +183,7 @@ def preflight(sources: list[str], data_dir: Path, commit_mode: bool) -> list[str
                 )
 
     # 6. Source must be built. Extend built_sources as each phase lands.
-    built_sources = {'synthetic', 'disputes', 'b2b_quotes', 'principles', 'xero', 'amazon', 'crm_lessons'}
+    built_sources = {'synthetic', 'disputes', 'b2b_quotes', 'principles', 'xero', 'amazon', 'crm_lessons', 'crm_reflection'}
     for source in sources:
         if source not in built_sources:
             failures.append(
