@@ -45,6 +45,7 @@ DEFAULT_PERMISSIONS = {
         'get_module_snapshot', 'search_emails', 'search_wiki',
         'retrieve_similar_decisions',
         'search_crm',
+        'analyze_enquiry',
     ],
 }
 
@@ -418,6 +419,30 @@ TOOL_SCHEMAS: dict[str, dict] = {
             },
         },
         'required': ['query'],
+    },
+    'analyze_enquiry': {
+        'type': 'object',
+        'properties': {
+            'enquiry': {
+                'type': 'string',
+                'description': (
+                    'The full enquiry text — paste the email, phone '
+                    'note, or quote request verbatim. The tool will '
+                    'retrieve matching CRM context + counterfactual '
+                    'memory + wiki policy, then synthesise a strategy '
+                    'brief with citations.'
+                ),
+            },
+            'focus': {
+                'type': 'string',
+                'description': (
+                    'Optional focus hint like "pricing", "dispute", '
+                    '"scope", "timeline" to bias retrieval toward a '
+                    'specific archetype.'
+                ),
+            },
+        },
+        'required': ['enquiry'],
     },
     # ── Server check ─────────────────────────────────────────────────────────
     'check_server': {

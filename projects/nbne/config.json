@@ -14,7 +14,8 @@
     "search_emails",
     "search_wiki",
     "retrieve_similar_decisions",
-    "search_crm"
+    "search_crm",
+    "analyze_enquiry"
   ],
 
   "model_preferences": {

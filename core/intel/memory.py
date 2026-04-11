@@ -326,6 +326,9 @@ class CounterfactualMemory:
         top_k: int = 5,
         include_sources: list[str] | None = None,
         min_signal_strength: float = 0.0,
+        include_related_wiki: bool = True,
+        related_wiki_top_k: int = 3,
+        wiki_project_ids: list[str] | None = None,
     ) -> list[dict]:
         """Embed the query and return the top_k structurally similar decisions.
 
@@ -333,6 +336,15 @@ class CounterfactualMemory:
         embedding column. The latest outcome + lesson per decision (if
         any) is joined in. Rows with ``committed=FALSE`` are excluded —
         they haven't passed privacy review.
+
+        When ``include_related_wiki=True`` (the default), the same query
+        embedding is also run against the wiki chunks in
+        ``claw_code_chunks`` (chunk_type='wiki') and the top
+        ``related_wiki_top_k`` articles are attached to the result as a
+        top-level ``related_wiki`` list. This bridges the reflection
+        layer (cairn_intel) and the compiled wiki layer — the chat
+        agent gets both in one tool call rather than having to hop
+        through search_wiki + read_file separately.
         """
         top_k = max(1, min(int(top_k), 20))
 
@@ -383,10 +395,22 @@ class CounterfactualMemory:
         LIMIT %s
         """
 
+        related_wiki: list[dict] = []
         with self._conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
                 rows = cur.fetchall()
+
+            # Related wiki lookup — same query embedding, run against
+            # claw_code_chunks. Kept inside the same connection to
+            # avoid a second socket open.
+            if include_related_wiki:
+                related_wiki = self._lookup_related_wiki(
+                    cur=cur,
+                    vec=vec,
+                    top_k=max(1, int(related_wiki_top_k)),
+                    project_ids=wiki_project_ids or ['claw'],
+                )
 
         results: list[dict] = []
         for row in rows:
@@ -420,8 +444,55 @@ class CounterfactualMemory:
                     }
                     if actual_result is not None else None
                 ),
+                # Every result carries the same related_wiki list so
+                # chat tools that format individual rows still see it;
+                # the top-level return also includes it below for
+                # callers that prefer one global block.
+                'related_wiki': related_wiki,
             })
         return results
+
+    def _lookup_related_wiki(
+        self,
+        cur,
+        vec: list[float],
+        top_k: int,
+        project_ids: list[str],
+    ) -> list[dict]:
+        """Run a cosine query against claw_code_chunks wiki chunks.
+
+        Best-effort: on any failure (schema drift, lock contention,
+        missing pgvector cast) this returns an empty list so the
+        retrieval result is still useful.
+        """
+        try:
+            placeholders = ', '.join(['%s'] * len(project_ids))
+            cur.execute(
+                f"""
+                SELECT file_path, chunk_name,
+                       LEFT(chunk_content, 500) AS excerpt,
+                       1 - (embedding <=> %s::vector) AS similarity
+                FROM claw_code_chunks
+                WHERE chunk_type = 'wiki'
+                  AND embedding IS NOT NULL
+                  AND project_id IN ({placeholders})
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s
+                """,
+                (vec, *project_ids, vec, top_k),
+            )
+            rows = cur.fetchall()
+        except Exception:
+            return []
+        return [
+            {
+                'file_path': r[0],
+                'title': r[1] or r[0],
+                'excerpt': r[2],
+                'similarity': float(r[3]) if r[3] is not None else None,
+            }
+            for r in rows
+        ]
 
     # ── Privacy promotion ───────────────────────────────────────────────
 

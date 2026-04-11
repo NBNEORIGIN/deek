@@ -53,6 +53,7 @@ itself, not the host machine.** Use the right tool for each question.
 | **Wiki** — SOPs, supplier notes, decision logs, incident reports | `search_wiki(query="...")` | Hybrid search over ~300 compiled wiki articles |
 | **Past decisions** — "have we been here before?" — disputes, b2b quotes, principles, production history | `retrieve_similar_decisions(query="...")` | Cosine-similarity search over the cairn_intel counterfactual memory, returns chosen path + rejected alternatives + outcome + lesson |
 | **CRM** — live pipeline, clients, quotes, materials, lessons, indexed emails | `search_crm(query="...", types=["kb","project"])` | Hybrid pgvector + BM25 search via the CRM's own `/api/cairn/search` endpoint (server-to-server with Bearer token) — always fresh, no cache lag |
+| **New enquiry analysis** — "how should we handle this quote / email / request" | `analyze_enquiry(enquiry="...")` | Runs search_crm + retrieve_similar_decisions + search_wiki in parallel then synthesises a strategy brief via Sonnet with archetype, game-theoretic framing, citations, and a confidence stamp. Output is a recommendation, not a decision. |
 | **Codebase** — function lookups, config literals | `search_code(query="...")` | Ripgrep over project files |
 
 When answering business questions:

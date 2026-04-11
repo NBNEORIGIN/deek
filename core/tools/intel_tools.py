@@ -125,6 +125,32 @@ def _retrieve_similar_decisions(
     ]
     for result in results:
         lines.extend(_format_result(result))
+
+    # Related wiki cross-links — every retrieve_similar call now
+    # carries the top N wiki articles by the same query embedding.
+    # Emit them once at the end so the chat agent doesn't have to
+    # hop through search_wiki + read_file separately.
+    related_wiki: list[dict] = []
+    if results:
+        related_wiki = results[0].get('related_wiki') or []
+    if related_wiki:
+        lines.append('')
+        lines.append(f'Related wiki articles (by same query embedding):')
+        for w in related_wiki:
+            sim = w.get('similarity')
+            sim_txt = f"{sim:.3f}" if isinstance(sim, (int, float)) else 'n/a'
+            lines.append(
+                f"  [{sim_txt}] {w.get('title') or w.get('file_path')}"
+            )
+            lines.append(f"    path: {w.get('file_path')}")
+            excerpt = (w.get('excerpt') or '').strip()
+            if excerpt:
+                compact = ' '.join(excerpt.split())
+                if len(compact) > 220:
+                    compact = compact[:220] + '...'
+                lines.append(f'    {compact}')
+            lines.append('')
+
     return '\n'.join(lines).rstrip()
 
 

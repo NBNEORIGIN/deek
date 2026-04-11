@@ -922,10 +922,21 @@ class ClawAgent:
                     return
 
                 # SAFE tool — emit start, execute, emit end
+                # Stdout log mirrors the SSE event so docker logs can be
+                # grepped for tool dispatch history without having to
+                # replay every request against the SSE stream.
+                _tool_params = current_tool_call.get('input') or {}
+                logger.info(
+                    '[tool_start] project=%s session=%s tool=%s params=%s',
+                    self.project_id,
+                    getattr(envelope, 'session_id', '?'),
+                    tool_name,
+                    _tool_params,
+                )
                 yield {
                     'type': 'tool_start',
                     'tool': tool_name,
-                    'params': current_tool_call['input'],
+                    'params': _tool_params,
                     'risk': 'safe',
                 }
                 yield {
@@ -948,6 +959,14 @@ class ClawAgent:
                 self._check_request_active(envelope, f'finishing tool {tool_name}')
 
                 duration_ms = int((time.time() - t0) * 1000)
+                logger.info(
+                    '[tool_end] project=%s session=%s tool=%s duration_ms=%d result_chars=%d',
+                    self.project_id,
+                    getattr(envelope, 'session_id', '?'),
+                    tool_name,
+                    duration_ms,
+                    len(result),
+                )
                 yield {
                     'type': 'tool_end',
                     'tool': tool_name,
@@ -2342,6 +2361,7 @@ class ClawAgent:
         )
         from .tools.intel_tools import retrieve_similar_decisions_tool
         from .tools.crm_tools import search_crm_tool
+        from .tools.enquiry_analyzer import analyze_enquiry_tool
         for tool in [
             # File
             read_file_tool, edit_file_tool, create_file_tool,
@@ -2368,5 +2388,7 @@ class ClawAgent:
             retrieve_similar_decisions_tool,
             # Live CRM hybrid search (projects, clients, lessons, quotes, emails)
             search_crm_tool,
+            # Structured enquiry analyzer — composite retrieval + Sonnet synthesis
+            analyze_enquiry_tool,
         ]:
             self.tools.register(tool)
