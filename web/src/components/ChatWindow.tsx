@@ -304,7 +304,7 @@ export function ChatWindow() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
-  const [projectId, setProjectId] = useState<string>('')
+  const [projectId, setProjectId] = useState<string>('general')
   const [sessionId, setSessionId] = useState<string>('')
   const [sessionCost, setSessionCost] = useState(0)
   const [localCalls, setLocalCalls] = useState(0)
@@ -600,7 +600,6 @@ export function ChatWindow() {
     content: string,
     toolApproval?: Record<string, unknown>,
   ) => {
-    if (!projectId) return
     stopRequestedRef.current = false
     setLoading(true)
     setLiveActivity([{ type: 'status', message: 'Preparing request…' }])
@@ -952,7 +951,7 @@ export function ChatWindow() {
                 onChange={e => setProjectId(e.target.value)}
                 className="focus-ring rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800"
               >
-                {projects.length === 0 && <option value="">No projects</option>}
+                <option value="general">General</option>
                 {projects.map(p => <option key={p.id} value={p.id}>{p.id}</option>)}
               </select>
             </div>
@@ -1125,6 +1124,31 @@ export function ChatWindow() {
           <div ref={messagesEndRef} />
         </div>
 
+        {/* Quick-action buttons — show for fresh sessions */}
+        {!loading && messages.length <= 1 && (
+          <div className="flex flex-shrink-0 flex-wrap items-center gap-2 border-t border-slate-100 bg-white px-5 py-2.5">
+            <span className="label-xs mr-1">Quick start</span>
+            {[
+              { label: 'Amazon Sales', prompt: 'Show me the latest Amazon sales analytics — revenue, top sellers, and velocity trends' },
+              { label: 'Etsy Analytics', prompt: 'Show me Etsy shop performance — active listings, recent sales, and traffic' },
+              { label: 'Analyse Enquiry', prompt: 'Analyse this enquiry: ' },
+              { label: 'Email Triage', prompt: 'Show me the email triage summary — what new enquiries and project replies have come in?' },
+              { label: 'Social Draft', prompt: 'Draft a social media post about ' },
+            ].map(action => (
+              <button
+                key={action.label}
+                onClick={() => {
+                  setInput(action.prompt)
+                  textareaRef.current?.focus()
+                }}
+                className="focus-ring rounded-md border border-slate-200 bg-white px-2.5 py-1 text-2xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Input area */}
         <div className="flex-shrink-0 border-t border-slate-200 bg-white px-5 py-3">
           {pastedImage && (
@@ -1214,8 +1238,8 @@ export function ChatWindow() {
               value={input}
               onChange={handleTextareaChange}
               onKeyDown={handleKeyDown}
-              placeholder={projectId ? (activeSubproject ? `Ask about ${activeSubproject.display_name}…` : `Ask about ${projectId}…`) : 'Select a project first'}
-              disabled={!projectId || loading}
+              placeholder={projectId === 'general' ? 'Ask Cairn anything…' : (activeSubproject ? `Ask about ${activeSubproject.display_name}…` : `Ask about ${projectId}…`)}
+              disabled={loading}
               rows={1}
               className="min-h-[36px] max-h-[120px] flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-slate-900 outline-none placeholder:text-slate-400 disabled:opacity-50"
             />
@@ -1263,7 +1287,7 @@ export function ChatWindow() {
 
             <button
               onClick={handleSubmit}
-              disabled={(!input.trim() && !pastedImage) || loading || !projectId}
+              disabled={(!input.trim() && !pastedImage) || loading}
               className="focus-ring h-9 shrink-0 rounded-md bg-slate-900 px-4 text-xs font-medium text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Send

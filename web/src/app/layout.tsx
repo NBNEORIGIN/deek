@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter, JetBrains_Mono } from 'next/font/google'
 import Script from 'next/script'
+import { NavBar } from '@/components/NavBar'
 import './globals.css'
 
 // ── Typography ─────────────────────────────────────────────────────────
@@ -70,8 +71,9 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrains.variable} h-full`}
       suppressHydrationWarning
     >
-      <body className="h-full font-sans antialiased">
-        {children}
+      <body className="flex h-full flex-col font-sans antialiased">
+        <NavBar />
+        <div className="flex min-h-0 flex-1 flex-col">{children}</div>
         {/* Service worker registration — runs after hydration, strategy
             "afterInteractive" so it never blocks the first paint. */}
         <Script id="cairn-sw-register" strategy="afterInteractive">

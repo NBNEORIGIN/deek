@@ -7,8 +7,8 @@ const nextConfig = {
   // minimal node:20-alpine runner image.
   output: 'standalone',
   env: {
-    CLAW_API_URL: process.env.CLAW_API_URL || 'http://localhost:8765',
-    CLAW_API_KEY: process.env.CLAW_API_KEY || 'claw-dev-key-change-in-production',
+    CLAW_API_URL: process.env.CLAW_API_URL || process.env.CAIRN_API_URL || 'http://localhost:8765',
+    CLAW_API_KEY: process.env.CLAW_API_KEY || process.env.CAIRN_API_KEY || 'claw-dev-key-change-in-production',
   },
 }
 

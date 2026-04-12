@@ -73,8 +73,12 @@ services:
     depends_on:
       - cairn-api
     environment:
+      # Both naming conventions — route handlers read CLAW_*, docker-compose
+      # historically used CAIRN_*. Keep both to avoid silent mismatches.
       CAIRN_API_URL: http://cairn-api:8765
+      CLAW_API_URL: http://cairn-api:8765
       CAIRN_API_KEY: ${CLAW_API_KEY:-claw-dev-key-change-in-production}
+      CLAW_API_KEY: ${CLAW_API_KEY:-claw-dev-key-change-in-production}
       PHLOE_API_URL: http://host.docker.internal:8004
       PHLOE_TENANT_SLUG: nbne
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

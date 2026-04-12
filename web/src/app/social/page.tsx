@@ -9,13 +9,14 @@
  *   - Brief    : Jo gives a short prompt → tool drafts in her voice
  *   - Proofread: Jo writes a finished post → tool refines/adapts per platform
  *
- * Direct calls to http://localhost:8765 — no Next.js proxy
- * (per memory feedback_nextjs_proxy: rewrites break trailing slashes).
+ * Calls proxied through /api/social/[...path] → backend /social/*
+ * so they work in Docker where the browser can't reach cairn-api:8765.
  */
 
 import { useEffect, useState } from 'react'
 
-const API_BASE = 'http://localhost:8765'
+// Proxied through Next.js API route → backend /social/*
+const API_BASE = '/api'
 
 type Platform = 'facebook' | 'instagram' | 'linkedin'
 type Pillar = 'job' | 'what_we_do' | 'team' | 'development'

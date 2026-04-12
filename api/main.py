@@ -462,9 +462,24 @@ def _bm25_available() -> bool:
 
 
 def get_agent(project_id: str) -> ClawAgent:
+    # Normalise empty / missing project IDs to the catch-all general agent
+    if not project_id or project_id == 'general':
+        project_id = 'general'
+
     if project_id not in _agents:
         config_path = _PROJECTS_ROOT / project_id / 'config.json'
         if not config_path.exists():
+            if project_id == 'general':
+                # Standalone chat mode — no codebase, but full tool access
+                # (memory, wiki, CRM, analyzer, amazon intel, etc.)
+                config = {
+                    'name': 'General',
+                    'description': 'Standalone Cairn agent — no project-specific codebase',
+                    'codebase': {},
+                }
+                agent = ClawAgent(project_id='general', config=config)
+                _agents['general'] = agent
+                return agent
             raise HTTPException(
                 status_code=404,
                 detail=(
@@ -503,7 +518,7 @@ class ChatRequest(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
     content: str
-    project_id: str
+    project_id: str = 'general'
     session_id: str
     channel: str = 'web'
     active_file: Optional[str] = None
@@ -520,7 +535,7 @@ class ChatRequest(BaseModel):
 
 
 class StopRequest(BaseModel):
-    project_id: str
+    project_id: str = 'general'
     session_id: str
 
 
@@ -677,9 +692,9 @@ async def chat_stop(
 
 @app.get("/chat/stream")
 async def chat_stream(
-    project: str,
-    session_id: str,
-    message: str,
+    project: str = 'general',
+    session_id: str = '',
+    message: str = '',
     mentions: Optional[str] = None,      # JSON-encoded list[MentionedContext]
     skill_ids: Optional[str] = None,     # JSON-encoded list[str]
     model_override: Optional[str] = None,
