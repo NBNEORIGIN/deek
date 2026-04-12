@@ -1,0 +1,5 @@
+{
+  "name": "General",
+  "description": "Standalone Cairn agent — no project-specific codebase. All tools available (memory, wiki, CRM, analyzer, amazon intel, email search).",
+  "codebase": {}
+}
