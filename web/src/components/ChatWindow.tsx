@@ -952,7 +952,7 @@ export function ChatWindow() {
                 className="focus-ring rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800"
               >
                 <option value="general">General</option>
-                {projects.map(p => <option key={p.id} value={p.id}>{p.id}</option>)}
+                {projects.filter(p => p.id !== 'general').map(p => <option key={p.id} value={p.id}>{p.id}</option>)}
               </select>
             </div>
 
