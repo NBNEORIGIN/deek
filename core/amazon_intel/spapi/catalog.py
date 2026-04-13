@@ -100,7 +100,11 @@ def parse_catalog_item(raw: dict, region: Region) -> dict:
 
     # Classifications
     classifications = raw.get('classifications', [])
-    classification_set = _find_for_marketplace(classifications, marketplace_id) or (classifications[0] if classifications else {})
+    if not isinstance(classifications, list):
+        classifications = []
+    classification_set = _find_for_marketplace(classifications, marketplace_id)
+    if not classification_set and classifications:
+        classification_set = classifications[0] if isinstance(classifications[0], dict) else {}
     item_class = classification_set.get('classificationId', '') if isinstance(classification_set, dict) else ''
     browse_node_list = []
     if browse_nodes:
@@ -351,11 +355,18 @@ def run_enrichment(region: Region = 'EU', limit: int = 100,
 
 def _find_for_marketplace(items: list, marketplace_id: str) -> dict | None:
     """Find the marketplace-specific entry in a list of marketplace-keyed items."""
+    if not items or not isinstance(items, list):
+        return None
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        mids = item.get('marketplaceId', '') or item.get('marketplace_id', '')
+        if mids == marketplace_id:
+            return item
+    # Fallback: return first dict entry if no marketplace match
     for item in items:
         if isinstance(item, dict):
-            mids = item.get('marketplaceId', '') or item.get('marketplace_id', '')
-            if mids == marketplace_id:
-                return item
+            return item
     return None
 
 
