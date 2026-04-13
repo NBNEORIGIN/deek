@@ -19,26 +19,42 @@ ami_sku_mapping — SKU to M-number to ASIN mapping (5,716 rows)
 ami_uploads — Upload log
   id, filename, file_type, marketplace, row_count, skip_count, error_count, status, uploaded_at
 
-ami_flatfile_data — Parsed Amazon flatfile listings (4,142 rows)
+ami_listing_content — Full listing content from Catalog Items API (authoritative)
+  asin, marketplace, region, title, bullet1-5, description,
+  main_image_url, image_urls (JSONB), image_count,
+  aplus_present, brand, brand_registered, parent_asin,
+  variation_type, child_asins (JSONB), product_type,
+  list_price_amount, list_price_currency, content_hash, last_enriched_at
+
+ami_listing_embeddings — Semantic search embeddings (768-dim pgvector)
+  asin, marketplace, field_type ('title','bullets','description','combined'),
+  embedding (vector), text_hash
+
+ami_flatfile_data — Legacy parsed flatfile listings (secondary source)
   upload_id, sku, asin, product_id_type, parent_child, parent_sku, product_type,
   title, brand, bullet1-5, description, generic_keyword1-5,
   main_image_url, image_count, your_price, fulfilment (FBA/MFN),
-  colour, size, material, browse_node_1, browse_node_2,
-  keyword_count, bullet_count
+  colour, size, material, keyword_count, bullet_count
 
-ami_business_report_data — Amazon Business Report performance (678 rows, 15 months Jan 2025-Mar 2026)
-  upload_id, parent_asin, child_asin, title,
-  sessions (total page sessions), session_percentage,
-  page_views, buy_box_percentage,
-  units_ordered, unit_session_percentage (conversion rate),
-  ordered_product_sales (revenue in GBP), total_order_items
+ami_orders — Atomic order lines, revenue source of truth
+  amazon_order_id, merchant_sku, marketplace, region, asin, m_number,
+  order_date, quantity, item_price_amount, item_price_currency,
+  is_b2b, fulfillment_channel, shipment_status
 
-ami_advertising_data — Sponsored Products search term report (6,387 rows, last 30 days)
+ami_daily_traffic — Daily sessions/traffic per ASIN (SP-API DAY granularity)
+  marketplace, asin, date, sessions, page_views, buy_box_percentage,
+  units_ordered, ordered_product_sales, conversion_rate
+
+ami_velocity — Computed velocity and trend alerts per ASIN
+  marketplace, asin, computed_date, velocity_7d, velocity_30d,
+  trend_pct, units_7d, revenue_7d, alert (VELOCITY_DROP/ZERO_DAYS/SURGE)
+
+ami_advertising_data — Sponsored Products search term report
   upload_id, report_type, campaign_name, ad_group_name, asin, sku,
   targeting, match_type, customer_search_term,
   impressions, clicks, spend, sales_7d, orders_7d, acos, roas
 
-ami_listing_snapshots — Joined analytical view per ASIN (4,055 rows)
+ami_listing_snapshots — Joined analytical view per ASIN
   asin, sku, m_number, marketplace, snapshot_date,
   title, bullet_count, image_count, has_description, keyword_count,
   your_price, fulfilment, brand,
@@ -54,28 +70,34 @@ ami_weekly_reports — Generated health reports
   critical_count, attention_count, healthy_count, no_data_count,
   report_json (JSONB), summary (text)
 
+ami_notification_events — Real-time SP-API notifications via SQS
+  notification_type, region, asin, sku, event_time, payload (JSONB), processed
+
 Key relationships:
-  flatfile.sku = sku_mapping.sku
-  sku_mapping.asin = business_report.child_asin = snapshots.asin
+  sku_mapping.asin = listing_content.asin = snapshots.asin = orders.asin
   sku_mapping.m_number links to Manufacture products
+  listing_content is authoritative for content; flatfile_data is legacy fallback
 
 Notes:
-  - business_report covers Jan 2025 to Mar 2026 (cumulative, not per-month)
-  - flatfile open_date is not stored; use ami_flatfile_data.created_at for upload date
-  - All Listings Report data is in ami_sku_mapping (source='all_listings')
-  - For "new products" queries, look at flatfile product_type or use sku_mapping.created_at
+  - For revenue: query ami_orders (never SUM from snapshots — those are aggregated)
+  - For traffic: query ami_daily_traffic (DAY granularity, idempotent)
+  - For content: query ami_listing_content (Catalog API, updated every sync cycle)
   - health_score: 0-4 critical, 4-7 needs attention, 7-10 healthy
-  - diagnosis_codes include: CONTENT_WEAK, KEYWORD_POOR, VISIBILITY_LOW, MARGIN_CRITICAL,
+  - diagnosis_codes: CONTENT_WEAK, KEYWORD_POOR, VISIBILITY_LOW, MARGIN_CRITICAL,
     QUICK_WIN_IMAGES, QUICK_WIN_BULLETS, BUYBOX_LOST, ZERO_SESSIONS, NO_PERFORMANCE_DATA
-  - The brand should be 'OriginDesigned' — WRONG_BRAND issue flags anything else
-  - Parent listings (parent_child='Parent') are containers, not sellable — focus on Child rows
+  - Brand should be 'OriginDesigned' — WRONG_BRAND flags anything else
+  - Parent listings are containers, not sellable — focus on Child ASINs
 """
 
 # Allowed table names — refuse queries touching anything else
 _ALLOWED_TABLES = {
     'ami_sku_mapping', 'ami_uploads', 'ami_flatfile_data',
-    'ami_business_report_data', 'ami_advertising_data',
+    'ami_business_report_legacy', 'ami_advertising_data',
     'ami_listing_snapshots', 'ami_weekly_reports',
+    'ami_listing_content', 'ami_listing_embeddings',
+    'ami_listing_content_history', 'ami_notification_events',
+    'ami_orders', 'ami_daily_traffic', 'ami_velocity',
+    'ami_new_products', 'ami_spapi_sync_log',
 }
 
 # Forbidden SQL keywords (beyond SELECT)

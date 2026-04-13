@@ -300,9 +300,10 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 'type': 'string',
                 'description': (
                     'PostgreSQL SELECT query against ami_* tables. '
-                    'Tables: ami_sku_mapping, ami_flatfile_data, '
-                    'ami_business_report_data, ami_advertising_data, '
-                    'ami_listing_snapshots, ami_weekly_reports. '
+                    'Tables: ami_listing_content, ami_sku_mapping, '
+                    'ami_orders, ami_daily_traffic, ami_velocity, '
+                    'ami_advertising_data, ami_listing_snapshots, '
+                    'ami_listing_embeddings, ami_notification_events. '
                     'See tool description for full schema.'
                 ),
             },

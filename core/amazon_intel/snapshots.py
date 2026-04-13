@@ -1,7 +1,17 @@
 """
-Snapshot assembly — joins flatfile content, business report performance,
+Snapshot assembly — joins listing content, daily traffic performance,
 advertising data, and Manufacture margin data into a single scoreable
 row per ASIN.
+
+Content source priority:
+  1. ami_listing_content (Catalog Items API — authoritative)
+  2. ami_flatfile_data (legacy fallback for ASINs not yet enriched)
+
+Performance source:
+  - ami_daily_traffic (7-day aggregate from SP-API DAY granularity)
+
+Advertising source:
+  - ami_advertising_data (most recent upload, aggregated per ASIN)
 """
 import json
 from datetime import date
@@ -12,25 +22,27 @@ from core.amazon_intel.diagnosis import run_diagnosis
 
 async def build_snapshots(marketplace: str = None) -> dict:
     """
-    Assemble listing_snapshots from the latest uploaded data.
-    1. Start with flatfile data (keyed by SKU/ASIN)
-    2. Left-join business report data on ASIN
+    Assemble listing_snapshots from authoritative data sources.
+    1. Start with ami_listing_content (Catalog API), fallback to ami_flatfile_data
+    2. Left-join ami_daily_traffic on ASIN (7-day aggregate)
     3. Left-join advertising data on ASIN (aggregated)
     4. Left-join Manufacture margin data via M-number
     5. Run health scoring + diagnosis
     6. Upsert into ami_listing_snapshots
     """
     today = date.today()
-    flatfile_rows = _get_latest_flatfile_data()
+    content_rows = _get_listing_content(marketplace)
     biz_data = _get_latest_business_data()
     ad_data = _get_aggregated_ad_data()
 
     # Get all unique M-numbers for Manufacture API lookup
     m_numbers = set()
     sku_to_m = _get_sku_to_m_mapping()
+    asin_to_sku = _get_asin_to_sku_mapping()
 
-    for row in flatfile_rows:
-        m = sku_to_m.get(row['sku'])
+    for row in content_rows:
+        sku = asin_to_sku.get(row['asin'], '')
+        m = sku_to_m.get(sku)
         if m:
             m_numbers.add(m)
 
@@ -41,34 +53,35 @@ async def build_snapshots(marketplace: str = None) -> dict:
             from core.amazon_intel.manufacture_client import batch_product_data
             manufacture_data = await batch_product_data(list(m_numbers))
         except Exception:
-            pass  # proceed without margin data
+            pass
 
     snapshots = []
-    for row in flatfile_rows:
-        asin = row.get('asin')
-        sku = row['sku']
+    for row in content_rows:
+        asin = row['asin']
+        sku = asin_to_sku.get(asin, '')
         m_number = sku_to_m.get(sku)
 
-        # Build snapshot dict
+        bullet_count = sum(1 for i in range(1, 6) if row.get(f'bullet{i}'))
+
         snap = {
-            'asin': asin or sku,  # use SKU as fallback identifier
+            'asin': asin,
             'sku': sku,
             'm_number': m_number,
-            'marketplace': marketplace,
+            'marketplace': row.get('marketplace') or marketplace,
             'snapshot_date': today,
             'title': row.get('title'),
-            'bullet_count': row.get('bullet_count', 0),
+            'bullet_count': bullet_count,
             'image_count': row.get('image_count', 0),
             'has_description': bool(row.get('description')),
             'keyword_count': row.get('keyword_count', 0),
-            'your_price': row.get('your_price'),
+            'your_price': row.get('your_price') or row.get('list_price_amount'),
             'fulfilment': row.get('fulfilment'),
             'brand': row.get('brand'),
             'flatfile_upload_id': row.get('upload_id'),
         }
 
-        # Join business report data
-        biz = biz_data.get(asin) if asin else None
+        # Join daily traffic data (7-day aggregate)
+        biz = biz_data.get(asin)
         if biz:
             snap['sessions_30d'] = biz.get('sessions', 0)
             snap['page_views_30d'] = biz.get('page_views', 0)
@@ -76,10 +89,9 @@ async def build_snapshots(marketplace: str = None) -> dict:
             snap['buy_box_pct'] = biz.get('buy_box_percentage')
             snap['units_ordered_30d'] = biz.get('units_ordered', 0)
             snap['ordered_revenue_30d'] = biz.get('ordered_product_sales')
-            snap['bizrpt_upload_id'] = biz.get('upload_id')
 
-        # Join advertising data (aggregated per ASIN)
-        ad = ad_data.get(asin) if asin else None
+        # Join advertising data
+        ad = ad_data.get(asin)
         if ad:
             snap['ad_spend_30d'] = ad.get('spend')
             snap['ad_impressions'] = ad.get('impressions')
@@ -92,23 +104,21 @@ async def build_snapshots(marketplace: str = None) -> dict:
         if m_number and m_number in manufacture_data:
             mfg = manufacture_data[m_number]
             snap['cost_price'] = mfg.get('cost_price')
-            # Calculate gross margin if we have price and cost
             if snap.get('your_price') and mfg.get('cost_price'):
                 snap['gross_margin'] = round(
                     (snap['your_price'] - mfg['cost_price']) / snap['your_price'], 4
                 )
 
-        # Run scoring and diagnosis
+        # Score and diagnose
         snap['health_score'] = calculate_health_score(snap)
         diagnosis_result = run_diagnosis(snap)
         snap['issues'] = diagnosis_result['issues']
         snap['diagnosis_codes'] = diagnosis_result['diagnosis_codes']
         snap['recommendations'] = diagnosis_result['recommendations']
 
-        # Data sources tracking
-        sources = ['flatfile']
+        sources = ['catalog_api' if row.get('_source') == 'catalog' else 'flatfile']
         if biz:
-            sources.append('business_report')
+            sources.append('daily_traffic')
         if ad:
             sources.append('advertising')
         if m_number and m_number in manufacture_data:
@@ -117,7 +127,7 @@ async def build_snapshots(marketplace: str = None) -> dict:
 
         snapshots.append(snap)
 
-    # Deduplicate by (asin, snapshot_date) — keep row with most data
+    # Deduplicate by (asin, snapshot_date)
     seen = {}
     for snap in snapshots:
         key = (snap['asin'], snap['snapshot_date'])
@@ -125,19 +135,17 @@ async def build_snapshots(marketplace: str = None) -> dict:
             seen[key] = snap
         else:
             existing = seen[key]
-            # Prefer the row with performance data, then more content
             if snap.get('sessions_30d') is not None and existing.get('sessions_30d') is None:
                 seen[key] = snap
             elif snap.get('bullet_count', 0) > existing.get('bullet_count', 0):
                 seen[key] = snap
     snapshots = list(seen.values())
 
-    # Upsert into database
     stored = _store_snapshots(snapshots)
 
     return {
         'snapshot_date': today.isoformat(),
-        'total_listings': len(flatfile_rows),
+        'total_listings': len(content_rows),
         'snapshots_created': stored,
         'with_performance_data': sum(1 for s in snapshots if s.get('sessions_30d') is not None),
         'with_ad_data': sum(1 for s in snapshots if s.get('ad_spend_30d') is not None),
@@ -145,32 +153,72 @@ async def build_snapshots(marketplace: str = None) -> dict:
     }
 
 
-def _get_latest_flatfile_data() -> list[dict]:
-    """Get flatfile data from the most recent upload."""
+def _get_listing_content(marketplace: str = None) -> list[dict]:
+    """
+    Get listing content — prefers ami_listing_content (Catalog API),
+    falls back to ami_flatfile_data for ASINs not yet enriched.
+    """
+    rows = []
+    enriched_asins = set()
+
     with get_conn() as conn:
         with conn.cursor() as cur:
-            # Find the latest flatfile upload(s)
+            # Primary: Catalog API enriched content
+            if marketplace:
+                cur.execute(
+                    """SELECT asin, marketplace, title, bullet1, bullet2, bullet3, bullet4, bullet5,
+                              description, image_count, brand, list_price_amount, product_type
+                       FROM ami_listing_content WHERE marketplace = %s""",
+                    (marketplace,),
+                )
+            else:
+                cur.execute(
+                    """SELECT asin, marketplace, title, bullet1, bullet2, bullet3, bullet4, bullet5,
+                              description, image_count, brand, list_price_amount, product_type
+                       FROM ami_listing_content"""
+                )
+            cols = [d[0] for d in cur.description]
+            for row in cur.fetchall():
+                d = dict(zip(cols, row))
+                d['_source'] = 'catalog'
+                rows.append(d)
+                enriched_asins.add(d['asin'])
+
+            # Fallback: flatfile data for ASINs not yet in ami_listing_content
             cur.execute(
                 """SELECT id FROM ami_uploads
                    WHERE file_type = 'flatfile' AND status = 'complete'
                    ORDER BY uploaded_at DESC LIMIT 10"""
             )
             upload_ids = [row[0] for row in cur.fetchall()]
-            if not upload_ids:
-                return []
+            if upload_ids:
+                placeholders = ','.join(['%s'] * len(upload_ids))
+                cur.execute(
+                    f"""SELECT upload_id, sku, asin, product_type, title, brand,
+                               bullet_count, image_count, description, keyword_count,
+                               your_price, fulfilment
+                        FROM ami_flatfile_data
+                        WHERE upload_id IN ({placeholders})
+                          AND asin IS NOT NULL AND asin != ''""",
+                    upload_ids,
+                )
+                ff_cols = [d[0] for d in cur.description]
+                for row in cur.fetchall():
+                    d = dict(zip(ff_cols, row))
+                    if d['asin'] not in enriched_asins:
+                        d['_source'] = 'flatfile'
+                        rows.append(d)
+                        enriched_asins.add(d['asin'])
 
-            placeholders = ','.join(['%s'] * len(upload_ids))
-            cur.execute(
-                f"""SELECT upload_id, sku, asin, parent_child, parent_sku,
-                           product_type, title, brand, bullet_count, image_count,
-                           description, keyword_count, your_price, fulfilment,
-                           colour, size, material
-                    FROM ami_flatfile_data
-                    WHERE upload_id IN ({placeholders})""",
-                upload_ids,
-            )
-            cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, row)) for row in cur.fetchall()]
+    return rows
+
+
+def _get_asin_to_sku_mapping() -> dict[str, str]:
+    """Load ASIN→SKU mapping (first SKU per ASIN)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT ON (asin) asin, sku FROM ami_sku_mapping WHERE asin IS NOT NULL ORDER BY asin, id")
+            return {row[0]: row[1] for row in cur.fetchall()}
 
 
 def _get_latest_business_data() -> dict[str, dict]:
