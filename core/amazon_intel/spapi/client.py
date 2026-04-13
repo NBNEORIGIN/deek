@@ -117,6 +117,90 @@ def get_access_token(region: Region) -> str:
     return access_token
 
 
+def get_grantless_token(scope: str = 'sellingpartnerapi::notifications') -> str:
+    """
+    Get a grantless access token for operations that don't require seller authorization.
+    Used by: Notifications API (createDestination, getDestinations, etc.)
+    """
+    cache_key = f'grantless:{scope}'
+    cached = _token_cache.get(cache_key)
+    if cached and time.time() < cached[1] - 60:
+        return cached[0]
+
+    client_secret = os.getenv('AMAZON_CLIENT_SECRET', '')
+    if not client_secret:
+        raise ValueError("Missing AMAZON_CLIENT_SECRET in .env")
+
+    with httpx.Client(timeout=15) as client:
+        resp = client.post(
+            'https://api.amazon.com/auth/o2/token',
+            json={
+                'grant_type': 'client_credentials',
+                'client_id': CLIENT_ID,
+                'client_secret': client_secret,
+                'scope': scope,
+            },
+        )
+        resp.raise_for_status()
+
+    data = resp.json()
+    access_token = data['access_token']
+    expires_in = int(data.get('expires_in', 3600))
+    _token_cache[cache_key] = (access_token, time.time() + expires_in)
+    return access_token
+
+
+def _grantless_headers() -> dict[str, str]:
+    return {
+        'x-amz-access-token': get_grantless_token(),
+        'Content-Type': 'application/json',
+    }
+
+
+def spapi_get_grantless(region: Region, path: str, params: dict | None = None) -> dict:
+    """GET with grantless auth — for Notifications API destinations."""
+    host = REGION_HOSTS[region]
+    with httpx.Client(timeout=30) as client:
+        resp = client.get(
+            f'https://{host}{path}',
+            params=params or {},
+            headers=_grantless_headers(),
+        )
+    if resp.status_code == 429:
+        raise RateLimitError(f"Rate limited: GET {path}")
+    resp.raise_for_status()
+    return resp.json()
+
+
+def spapi_post_grantless(region: Region, path: str, body: dict) -> dict:
+    """POST with grantless auth — for Notifications API destinations."""
+    host = REGION_HOSTS[region]
+    with httpx.Client(timeout=30) as client:
+        resp = client.post(
+            f'https://{host}{path}',
+            json=body,
+            headers=_grantless_headers(),
+        )
+    if resp.status_code == 429:
+        raise RateLimitError(f"Rate limited: POST {path}")
+    resp.raise_for_status()
+    return resp.json()
+
+
+def spapi_delete_grantless(region: Region, path: str) -> dict:
+    """DELETE with grantless auth — for Notifications API destinations."""
+    host = REGION_HOSTS[region]
+    with httpx.Client(timeout=30) as client:
+        resp = client.delete(
+            f'https://{host}{path}',
+            headers=_grantless_headers(),
+        )
+    if resp.status_code == 429:
+        raise RateLimitError(f"Rate limited: DELETE {path}")
+    resp.raise_for_status()
+    return resp.json() if resp.content else {}
+
+
 def _headers(region: Region) -> dict[str, str]:
     return {
         'x-amz-access-token': get_access_token(region),

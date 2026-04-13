@@ -21,7 +21,8 @@ from typing import Literal
 import boto3
 from botocore.exceptions import ClientError
 
-from .client import Region, spapi_get, spapi_post, SELLER_IDS
+from .client import (Region, spapi_get, spapi_post, SELLER_IDS,
+                     spapi_get_grantless, spapi_post_grantless, spapi_delete_grantless)
 from core.amazon_intel.db import get_conn
 
 logger = logging.getLogger(__name__)
@@ -91,27 +92,20 @@ def create_destination(region: Region, queue_url: str | None = None,
         },
     }
 
-    result = spapi_post(region, '/notifications/v1/destinations', body)
+    # Destinations use grantless auth
+    result = spapi_post_grantless(region, '/notifications/v1/destinations', body)
     return result.get('payload', result)
 
 
 def list_destinations(region: Region) -> list[dict]:
     """List all notification destinations for this region."""
-    result = spapi_get(region, '/notifications/v1/destinations')
+    result = spapi_get_grantless(region, '/notifications/v1/destinations')
     return result.get('payload', [])
 
 
 def delete_destination(region: Region, destination_id: str) -> dict:
     """Delete a notification destination."""
-    import httpx
-    from .client import REGION_HOSTS, _headers
-    host = REGION_HOSTS[region]
-    with httpx.Client(timeout=30) as client:
-        resp = client.delete(
-            f'https://{host}/notifications/v1/destinations/{destination_id}',
-            headers=_headers(region),
-        )
-        resp.raise_for_status()
+    spapi_delete_grantless(region, f'/notifications/v1/destinations/{destination_id}')
     return {'deleted': destination_id}
 
 
