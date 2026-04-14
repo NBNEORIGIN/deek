@@ -332,6 +332,45 @@ async def spapi_advertising_profiles_db(
     return {'region': region, 'count': len(profiles), 'profiles': profiles}
 
 
+# ── Margin intelligence ───────────────────────────────────────────────────────
+
+@router.get("/margin/quartile-brief/preview")
+async def margin_quartile_brief_preview(
+    marketplace: Optional[str] = Query(None,
+        description="Country code (UK/US/CA/DE/FR/ES/IT/NL/SE/PL/TR/AU/MX). Omit for all."),
+    lookback_days: int = Query(30, ge=1, le=90),
+    target_margin_pct: float = Query(0.06, ge=0.0, le=0.5,
+        description="Account-level target margin as decimal (e.g. 0.06 = 6%)."),
+    non_ad_cost_pct: float = Query(0.82, ge=0.0, le=1.0,
+        description="Assumed fraction of selling price covering non-ad costs (COGS + Amazon fees + target margin)."),
+    format: str = Query("json",
+        description="'json' for structured output, 'text' for email-ready plain text."),
+):
+    """
+    Phase 0 Quartile ACOS brief (preview — does not send anything).
+
+    Aggregates ami_advertising_data + ami_orders over the lookback window and
+    classifies every SKU with meaningful ad spend into REDUCE / INCREASE /
+    PAUSE / HOLD. Uses account-level non-ad-cost assumption; per-SKU
+    refinement lands in Phase 3 (margin engine).
+    """
+    from core.amazon_intel.margin.quartile_brief import (
+        generate_brief, render_brief_text
+    )
+    brief = generate_brief(
+        marketplace=marketplace,
+        lookback_days=lookback_days,
+        target_margin_pct=target_margin_pct,
+        non_ad_cost_pct=non_ad_cost_pct,
+    )
+    if format.lower() == "text":
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(render_brief_text(brief))
+    return brief
+
+
+# ── Advertising profiles seed ─────────────────────────────────────────────────
+
 @router.post("/spapi/advertising/profiles/seed")
 async def spapi_advertising_profiles_seed(
     json_path: Optional[str] = Query(None,
