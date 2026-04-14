@@ -2719,6 +2719,10 @@ app.include_router(social_router)
 from api.routes.cairn_federation import router as cairn_federation_router
 app.include_router(cairn_federation_router)
 
+# Register Counterparty Risk proxy routes (Phase 0)
+from api.routes.counterparty_risk import router as counterparty_risk_router
+app.include_router(counterparty_risk_router)
+
 # Best-effort: ensure social_* tables exist on startup. Failure here must
 # not block API startup — the /social/migrate endpoint can repair if needed.
 try:
