@@ -1497,12 +1497,111 @@ async def write_memory(
     finally:
         store.close()
 
+    # Also embed into pgvector for semantic retrieval
+    semantic_embedded = False
+    try:
+        semantic_embedded = _embed_memory_to_pgvector(
+            project=body.project,
+            session_id=session_id,
+            query=body.query,
+            decision=body.decision,
+            rejected=body.rejected,
+            outcome=body.outcome,
+        )
+    except Exception as exc:
+        logger.warning("Memory semantic embedding failed (non-fatal): %s", exc)
+
     return {
         'id': session_id,
         'project': body.project,
         'outcome': body.outcome,
+        'semantic_embedded': semantic_embedded,
         'written_at': datetime.utcnow().isoformat() + 'Z',
     }
+
+
+def _embed_memory_to_pgvector(
+    project: str,
+    session_id: str,
+    query: str,
+    decision: str,
+    rejected: str,
+    outcome: str,
+) -> bool:
+    """Embed a memory write-back entry into claw_code_chunks for semantic search."""
+    import hashlib
+
+    db_url = os.getenv('DATABASE_URL', '')
+    if not db_url:
+        return False
+
+    # Build the text to embed — same fields that make it useful for retrieval
+    parts = [
+        f"Task: {query}" if query else '',
+        f"Decision: {decision}" if decision else '',
+        f"Rejected: {rejected}" if rejected else '',
+        f"Outcome: {outcome}" if outcome else '',
+    ]
+    content = '\n'.join(p for p in parts if p)
+    if not content.strip():
+        return False
+
+    content_hash = hashlib.sha256(content.encode()).hexdigest()
+    file_path = f'memory/{project}/{session_id}'
+    chunk_name = query[:200] if query else decision[:200]
+
+    try:
+        import psycopg2
+        from pgvector.psycopg2 import register_vector
+        conn = psycopg2.connect(db_url, connect_timeout=5)
+        register_vector(conn)
+    except Exception:
+        return False
+
+    try:
+        from core.wiki.embeddings import get_embed_fn
+        embed_fn = get_embed_fn()
+        if not embed_fn:
+            conn.close()
+            return False
+
+        # Check dedup
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT content_hash FROM claw_code_chunks
+                   WHERE project_id = %s AND file_path = %s AND chunk_type = 'memory'""",
+                (project, file_path),
+            )
+            existing = cur.fetchone()
+            if existing and existing[0] == content_hash:
+                conn.close()
+                return True  # Already embedded
+
+        embedding = embed_fn(content[:6000])
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """DELETE FROM claw_code_chunks
+                   WHERE project_id = %s AND file_path = %s AND chunk_type = 'memory'""",
+                (project, file_path),
+            )
+            cur.execute(
+                """INSERT INTO claw_code_chunks
+                   (project_id, file_path, chunk_content, chunk_type, chunk_name,
+                    content_hash, embedding, indexed_at)
+                   VALUES (%s, %s, %s, 'memory', %s, %s, %s::vector, NOW())""",
+                (project, file_path, content, chunk_name, content_hash, embedding),
+            )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as exc:
+        logger.warning("pgvector memory embed error: %s", exc)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return False
 
 
 @app.get("/memory/entries")
@@ -2018,6 +2117,55 @@ async def wiggum_self_test(_: bool = Depends(verify_api_key)):
         'checks': checks,
         'timestamp': datetime.utcnow().isoformat(),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Image analysis via Claude Vision (used by web-business upload routes)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ImageAnalysisRequest(BaseModel):
+    image_base64: str
+    media_type: str = 'image/png'
+    filename: str = 'image.png'
+    prompt: str = 'Describe this image in detail. If it contains text, transcribe all visible text.'
+
+
+@app.post("/analyze-image")
+async def analyze_image(
+    body: ImageAnalysisRequest,
+    _: bool = Depends(verify_api_key),
+):
+    """Analyze an image using Claude Vision. Returns text description."""
+    import anthropic
+
+    api_key = os.getenv('ANTHROPIC_API_KEY', '')
+    if not api_key:
+        raise HTTPException(status_code=503, detail='ANTHROPIC_API_KEY not set')
+
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model='claude-sonnet-4-20250514',
+        max_tokens=1024,
+        messages=[{
+            'role': 'user',
+            'content': [
+                {
+                    'type': 'image',
+                    'source': {
+                        'type': 'base64',
+                        'media_type': body.media_type,
+                        'data': body.image_base64,
+                    },
+                },
+                {'type': 'text', 'text': body.prompt},
+            ],
+        }],
+    )
+
+    text_block = next((b for b in response.content if b.type == 'text'), None)
+    description = text_block.text if text_block else ''
+
+    return {'description': description, 'filename': body.filename}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

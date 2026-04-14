@@ -2,8 +2,8 @@ import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { cairnFetch } from '@/lib/api'
 import { AUTH_COOKIE_NAME, isTokenExpired } from '@/lib/auth'
+import { extractText } from '@/lib/file-extract'
 
-const TEXT_EXTENSIONS = new Set(['.txt', '.md', '.csv'])
 const MAX_DECISION_CHARS = 5000
 
 function getExtension(filename: string): string {
@@ -37,19 +37,15 @@ export async function POST(req: NextRequest) {
   const filename = file.name
   const ext = getExtension(filename)
 
-  let extractedText: string
-
-  if (TEXT_EXTENSIONS.has(ext)) {
-    extractedText = await file.text()
-  } else {
-    // PDF / DOCX — placeholder until server-side extraction is wired
-    extractedText = `Document received: ${filename}. Text extraction will be processed server-side.`
-  }
+  // Extract text using shared extraction library
+  const bytes = await file.arrayBuffer()
+  const buffer = Buffer.from(bytes)
+  const { text: extractedText, method } = await extractText(buffer, filename, ext)
 
   const decision = extractedText.slice(0, MAX_DECISION_CHARS)
   const preview = extractedText.slice(0, 500)
 
-  // Write to Cairn memory
+  // Write to Cairn memory (now also embeds to pgvector via updated /memory/write)
   try {
     const cairnRes = await cairnFetch('/memory/write', {
       method: 'POST',
@@ -59,7 +55,7 @@ export async function POST(req: NextRequest) {
         query: `Document: ${filename}`,
         decision,
         outcome: 'committed',
-        model: 'upload',
+        model: `upload:${method}`,
         files_changed: [filename],
       }),
     })
@@ -71,5 +67,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Memory service unavailable' }, { status: 503 })
   }
 
-  return NextResponse.json({ success: true, preview })
+  return NextResponse.json({ success: true, preview, method })
 }

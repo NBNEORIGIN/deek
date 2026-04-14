@@ -16,6 +16,22 @@
       "interval_minutes": 15,
       "enabled": true,
       "notes": "Pipeline value, projects by stage, follow-ups, stale leads, recent activity. The /api/cairn/context endpoint returns JSON with a snapshot_md field built from the CRM Prisma layer — see NBNEORIGIN/crm app/api/cairn/context/route.ts. Authed via dual-mode: NextAuth session for in-app panels or Bearer token for this federation call."
+    },
+    {
+      "name": "render",
+      "snapshot_url": "http://127.0.0.1:8025/api/cairn/context",
+      "auth_header_env": "CAIRN_API_KEY",
+      "interval_minutes": 15,
+      "enabled": true,
+      "notes": "Product publishing catalogue — product counts, QA queue, publish metrics by channel, recent activity. See D:/render/app.py cairn_context()."
+    },
+    {
+      "name": "phloe",
+      "snapshot_url": "http://127.0.0.1:8000/api/cairn/context/",
+      "auth_header_env": "CAIRN_API_KEY",
+      "interval_minutes": 15,
+      "enabled": true,
+      "notes": "WaaS booking platform — tenant metrics, booking volume, revenue, active paradigms. Aggregates across all Phloe tenants."
     }
   ]
 }

@@ -26,7 +26,7 @@ const AMI_ROUTES: Record<string, { endpoint: string; source_type: string; label:
   '.tsv': { endpoint: '/ami/upload/all-listings', source_type: 'all_listings', label: 'Amazon All Listings Report' },
 }
 
-const MEMORY_EXTENSIONS = new Set(['.txt', '.md', '.pdf', '.docx'])
+const MEMORY_EXTENSIONS = new Set(['.txt', '.md', '.pdf', '.docx', '.png', '.jpg', '.jpeg', '.webp', '.gif'])
 
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies()
@@ -122,14 +122,10 @@ async function handleMemoryUpload(
   filename: string,
   ext: string,
 ): Promise<NextResponse> {
-  let text = ''
-
-  if (ext === '.txt' || ext === '.md') {
-    text = await file.text()
-  } else {
-    // .pdf/.docx — can't extract server-side in Next.js easily
-    text = `[Document uploaded: ${filename}. Full text extraction requires server-side processing.]`
-  }
+  const { extractText } = await import('@/lib/file-extract')
+  const bytes = await file.arrayBuffer()
+  const buffer = Buffer.from(bytes)
+  const { text, method } = await extractText(buffer, filename, ext)
 
   const preview = text.slice(0, 500)
 
