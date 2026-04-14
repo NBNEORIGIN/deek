@@ -109,8 +109,9 @@ def sync_region(region: Region, force: bool = False) -> dict:
     """
     from .inventory import sync_inventory
     from .analytics import sync_analytics, sync_daily_traffic
-    from .advertising import sync_advertising, ADS_PROFILE_IDS
+    from .advertising import sync_advertising_region, ADS_PROFILE_IDS
     from .orders import sync_orders
+    from core.amazon_intel.db import list_advertising_profiles
 
     results = {}
 
@@ -170,13 +171,15 @@ def sync_region(region: Region, force: bool = False) -> dict:
     else:
         results['orders'] = {'status': 'skipped', 'reason': 'not due'}
 
-    # Advertising (only if profile ID is configured)
-    profile_id = ADS_PROFILE_IDS.get(region, '')
-    if profile_id:
+    # Advertising — iterate all profiles for the region from ami_advertising_profiles.
+    # Falls back to legacy single-profile path via env var if table is empty.
+    has_profiles = bool(list_advertising_profiles(region=region, active_only=True))
+    has_env_fallback = bool(ADS_PROFILE_IDS.get(region, ''))
+    if has_profiles or has_env_fallback:
         if force or _is_due('advertising', region):
             log_id = _log_start('advertising', region)
             try:
-                r = sync_advertising(region, profile_id=profile_id, days=30)
+                r = sync_advertising_region(region, days=30)
                 _log_complete(log_id, r)
                 results['advertising'] = {'status': 'complete', **r}
             except Exception as e:
@@ -186,7 +189,10 @@ def sync_region(region: Region, force: bool = False) -> dict:
         else:
             results['advertising'] = {'status': 'skipped', 'reason': 'not due'}
     else:
-        results['advertising'] = {'status': 'skipped', 'reason': 'no profile id configured'}
+        results['advertising'] = {
+            'status': 'skipped',
+            'reason': 'no profiles configured — seed ami_advertising_profiles or set AMAZON_ADS_PROFILE_ID_* env var',
+        }
 
     # Catalog enrichment — runs after inventory sync, fetches full listing content
     if results.get('inventory', {}).get('status') == 'complete':

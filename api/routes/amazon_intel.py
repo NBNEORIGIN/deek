@@ -312,13 +312,51 @@ async def spapi_sync_advertising(
 @router.get("/spapi/advertising/profiles")
 async def spapi_advertising_profiles(region: str = Query('EU')):
     """
-    Discover advertising profile IDs for a region.
-    Run this once per region, then store the profileId in .env as
-    AMAZON_ADS_PROFILE_ID_{EU/NA/AU}.
+    Discover advertising profile IDs from Amazon for a region (live API call).
+    Superseded by ami_advertising_profiles table — use
+    GET /spapi/advertising/profiles/db for the authoritative stored set.
     """
     from core.amazon_intel.spapi.advertising import get_advertising_profiles
     profiles = get_advertising_profiles(region=region)
     return {'region': region, 'profiles': profiles}
+
+
+@router.get("/spapi/advertising/profiles/db")
+async def spapi_advertising_profiles_db(
+    region: Optional[str] = Query(None),
+    active_only: bool = Query(True),
+):
+    """List advertising profiles currently configured for sync from ami_advertising_profiles."""
+    from core.amazon_intel.db import list_advertising_profiles
+    profiles = list_advertising_profiles(region=region, active_only=active_only)
+    return {'region': region, 'count': len(profiles), 'profiles': profiles}
+
+
+@router.post("/spapi/advertising/profiles/seed")
+async def spapi_advertising_profiles_seed(
+    json_path: Optional[str] = Query(None,
+        description="Path to amazon_ads_profiles.json. Defaults to AMAZON_ADS_PROFILES_JSON env var, then D:/claw/amazon_ads_profiles.json"),
+):
+    """
+    Upsert rows into ami_advertising_profiles from amazon_ads_profiles.json
+    (produced by scripts/ads_auth.py). Safe to re-run — matched on profile_id.
+    """
+    import os as _os
+    from core.amazon_intel.db import seed_advertising_profiles_from_json
+    path = (
+        json_path
+        or _os.getenv('AMAZON_ADS_PROFILES_JSON')
+        or _os.path.join(_os.getenv('CAIRN_ROOT', '/opt/nbne/cairn/deploy'),
+                         'amazon_ads_profiles.json')
+    )
+    if not _os.path.exists(path):
+        # Fallback to Windows dev path
+        if _os.path.exists(r'D:\claw\amazon_ads_profiles.json'):
+            path = r'D:\claw\amazon_ads_profiles.json'
+        else:
+            return {'error': 'amazon_ads_profiles.json not found',
+                    'tried': path, 'hint': 'pass json_path explicitly'}
+    return seed_advertising_profiles_from_json(path)
 
 
 # ── Listings Write API ────────────────────────────────────────────────────────

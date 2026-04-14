@@ -1,4 +1,6 @@
 .env
+.env.*
+amazon_ads_profiles.json
 .venv/
 venv/
 __pycache__/

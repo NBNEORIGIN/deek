@@ -436,6 +436,30 @@ CREATE TABLE IF NOT EXISTS ami_listing_content_history (
 );
 CREATE INDEX IF NOT EXISTS ami_lch_asin_idx ON ami_listing_content_history (asin, marketplace, changed_at DESC);
 
+-- ── Advertising profiles (one row per Ads API profile across all seller accounts) ──
+-- Source of truth for which profiles sync_advertising should iterate.
+-- Seeded from amazon_ads_profiles.json (produced by scripts/ads_auth.py).
+-- Earlier code assumed one profile per region; reality has 15 EU profiles
+-- across NBNE Ltd (Origin Trading / NorthByNorthEast) + Origin Designed, etc.
+CREATE TABLE IF NOT EXISTS ami_advertising_profiles (
+    id                  SERIAL PRIMARY KEY,
+    profile_id          VARCHAR(40)     NOT NULL,
+    region              VARCHAR(5)      NOT NULL,       -- EU | NA | FE
+    country_code        VARCHAR(5)      NOT NULL,       -- UK | DE | FR | US | CA | MX | AU | ...
+    marketplace_string_id VARCHAR(30),                  -- e.g. A1F83G8C2ARO7P (UK)
+    account_id          VARCHAR(40),                    -- Amazon seller accountId
+    account_name        VARCHAR(200),                   -- "NorthByNorthEast" | "Origin Trading" | "Origin Designed" | ...
+    account_type        VARCHAR(30),                    -- "seller" | "vendor" | ...
+    currency_code       VARCHAR(5),
+    is_active           BOOLEAN         NOT NULL DEFAULT TRUE,
+    first_seen_at       TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    last_seen_at        TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT ami_advertising_profiles_unique UNIQUE (profile_id)
+);
+CREATE INDEX IF NOT EXISTS ami_ap_region_idx ON ami_advertising_profiles (region, is_active);
+CREATE INDEX IF NOT EXISTS ami_ap_account_idx ON ami_advertising_profiles (account_id);
+CREATE INDEX IF NOT EXISTS ami_ap_country_idx ON ami_advertising_profiles (country_code, is_active);
+
 -- Notification events from SP-API via SQS
 CREATE TABLE IF NOT EXISTS ami_notification_events (
     id                  SERIAL PRIMARY KEY,
@@ -523,6 +547,11 @@ def migrate_ami_schema():
     migrations = [
         "ALTER TABLE ami_flatfile_data ADD COLUMN listing_created_at TIMESTAMP",
         "ALTER TABLE ami_listing_snapshots ADD COLUMN listing_created_at TIMESTAMP",
+        # Ads rows need to carry which profile (and therefore which seller account)
+        # they came from. Before this column existed, sync_advertising assumed one
+        # profile per region and rows couldn't be disambiguated.
+        "ALTER TABLE ami_advertising_data ADD COLUMN profile_id VARCHAR(40)",
+        "CREATE INDEX IF NOT EXISTS ami_ad_profile_idx ON ami_advertising_data(profile_id)",
     ]
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -532,6 +561,100 @@ def migrate_ami_schema():
                     conn.commit()
                 except Exception:
                     conn.rollback()
+
+
+# ── Advertising profiles helpers ──────────────────────────────────────────────
+
+def seed_advertising_profiles_from_json(json_path: str) -> dict:
+    """Upsert rows into ami_advertising_profiles from amazon_ads_profiles.json.
+
+    The JSON is the sidecar written by scripts/ads_auth.py, shaped as:
+      {
+        "EU": [{profileId, countryCode, currencyCode, accountName,
+                accountType, accountId, marketplaceStringId}, ...],
+        "NA": [...],
+        "FE": [...]
+      }
+
+    Upsert semantics: matched on profile_id. Refreshes metadata + last_seen_at.
+    Does NOT set is_active=False on profiles missing from the JSON — use
+    deactivate_stale_profiles() for that if/when it's needed.
+    """
+    import json as _json
+    with open(json_path, encoding='utf-8') as f:
+        data = _json.load(f)
+
+    inserted = 0
+    updated = 0
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for region, profiles in data.items():
+                for p in profiles or []:
+                    cur.execute(
+                        """INSERT INTO ami_advertising_profiles
+                               (profile_id, region, country_code,
+                                marketplace_string_id, account_id, account_name,
+                                account_type, currency_code, is_active,
+                                first_seen_at, last_seen_at)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE, NOW(), NOW())
+                           ON CONFLICT (profile_id) DO UPDATE SET
+                               region = EXCLUDED.region,
+                               country_code = EXCLUDED.country_code,
+                               marketplace_string_id = EXCLUDED.marketplace_string_id,
+                               account_id = EXCLUDED.account_id,
+                               account_name = EXCLUDED.account_name,
+                               account_type = EXCLUDED.account_type,
+                               currency_code = EXCLUDED.currency_code,
+                               is_active = TRUE,
+                               last_seen_at = NOW()
+                           RETURNING (xmax = 0) AS inserted""",
+                        (str(p.get('profileId') or ''),
+                         region,
+                         (p.get('countryCode') or '')[:5],
+                         (p.get('marketplaceStringId') or None),
+                         (p.get('accountId') or None),
+                         (p.get('accountName') or None),
+                         (p.get('accountType') or None),
+                         (p.get('currencyCode') or None)),
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        inserted += 1
+                    else:
+                        updated += 1
+            conn.commit()
+
+    return {'inserted': inserted, 'updated': updated,
+            'total': inserted + updated, 'source': json_path}
+
+
+def list_advertising_profiles(region: str | None = None,
+                               active_only: bool = True) -> list[dict]:
+    """Return configured advertising profiles, optionally filtered by region."""
+    sql = """SELECT profile_id, region, country_code, marketplace_string_id,
+                    account_id, account_name, account_type, currency_code,
+                    is_active, first_seen_at, last_seen_at
+             FROM ami_advertising_profiles"""
+    where = []
+    params: list = []
+    if region:
+        where.append("region = %s")
+        params.append(region)
+    if active_only:
+        where.append("is_active = TRUE")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY region, country_code, account_name"
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+    for r in rows:
+        for k, v in r.items():
+            if hasattr(v, 'isoformat'):
+                r[k] = v.isoformat()
+    return rows
 
 
 def list_uploads(limit: int = 50) -> list[dict]:

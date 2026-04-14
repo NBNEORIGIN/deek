@@ -208,17 +208,20 @@ def _parse_ads_rows(raw_rows: list[dict]) -> list[dict]:
 def sync_advertising(region: Region = 'EU', profile_id: str | None = None,
                      days: int = 30) -> dict:
     """
-    Pull Sponsored Products search term report, parse, store.
-    profile_id defaults to AMAZON_ADS_PROFILE_ID_{region} from .env.
+    Pull Sponsored Products search term report for ONE profile, parse, store.
+
+    profile_id is required (no env-var fallback for specific profiles —
+    the region-level env var is still honoured via sync_advertising_region
+    for backwards compat during the seed window).
     """
     from core.amazon_intel.db import get_conn, insert_upload, update_upload
 
     pid = profile_id or ADS_PROFILE_IDS.get(region, '')
     if not pid:
         raise ValueError(
-            f"No advertising profile ID for region {region}. "
-            f"Run GET /ami/spapi/advertising/profiles to discover, "
-            f"then set AMAZON_ADS_PROFILE_ID_{region} in .env"
+            f"No advertising profile ID supplied for region {region}. "
+            f"Seed ami_advertising_profiles (POST /ami/spapi/advertising/profiles/seed) "
+            f"or pass profile_id explicitly."
         )
 
     report_id = request_sponsored_products_report(region, pid, days=days)
@@ -229,7 +232,7 @@ def sync_advertising(region: Region = 'EU', profile_id: str | None = None,
     marketplace_map = {'EU': 'UK', 'NA': 'US', 'FE': 'AU'}
     marketplace = marketplace_map.get(region, region)
     ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')
-    filename = f'spapi_ads_sp_{region}_{ts}.json'
+    filename = f'spapi_ads_sp_{region}_{pid}_{ts}.json'
     upload_id = insert_upload(filename, 'advertising', marketplace)
 
     errors: list[str] = []
@@ -244,14 +247,14 @@ def sync_advertising(region: Region = 'EU', profile_id: str | None = None,
                                (upload_id, report_type, campaign_name, ad_group_name,
                                 asin, sku, targeting, match_type,
                                 customer_search_term, impressions, clicks,
-                                spend, sales_7d, orders_7d, acos, roas)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                spend, sales_7d, orders_7d, acos, roas, profile_id)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                         (upload_id, row['report_type'], row['campaign_name'],
                          row['ad_group_name'], row['asin'], row['sku'],
                          row['targeting'], row['match_type'],
                          row['customer_search_term'], row['impressions'],
                          row['clicks'], row['spend'], row['sales_7d'],
-                         row['orders_7d'], row['acos'], row['roas']),
+                         row['orders_7d'], row['acos'], row['roas'], pid),
                     )
                     stored += 1
                 except Exception as e:
@@ -264,9 +267,75 @@ def sync_advertising(region: Region = 'EU', profile_id: str | None = None,
     return {
         'upload_id': upload_id,
         'region': region,
+        'profile_id': pid,
         'source': 'spapi',
         'row_count': stored,
         'error_count': len(errors),
         'errors': errors[:10],
         'status': 'complete',
+    }
+
+
+def sync_advertising_region(region: Region, days: int = 30) -> dict:
+    """
+    Orchestrator: pull ads data for EVERY active profile in a region.
+
+    Looks up profiles in ami_advertising_profiles first. If the table is empty
+    for this region AND a legacy AMAZON_ADS_PROFILE_ID_* env var is set,
+    falls back to the legacy single-profile path (backwards compatible during
+    the seed window).
+    """
+    from core.amazon_intel.db import list_advertising_profiles
+
+    db_profiles = list_advertising_profiles(region=region, active_only=True)
+
+    if not db_profiles:
+        legacy_pid = ADS_PROFILE_IDS.get(region, '')
+        if legacy_pid:
+            result = sync_advertising(region=region, profile_id=legacy_pid, days=days)
+            return {
+                'region': region,
+                'mode': 'legacy_env_var',
+                'profiles_attempted': 1,
+                'profiles_succeeded': 1 if result.get('status') == 'complete' else 0,
+                'total_rows': result.get('row_count', 0),
+                'per_profile': [result],
+            }
+        return {
+            'region': region,
+            'mode': 'skipped',
+            'reason': 'no profiles in ami_advertising_profiles and no AMAZON_ADS_PROFILE_ID_* env var',
+            'profiles_attempted': 0,
+            'profiles_succeeded': 0,
+            'total_rows': 0,
+            'per_profile': [],
+        }
+
+    per_profile: list[dict] = []
+    succeeded = 0
+    total_rows = 0
+    for p in db_profiles:
+        pid = p['profile_id']
+        label = f"{p.get('country_code')}/{p.get('account_name')}"
+        try:
+            result = sync_advertising(region=region, profile_id=pid, days=days)
+            per_profile.append({'profile_id': pid, 'label': label, **result})
+            if result.get('status') == 'complete':
+                succeeded += 1
+            total_rows += result.get('row_count', 0)
+        except Exception as exc:
+            per_profile.append({
+                'profile_id': pid,
+                'label': label,
+                'status': 'error',
+                'error': str(exc)[:500],
+            })
+
+    return {
+        'region': region,
+        'mode': 'multi_profile',
+        'profiles_attempted': len(db_profiles),
+        'profiles_succeeded': succeeded,
+        'total_rows': total_rows,
+        'per_profile': per_profile,
     }
