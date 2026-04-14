@@ -259,9 +259,13 @@ def _tier_available(
     # Tier 3 (Claude Sonnet) and Tier 4 (Claude Opus) both use ModelChoice.API.
     # route_decision() carries the Sonnet-vs-Opus distinction for callers
     # that need the full routing result.
+    # OpenRouter can serve Claude models via OpenAI-compatible API — treat it
+    # as a valid source for Tier 3/4 when ANTHROPIC_API_KEY is absent.
     if tier in (TaskTier.CLAUDE, TaskTier.OPUS):
         if os.getenv('ANTHROPIC_API_KEY', ''):
             return ModelChoice.API
+        if os.getenv('OPENROUTER_API_KEY', ''):
+            return ModelChoice.API  # agent.py will route via openrouter_claude_*
         return None
 
     return None

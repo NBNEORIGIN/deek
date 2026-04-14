@@ -82,6 +82,20 @@ class ClawAgent:
             base_url='https://openrouter.ai/api/v1',
             model=os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-chat'),
         ) if openrouter_key else None
+        # OpenRouter as Claude fallback — used when ANTHROPIC_API_KEY is absent
+        # OpenRouter hosts Claude Sonnet/Opus at ~same quality, slightly higher cost
+        _or_claude_sonnet = os.getenv('OPENROUTER_CLAUDE_SONNET', 'anthropic/claude-sonnet-4-6')
+        _or_claude_opus   = os.getenv('OPENROUTER_CLAUDE_OPUS',   'anthropic/claude-opus-4-6')
+        self.openrouter_claude_sonnet = OpenAIClient(
+            api_key=openrouter_key,
+            base_url='https://openrouter.ai/api/v1',
+            model=_or_claude_sonnet,
+        ) if openrouter_key else None
+        self.openrouter_claude_opus = OpenAIClient(
+            api_key=openrouter_key,
+            base_url='https://openrouter.ai/api/v1',
+            model=_or_claude_opus,
+        ) if openrouter_key else None
         # API_PROVIDER = 'claude' | 'openai' | 'deepseek' | 'auto'
         # auto: use tier routing; fall back on rate-limit errors
         self._api_provider = os.getenv('API_PROVIDER', 'auto').lower()
@@ -2096,13 +2110,17 @@ class ClawAgent:
             return self.deepseek, self.deepseek.model
 
         # Tier 3/4: Claude (Sonnet or Opus)
-        # On rate-limit: fall back to DeepSeek → OpenAI
+        # Prefer direct Anthropic API; fall back to OpenRouter-hosted Claude when
+        # ANTHROPIC_API_KEY is absent (credits exhausted, key rotated, etc.)
         if self._api_provider in ('auto', 'claude'):
-            try:
+            if os.getenv('ANTHROPIC_API_KEY', ''):
                 model = self.claude.opus_model if use_opus else self.claude.model
                 return self.claude, model
-            except Exception:
-                pass  # shouldn't happen at selection time; errors surface in chat()
+            # No Anthropic key — route Sonnet/Opus through OpenRouter
+            if use_opus and self.openrouter_claude_opus:
+                return self.openrouter_claude_opus, self.openrouter_claude_opus.model
+            if self.openrouter_claude_sonnet:
+                return self.openrouter_claude_sonnet, self.openrouter_claude_sonnet.model
 
         # Tier 5 fallbacks (reached when Claude signals rate-limit during chat)
         if self.deepseek:
