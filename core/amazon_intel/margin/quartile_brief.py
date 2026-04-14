@@ -14,6 +14,8 @@ See spec §5 and revised spec v2 §5 for the math and the known caveats.
 """
 from __future__ import annotations
 
+import csv
+import io
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -382,15 +384,23 @@ def generate_brief(
         non_ad_cost_pct=non_ad_cost_pct,
     )
 
-    # Sort: PAUSE first (most urgent), then REDUCE by magnitude, then INCREASE, then HOLD.
+    # Sort: PAUSE first (most urgent), then REDUCE, then INCREASE, then HOLD.
+    # Within each bucket the tiebreaker is the signal Quartile actually cares
+    # about:
+    #   PAUSE    — by wasted spend (bigger waste first)
+    #   REDUCE   — by £ at risk = excess ACOS × spend
+    #   INCREASE — by current spend (scale matters; high-volume first)
+    #   HOLD     — by spend too; surface biggest budgets at the top
     action_priority = {"PAUSE": 0, "REDUCE": 1, "INCREASE": 2, "HOLD": 3}
 
     def sort_key(r: Recommendation) -> tuple:
-        excess = 0.0
-        if r.current_acos is not None and r.recommended_acos:
-            excess = r.current_acos - r.recommended_acos
-        # PAUSE/REDUCE: bigger excess first. INCREASE: bigger spend first. HOLD: alphabetical.
-        return (action_priority.get(r.action, 99), -abs(excess), -r.spend)
+        if r.action == "REDUCE" and r.current_acos is not None and r.recommended_acos:
+            excess = max(0.0, r.current_acos - r.recommended_acos)
+            severity = excess * r.spend
+        else:
+            # PAUSE/INCREASE/HOLD all benefit from a by-spend sort.
+            severity = r.spend
+        return (action_priority.get(r.action, 99), -severity)
 
     recs.sort(key=sort_key)
 
@@ -482,3 +492,50 @@ def render_brief_text(brief: dict) -> str:
         "any change to these."
     )
     return "\n".join(lines)
+
+
+def render_brief_csv(brief: dict) -> str:
+    """CSV rendering for Quartile reps who prefer a spreadsheet to inline text.
+    One row per recommendation, plus a summary row on top to keep context."""
+    buf = io.StringIO()
+    writer = csv.writer(buf, dialect="excel")
+
+    basis = brief.get("basis", {})
+    mkt = brief.get("marketplace", "ALL")
+    generated = brief.get("generated_at", "")
+
+    # Leading metadata rows (# prefix so spreadsheet tools treat them as comments
+    # or at least ignore them gracefully)
+    writer.writerow([f"# Quartile ACOS Brief — {mkt} — generated {generated}"])
+    writer.writerow([
+        f"# Basis: lookback {basis.get('lookback_days', '?')} days,"
+        f" target margin {float(basis.get('target_margin_pct', 0)) * 100:.1f}%,"
+        f" max TACOS {float(basis.get('max_tacos', 0)) * 100:.1f}%"
+    ])
+    writer.writerow([])
+
+    writer.writerow([
+        "action", "sku", "asin", "account_name", "country_code",
+        "spend", "ad_sales", "total_revenue", "units",
+        "current_acos", "recommended_acos", "organic_rate",
+        "reason", "caveats",
+    ])
+
+    for r in brief.get("recommendations", []):
+        writer.writerow([
+            r.get("action", ""),
+            r.get("sku") or "",
+            r.get("asin") or "",
+            r.get("account_name") or "",
+            r.get("country_code") or "",
+            f"{float(r.get('spend', 0)):.2f}",
+            f"{float(r.get('ad_sales', 0)):.2f}",
+            f"{float(r.get('total_revenue', 0)):.2f}",
+            int(r.get("units", 0) or 0),
+            "" if r.get("current_acos") is None else f"{float(r['current_acos']):.4f}",
+            "" if r.get("recommended_acos") is None else f"{float(r['recommended_acos']):.4f}",
+            "" if r.get("organic_rate") is None else f"{float(r['organic_rate']):.4f}",
+            r.get("reason") or "",
+            " | ".join(r.get("caveats") or []),
+        ])
+    return buf.getvalue()

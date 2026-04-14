@@ -344,7 +344,7 @@ async def margin_quartile_brief_preview(
     non_ad_cost_pct: float = Query(0.82, ge=0.0, le=1.0,
         description="Assumed fraction of selling price covering non-ad costs (COGS + Amazon fees + target margin)."),
     format: str = Query("json",
-        description="'json' for structured output, 'text' for email-ready plain text."),
+        description="'json' (default), 'text' (email-ready plain text), or 'csv'."),
 ):
     """
     Phase 0 Quartile ACOS brief (preview — does not send anything).
@@ -355,7 +355,7 @@ async def margin_quartile_brief_preview(
     refinement lands in Phase 3 (margin engine).
     """
     from core.amazon_intel.margin.quartile_brief import (
-        generate_brief, render_brief_text
+        generate_brief, render_brief_text, render_brief_csv,
     )
     brief = generate_brief(
         marketplace=marketplace,
@@ -363,9 +363,13 @@ async def margin_quartile_brief_preview(
         target_margin_pct=target_margin_pct,
         non_ad_cost_pct=non_ad_cost_pct,
     )
-    if format.lower() == "text":
+    fmt = (format or "json").lower()
+    if fmt == "text":
         from fastapi.responses import PlainTextResponse
         return PlainTextResponse(render_brief_text(brief))
+    if fmt == "csv":
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(render_brief_csv(brief), media_type="text/csv")
     return brief
 
 
