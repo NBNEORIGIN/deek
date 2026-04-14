@@ -145,8 +145,14 @@ async def lifespan(app: FastAPI):
 
     # ── Amazon Intelligence schema ─────────────────────────────────────
     try:
-        from core.amazon_intel.db import ensure_schema as ami_ensure_schema
+        from core.amazon_intel.db import (
+            ensure_schema as ami_ensure_schema,
+            migrate_ami_schema as ami_migrate_schema,
+        )
         ami_ensure_schema()
+        # Apply column-level migrations after the base schema. Safe to re-run
+        # (each ALTER is try/except-swallowed in migrate_ami_schema).
+        ami_migrate_schema()
         print('[CLAW startup] Amazon Intel schema ready')
     except Exception as ami_err:
         print(f'[CLAW startup] Amazon Intel schema failed: {ami_err}')
