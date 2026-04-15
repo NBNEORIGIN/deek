@@ -63,20 +63,25 @@ def get_price_points(marketplace: str, lookback_days: int = 30) -> list[tuple[st
     Return [(asin, median_price), ...] for ASINs with orders in the given
     marketplace in the last `lookback_days`. Orders without an ASIN or a
     price are excluded.
+
+    Uses MARKETPLACE_ALIASES so that passing "UK" also matches ami_orders
+    rows tagged "GB" (ami_orders uses ISO country codes).
     """
+    from ..margin.quartile_brief import MARKETPLACE_ALIASES
+    codes = MARKETPLACE_ALIASES.get(marketplace.upper(), [marketplace.upper()])
     sql = """
         SELECT asin, item_price_amount
         FROM ami_orders
-        WHERE marketplace = %s
+        WHERE marketplace = ANY(%s)
           AND asin IS NOT NULL AND asin <> ''
           AND item_price_amount IS NOT NULL
           AND item_price_amount > 0
-          AND order_date >= (CURRENT_DATE - INTERVAL '%s days')
+          AND order_date >= (CURRENT_DATE - (%s || ' days')::interval)
     """
     rows_by_asin: dict[str, list[float]] = {}
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (marketplace, lookback_days))
+            cur.execute(sql, (codes, lookback_days))
             for asin, price in cur.fetchall():
                 rows_by_asin.setdefault(asin, []).append(float(price))
     result: list[tuple[str, Decimal]] = []
