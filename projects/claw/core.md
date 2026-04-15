@@ -157,3 +157,53 @@ Tools registered for this project. Risk levels:
 - Change is on the Hetzner host in `/etc/nginx/sites-enabled/cairn-business.conf`, not in git. Mirrored in repo at `deploy/nginx/cairn-business.conf.snippet` for reviewability and reprovisioning recovery.
 - Rejected: Option 2 (also expose `/ami/*`) — no current cross-module need, principle of minimum public surface. Option 3 (separate `api.` subdomain) — speculative refactor, no current scope justifies.
 - Verified publicly: `POST https://cairn.nbnesigns.co.uk/api/delegation/call` returns 401 without `X-API-Key`, 422 with valid key + empty body. Auth uses `CLAW_API_KEY` (middleware env var) not `CAIRN_API_KEY`.
+
+## D-103 — cairn_delegate dogfooding observation (2026-04-15)
+
+**Outcome category:** B (accepted with tweaks)
+
+**Time from first delegation call to integrated, deployed code:** ~12 minutes end-to-end (Grok call 26s + Sonnet review ~3 min + tweak/integrate/test/commit/deploy ~9 min).
+
+**Cost:**
+- cairn_delegate calls used: 1 (plus one £0.00 ping for connectivity; no retries).
+- Total OpenRouter spend: £0.0022 (1829 in / 4946 out via Grok Fast).
+- Estimated cost if Sonnet had written this directly: roughly £0.05–£0.10. At Opus 1M rates, an equivalent 5000-token generation inside a turn with task context loaded would be in that band. Rough — actual session token accounting is not separable.
+- Net delta: saved roughly £0.05. Not the headline number; the headline is that the tool demonstrably works for a real production change.
+
+**Quality assessment of Grok Fast output:**
+- What was right:
+  - Overall structure, imports, `from __future__ import annotations`, stdlib-only constraint honoured.
+  - Correct default path resolution (mirrors `core/delegation/log.py`).
+  - Table-existence guard via `sqlite_master`.
+  - `COALESCE(SUM(cost_gbp), 0)` on every SUM — handles empty windows.
+  - Ordering on `by_model`, `top_delegating_sessions`, `by_module` exactly matches spec (calls DESC, key ASC).
+  - Parameterised queries throughout.
+  - MTD/YTD boundary math via `datetime.replace(...)` is correct.
+- What was wrong:
+  - **Module-derivation bug.** `session.split('/', 1)` on a slash-less string returns `[session]`, not `[]`. The code then set `module = parts[0]` → the full session string, not `'unknown'` as the spec requires. Caught in review; fixed in the committed version (see `_module_for` helper in `core/delegation/context.py`). This is exactly the class of subtle off-by-one a strict-schema validator can't catch — it's a contract bug, not a shape bug.
+  - Type drift on zero-state numerics: `round(0, 4)` returns `int`, but the spec requires `float` for the spend fields. Fixed by `round(float(...), 4)` coercion throughout.
+- What was missing:
+  - Module-level docstring was placed after imports (string literal, not a real docstring). Cosmetic; moved to module top in the tweaked version.
+  - A dead `if session is None` branch — harmless given `NOT NULL` column, left in spirit but cleaned up.
+
+**Changes Sonnet made (outcome B — tweaks):**
+- Extracted `_module_for(session)` helper with the correct slash-less → `'unknown'` behaviour.
+- Coerced numerics: `int(row[0])`, `round(float(row[1]), 4)` at every aggregate.
+- Moved the module docstring to file top.
+- Removed dead `if session is None` check; the NOT NULL constraint covers it.
+- Slight formatting — split long SQL onto multiple lines consistently.
+
+**Routing rule recommendation for next session's documentation work:**
+- Keep `generate → x-ai/grok-4-fast` as-is.
+- Reasoning: Grok produced 90%-correct code on the first attempt for a non-trivial task with a detailed specification. The bugs were subtle contract violations (slash-less edge case, int-vs-float) that a human reviewer catches quickly and a permissive reviewer (Haiku with a loose schema) would also flag. This is the exact workflow the tool was designed for: cheap tier writes, expensive tier reviews, expensive tier decides. The cost delta (£0.0022 vs ~£0.05 direct) is real but secondary — the main win is demonstrating that a careful delegation prompt produces reviewable output, not garbage.
+
+**Schema design lesson (per session 5 T2 finding):**
+- I deliberately chose NOT to pass an `output_schema` on this call — the deliverable was Python source code, not JSON. Schema validation is appropriate for structured review/extract/classify calls and inappropriate for `generate` calls targeting code. This matches the T2 observation in reverse: strict schemas constrain Haiku's richness on review tasks; absent schemas give Grok room to produce well-structured code that Sonnet can judge on content, not shape.
+- For future `generate` calls, pass `output_schema` only when the output is structured data (JSON config, schema migration stub). For code generation, rely on the caller review step and human-readable conventions embedded in the instructions.
+
+**Honest one-paragraph summary for the wiki article:**
+Grok Fast via `cairn_delegate` produced acceptable production code on the first attempt for a well-specified SQLite aggregation helper. Two small bugs (one contract violation, one type drift) were caught by Sonnet review and fixed in under three minutes. Total delegation cost was £0.0022 against a rough self-execution cost of £0.05. The tool works for the workflow it was designed for: cheap tier writes a narrow-scope function from a detailed spec, Sonnet reviews, Sonnet either accepts, tweaks, or rewrites. The recommendation for future module sessions: use `cairn_delegate` for discrete helper functions, SQL query builders, and schema-stable extraction work where the spec can be written out in <500 words. Do not use it for multi-file refactors, cross-module design decisions, or anything requiring holding invariants across the codebase.
+
+**Open follow-ups (not in scope for this session):**
+- `GET /api/cairn/context` currently only reachable via Hetzner loopback; nginx `cairn-business.conf` would need a second `location` block to expose publicly. Deliberately not added — unclear whether external federation consumers need it, and the minimum-surface principle (per D-102) suggests waiting for a real caller. Flag for the documentation session if it changes the architectural picture.
+- `cairn_delegate` MCP tool wrapper in `mcp/cairn_mcp_server.py` is separately needed — decision to remain HTTPS REST-only is closed per handover D-B/D-D. If that decision is revisited, the wrapper is a one-tool-entry change.
