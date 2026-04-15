@@ -340,6 +340,20 @@ async def spapi_advertising_profiles_db(
 
 # ── Margin intelligence ───────────────────────────────────────────────────────
 
+
+def _parse_m_list(raw: Optional[str]) -> Optional[list[str]]:
+    """Parse a comma-separated M-number list from a query param.
+
+    Returns None for empty/missing input so downstream code can treat "no
+    filter" and "filter with nothing" identically.
+    """
+    if not raw:
+        return None
+    parts = [p.strip() for p in raw.split(",")]
+    parts = [p for p in parts if p]
+    return parts or None
+
+
 @router.get("/margin/quartile-brief/preview")
 async def margin_quartile_brief_preview(
     marketplace: Optional[str] = Query(None,
@@ -355,6 +369,10 @@ async def margin_quartile_brief_preview(
         description="M-number at or above which a SKU is treated as a new product "
                     "and forced to HOLD (with caveat). Gives launches time to "
                     "establish before Quartile acts. Raise this every few months."),
+    exclude_m_numbers: Optional[str] = Query(None,
+        description="Comma-separated M-numbers to exclude entirely (e.g. 'M0634'). "
+                    "Case-insensitive exact match — use for phased-out SKUs that "
+                    "should never appear in the brief."),
 ):
     """
     Phase 0 Quartile ACOS brief (preview — does not send anything).
@@ -373,6 +391,7 @@ async def margin_quartile_brief_preview(
         target_margin_pct=target_margin_pct,
         non_ad_cost_pct=non_ad_cost_pct,
         new_product_m_threshold=new_product_m_threshold,
+        exclude_m_numbers=_parse_m_list(exclude_m_numbers),
     )
     fmt = (format or "json").lower()
     if fmt == "text":
@@ -400,6 +419,8 @@ async def margin_opportunities(
     new_product_m_threshold: Optional[int] = Query(None, ge=1,
         description="M-number at or above which a SKU is excluded from the "
                     "opportunity ranking (new products need establishment time)."),
+    exclude_m_numbers: Optional[str] = Query(None,
+        description="Comma-separated M-numbers to exclude entirely (e.g. 'M0634')."),
 ):
     """
     SKU prioritisation + listing-quality correlation.
@@ -422,6 +443,7 @@ async def margin_opportunities(
         include_listing_analysis=include_listing_analysis,
         analysis_limit=analysis_limit,
         new_product_m_threshold=new_product_m_threshold,
+        exclude_m_numbers=_parse_m_list(exclude_m_numbers),
     )
 
 

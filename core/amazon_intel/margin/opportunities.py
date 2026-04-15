@@ -480,6 +480,7 @@ async def build_opportunities_brief(
     include_listing_analysis: bool = True,
     analysis_limit: int = DEFAULT_ANALYSIS_LIMIT,
     new_product_m_threshold: Optional[int] = None,
+    exclude_m_numbers: Optional[list[str]] = None,
 ) -> dict:
     """End-to-end: generate quartile brief → rank opportunities →
     optionally cross-reference listing content with LLM."""
@@ -491,6 +492,7 @@ async def build_opportunities_brief(
         target_margin_pct=target_margin_pct,
         non_ad_cost_pct=non_ad_cost_pct,
         new_product_m_threshold=new_product_m_threshold,
+        exclude_m_numbers=exclude_m_numbers,
     )
     ranked = rank_opportunities(brief.get("recommendations", []), limit=limit)
 

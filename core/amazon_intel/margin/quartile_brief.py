@@ -466,8 +466,14 @@ def generate_brief(
     target_margin_pct: float = DEFAULT_TARGET_MARGIN_PCT,
     non_ad_cost_pct: float = DEFAULT_NON_AD_COST_PCT,
     new_product_m_threshold: Optional[int] = None,
+    exclude_m_numbers: Optional[list[str]] = None,
 ) -> dict:
-    """End-to-end: query DB, classify, return structured brief."""
+    """End-to-end: query DB, classify, return structured brief.
+
+    exclude_m_numbers: optional list of M-numbers (case-insensitive, exact
+    match after trimming) to drop entirely — e.g. ["M0634"] for products
+    being phased out on a price ladder that should never appear in the brief.
+    """
     ad_rows = fetch_ad_aggregates(marketplace=marketplace, lookback_days=lookback_days)
     order_rows = fetch_orders_aggregates(marketplace=marketplace, lookback_days=lookback_days)
 
@@ -477,6 +483,11 @@ def generate_brief(
         non_ad_cost_pct=non_ad_cost_pct,
         new_product_m_threshold=new_product_m_threshold,
     )
+
+    if exclude_m_numbers:
+        excluded = {m.strip().upper() for m in exclude_m_numbers if m and m.strip()}
+        if excluded:
+            recs = [r for r in recs if (r.m_number or "").strip().upper() not in excluded]
 
     # Sort: PAUSE first (most urgent), then REDUCE, then INCREASE, then HOLD.
     # Within each bucket the tiebreaker is the signal Quartile actually cares
@@ -511,6 +522,9 @@ def generate_brief(
             "non_ad_cost_pct": non_ad_cost_pct,
             "max_tacos": round(max(0.0, 1.0 - non_ad_cost_pct), 4),
             "new_product_m_threshold": new_product_m_threshold,
+            "exclude_m_numbers": sorted(
+                {m.strip().upper() for m in (exclude_m_numbers or []) if m and m.strip()}
+            ) or None,
         },
         "summary": {
             "total_skus_with_spend": len(recs),
