@@ -584,6 +584,7 @@ class MemoryWriteRequest(BaseModel):
     model: str = ''
     files_changed: list[str] = []
     session_id: Optional[str] = None
+    delegation_decision: str = ''  # Rule 1 (CLAUDE.md STEP 2b): one-sentence justification of who did the work and why.
 
 
 class CostLogEntry(BaseModel):
@@ -1499,6 +1500,7 @@ async def write_memory(
             query=body.query,
             rejected=body.rejected,
             model_used=body.model,
+            delegation_decision=body.delegation_decision,
         )
     finally:
         store.close()

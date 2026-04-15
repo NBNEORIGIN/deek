@@ -3201,3 +3201,58 @@ class TestActivityEventsAndSummary:
 
         complete = [e for e in events if e["type"] == "complete"][0]
         assert len(complete["executed_tool_calls"]) == 2
+
+
+# ─── Memory write — delegation_decision field (CLAUDE.md STEP 2b Rule 1) ─────
+
+class TestMemoryWriteDelegationDecision:
+    """The delegation_decision field is required on every write-back per
+    CLAUDE.md cost-discipline Rule 1. Confirm it round-trips via the store."""
+
+    def test_delegation_decision_roundtrips(self, tmp_path):
+        from core.memory.store import MemoryStore
+
+        store = MemoryStore(project_id='testproj', data_dir=str(tmp_path))
+        store.record_decision(
+            session_id='sess_deleg_1',
+            decision_type='committed',
+            description='wired delegation_decision through /memory/write',
+            reasoning='Rule 1 needs a real backing field, not aspirational docs',
+            files_affected=['api/main.py', 'core/memory/store.py'],
+            project='claw',
+            query='add delegation_decision to MemoryWriteRequest',
+            rejected='making it required — would break every existing caller',
+            model_used='claude-opus-4-6',
+            delegation_decision='Self — additive schema change, principal developer judgement',
+        )
+
+        row = store.conn.execute(
+            "SELECT delegation_decision FROM decisions WHERE session_id = ?",
+            ('sess_deleg_1',),
+        ).fetchone()
+        store.close()
+
+        assert row is not None
+        assert row[0] == 'Self — additive schema change, principal developer judgement'
+
+    def test_delegation_decision_defaults_to_empty(self, tmp_path):
+        """Legacy callers that don't pass the field must still succeed —
+        the column defaults to empty string, not NULL, so retrieval is safe."""
+        from core.memory.store import MemoryStore
+
+        store = MemoryStore(project_id='testproj', data_dir=str(tmp_path))
+        store.record_decision(
+            session_id='sess_deleg_2',
+            decision_type='committed',
+            description='legacy caller, no delegation_decision passed',
+            project='claw',
+        )
+
+        row = store.conn.execute(
+            "SELECT delegation_decision FROM decisions WHERE session_id = ?",
+            ('sess_deleg_2',),
+        ).fetchone()
+        store.close()
+
+        assert row is not None
+        assert row[0] == ''

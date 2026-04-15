@@ -189,6 +189,8 @@ class MemoryStore:
             self.conn.execute("ALTER TABLE decisions ADD COLUMN rejected TEXT DEFAULT ''")
         if 'model_used' not in dcols:
             self.conn.execute("ALTER TABLE decisions ADD COLUMN model_used TEXT DEFAULT ''")
+        if 'delegation_decision' not in dcols:
+            self.conn.execute("ALTER TABLE decisions ADD COLUMN delegation_decision TEXT DEFAULT ''")
 
         self.conn.commit()
 
@@ -251,6 +253,7 @@ class MemoryStore:
         query: str = '',
         rejected: str = '',
         model_used: str = '',
+        delegation_decision: str = '',
     ):
         """
         Record an architectural or implementation decision.
@@ -260,12 +263,14 @@ class MemoryStore:
             INSERT INTO decisions
                 (session_id, decision_type, description,
                  reasoning, files_affected,
-                 project, query, rejected, model_used)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 project, query, rejected, model_used,
+                 delegation_decision)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             session_id, decision_type, description, reasoning,
             json.dumps(files_affected or []),
             project, query, rejected, model_used,
+            delegation_decision,
         ))
         self.conn.commit()
 
