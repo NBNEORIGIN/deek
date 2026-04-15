@@ -30,7 +30,11 @@ from core.delegation.router import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/delegation", tags=["Delegation"])
+router = APIRouter(
+    prefix="/api/delegation",
+    tags=["Delegation"],
+    dependencies=[Depends(verify_api_key)],
+)
 
 
 class DelegateRequest(BaseModel):
@@ -59,10 +63,7 @@ class DelegateResponse(BaseModel):
 
 
 @router.post("/call", response_model=DelegateResponse)
-async def delegation_call(
-    body: DelegateRequest,
-    _: bool = Depends(verify_api_key),
-) -> DelegateResponse:
+async def delegation_call(body: DelegateRequest) -> DelegateResponse:
     # Input validation beyond what pydantic catches.
     if body.task_type not in VALID_TASK_TYPES:
         raise HTTPException(
