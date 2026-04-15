@@ -97,16 +97,26 @@ def _build_fees_request(
     asin: str,
     price: Decimal,
 ) -> dict:
+    """
+    One entry in FeesEstimateByIdRequestList for the batch feesEstimate call.
+
+    Per Amazon's spec, each element wraps a FeesEstimateRequest alongside
+    sibling IdType/IdValue — NOT a flat dict. The ASIN is echoed back in
+    FeesEstimateIdentifier.SellerInputIdentifier so callers can match up
+    results to requests.
+    """
     return {
-        'MarketplaceId': marketplace_id,
-        'IsAmazonFulfilled': True,
-        'PriceToEstimateFees': {
-            'ListingPrice': {
-                'CurrencyCode': currency,
-                'Amount': float(price),
+        'FeesEstimateRequest': {
+            'MarketplaceId': marketplace_id,
+            'IsAmazonFulfilled': True,
+            'PriceToEstimateFees': {
+                'ListingPrice': {
+                    'CurrencyCode': currency,
+                    'Amount': float(price),
+                },
             },
+            'Identifier': asin,
         },
-        'Identifier': asin,  # echoed back in FeesEstimateIdentifier
         'IdType': 'ASIN',
         'IdValue': asin,
     }
@@ -233,7 +243,7 @@ def sync_fees_for_marketplace(marketplace: str, lookback_days: int = 30) -> dict
     for i in range(0, len(price_points), BATCH_SIZE):
         batch = price_points[i:i + BATCH_SIZE]
         body = {
-            'FeesEstimateRequestList': [
+            'FeesEstimateByIdRequestList': [
                 _build_fees_request(marketplace_id, currency, asin, price)
                 for asin, price in batch
             ],
