@@ -15,6 +15,15 @@ Full context: read `CAIRN_PROTOCOL.md` after this file.
 
 ---
 
+## Brief intake
+
+Briefs should reference `docs/cairn/LOCAL_CONVENTIONS.md` for local
+path/naming conventions before prescribing new ones. If a brief names a
+path or project key that contradicts the conventions file, treat the
+conventions as authoritative and reconcile before starting work.
+
+---
+
 ## The Procedure
 
 Run this procedure on EVERY prompt without exception.
