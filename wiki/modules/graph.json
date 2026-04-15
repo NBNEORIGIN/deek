@@ -79,6 +79,14 @@
       "status": "planned",
       "article_path": null,
       "category": "brain"
+    },
+    {
+      "id": "beacon",
+      "label": "Beacon",
+      "description": "Google Ads integration and conversion attribution",
+      "status": "production",
+      "article_path": "wiki/modules/beacon.md",
+      "category": "measure"
     }
   ],
   "edges": [
@@ -104,7 +112,11 @@
     {"from": "amazon-intelligence", "to": "cairn", "label": "cairn_delegate (cost discipline)"},
     {"from": "etsy-intelligence", "to": "cairn", "label": "cairn_delegate (cost discipline)"},
     {"from": "crm", "to": "cairn", "label": "cairn_delegate (cost discipline)"},
-    {"from": "render", "to": "cairn", "label": "cairn_delegate (cost discipline)"}
+    {"from": "render", "to": "cairn", "label": "cairn_delegate (cost discipline)"},
+    {"from": "beacon", "to": "cairn", "label": "context endpoint"},
+    {"from": "beacon", "to": "phloe", "label": "tenant + conversion webhooks"},
+    {"from": "beacon", "to": "crm", "label": "conversion webhooks"},
+    {"from": "beacon", "to": "manufacture", "label": "conversion webhooks"}
   ],
   "categories": {
     "make": {"colour": "#4A90D9", "label": "Make"},
