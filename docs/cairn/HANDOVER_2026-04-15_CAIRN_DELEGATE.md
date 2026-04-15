@@ -344,3 +344,99 @@ date):
 restarting CC and verifying `mcp__cairn__*` tools appear.
 
 *Diagnostic pass by Opus 4.6 (1M), 2026-04-15.*
+
+---
+
+# FURTHER CLARIFICATIONS — 2026-04-15 post-diagnostic read
+
+Third Opus 4.6 pass, after reading this handover in full against the
+brief. Two places where the brief is underspecified or contradicts
+Cairn's existing layout. Both surfaced before any cleanup or build work.
+
+## F — D-101 (where the new code lives in claw): prescribe, don't guess
+
+The brief says §0 step 1 is "find the right place in claw for the new
+code … likely `claw/delegation/` as a new package, but check existing
+layout conventions."
+
+Cairn's existing layout is already clear:
+- **MCP server** (`D:\claw\mcp\cairn_mcp_server.py`) — thin JSON-RPC
+  wrapper. No business logic. Forwards to FastAPI via `X-API-Key`.
+- **FastAPI backend** (`D:\claw\api\main.py`) — route handlers that call
+  into business-logic modules under `D:\claw\core\`.
+- **Business logic** lives under `D:\claw\core\<domain>\` (e.g.
+  `core/models/`, `core/memory/`, `core/social/`, `core/wiki/`).
+
+So the new code lands:
+- `D:\claw\core\delegation\openrouter_client.py` — thin httpx wrapper
+  for the OpenRouter chat-completions endpoint. One `call()` function.
+- `D:\claw\core\delegation\router.py` — NEW file, the task_type →
+  model routing rule per D-C. NOT to be confused with
+  `core/models/router.py` (internal Cairn agent orchestration —
+  different concern, see §3 above). Add a one-line comment at the top
+  noting the distinction.
+- `D:\claw\core\delegation\cost.py` — pricing constants, USD→GBP
+  conversion, cost calculation.
+- `D:\claw\core\delegation\log.py` — `cairn_delegation_log` table
+  writer.
+- **Route handler** lives in `api/main.py` as `/delegation/call` POST
+  endpoint, OR in a new `api/routers/delegation.py` if `api/main.py`
+  already uses `APIRouter` splits. **Fresh session must check
+  `api/main.py` structure first** (look for `app.include_router(...)`
+  calls) before deciding. Match the existing convention either way.
+- **MCP tool declaration** goes in the existing
+  `D:\claw\mcp\cairn_mcp_server.py` as one new `types.Tool` entry +
+  one new dispatch branch that POSTs to `/delegation/call` with the
+  `X-API-Key` header. Do NOT create a new MCP server file.
+
+**D-101 is therefore decided:** `core/delegation/` is the home. The
+brief's "claw/delegation/" (top-level package) would break Cairn's
+convention — it puts business logic at the repo root where only
+entry-points and config live. Fresh session should log D-101 with this
+rationale, not re-derive.
+
+## G — Section 3 CLAUDE.md edit needs scope-split, not one-line append
+
+The brief's §3 step 3 says "Update CLAUDE.md Rule 1 (cost discipline)
+to reference `cairn_delegate` as the enforcement mechanism. One-line
+guide on when to use it."
+
+`CLAUDE.md` Rule 1 already exists. Current text (see `D:\claw\CLAUDE.md`
+STEP 2b):
+
+> **Rule 1 — Justify every non-delegation**
+> If you (Claude, the principal developer) decide to perform a task
+> yourself instead of delegating it to DeepSeek or Qwen, you must
+> include a one-sentence justification …
+
+This Rule 1 is about **in-house delegation** — Claude-in-Cairn
+delegating to Qwen/DeepSeek inside Cairn's own agent loop. It is NOT
+about **cross-module delegation** — CC sessions in a module (Beacon,
+Phloe, Render, CRM) calling `cairn_delegate` to push work to
+Grok/Haiku via OpenRouter.
+
+These are two different delegation surfaces with different enforcement
+needs. Appending a line to existing Rule 1 conflates them.
+
+**Fresh-session action for §3 step 3:** add a new sub-rule — either
+"Rule 1b — Cross-module delegation via `cairn_delegate`" under
+STEP 2b, or a new top-level rule — with these elements:
+- When to use: CC sessions in any module doing generation / review /
+  extraction / classification work that doesn't require Sonnet-tier
+  judgement.
+- The two tiers: Grok Fast for generation; Haiku 4.5 for structured
+  review / extraction / classification.
+- Cost ledger pointer: `cairn_delegation_log` table; surfaced via the
+  Cairn context endpoint.
+- Escalation path: if Grok / Haiku output fails acceptance, caller
+  (Sonnet) reviews and re-executes self-tier with the failure as
+  context.
+- Cross-reference to Rule 1: "Rule 1 governs in-house delegation
+  (Qwen/DeepSeek). Rule 1b governs cross-module delegation
+  (`cairn_delegate`)."
+
+Do NOT rewrite Rule 1's existing body. It is correct for its scope.
+The fix is additive scope-split, not amendment.
+
+*Clarifications pass by Opus 4.6 (1M), 2026-04-15. Tree-clean session
+follows.*
