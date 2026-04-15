@@ -234,6 +234,22 @@ async def ingest_health(_: bool = Depends(verify_api_key)) -> dict[str, Any]:
     return out
 
 
+@router.get("/context")
+async def cairn_context(_: bool = Depends(verify_api_key)) -> dict[str, Any]:
+    """Cairn's own context snapshot for cross-module federation.
+
+    Currently surfaces the delegation block (cost-discipline aggregates
+    from ``cairn_delegation_log``). Additional blocks (ingest freshness,
+    wiki coverage) can be added alongside.
+    """
+    from core.delegation.context import build_delegation_context
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "delegation": build_delegation_context(),
+    }
+
+
 @router.get("/modules")
 async def list_modules(_: bool = Depends(verify_api_key)) -> dict[str, Any]:
     """
