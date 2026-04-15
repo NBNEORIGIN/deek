@@ -124,6 +124,48 @@ endpoint surfaces `last_success` / `last_failure` per job.
   run `celery -A config beat` and `celery -A config worker` for one
   15-min cycle to close the acceptance loop.
 
+- **D-008** — Phase 1 scheduler cycle verified against local Redis on
+  2026-04-15. Ran Celery beat + solo worker + Django API (port 8017) for
+  one full 15-minute beat interval with `BEACON_SCHEDULER_ENABLED=true`.
+  Evidence:
+  - Beat fired both 15-min jobs at 15:57:42 UTC
+    (`Scheduler: Sending due task beacon-upload-conversions` +
+    `Scheduler: Sending due task beacon-sync-tenants`).
+  - Worker (`celery@NBNE`, solo pool, Windows) received and completed
+    both in <50 ms each with stub payloads
+    (`{'synced': 0, 'added': 0, 'stub': True}` /
+    `{'uploaded': 0, 'failed': 0, 'skipped': 0, 'stub': True}`).
+  - `beacon_job_run` rows written with `outcome=success` at the same
+    timestamps — five rows total including the earlier eager-mode runs.
+  - `_build_context()` scheduler block returns non-null
+    `last_success` timestamps for `beacon_sync_tenants` and
+    `beacon_upload_conversions`, and the earlier eager timestamp
+    for `beacon_smoke_campaigns`. All `last_failure` values null.
+  - `beacon_smoke_campaigns` did not fire in the 15-min window
+    (cadence 1 h). `CELERY_BEAT_SCHEDULE` entry verified correct
+    in `config/settings/base.py` lines 144–148 (60 * 60 schedule,
+    customer_id pinned to 2028631064, D-005 MCC rule honoured).
+  Substitution note: Docker Desktop was unusable — its Inference
+  manager leaves stale reparse points at
+  `C:\Users\zentu\AppData\Local\Docker\run\dockerInference` and
+  `userAnalyticsOtlpHttp.sock` that admin/reboot are required to
+  clear, and it crashed on every launch. Swapped the Redis broker
+  to `tporadowski/redis` Windows port v5.0.14.1 (portable, at
+  `C:\Users\zentu\tools\redis-win\`) started on 6379 with
+  `--save "" --appendonly no`. Celery does not distinguish; acceptance
+  criterion is satisfied. Recommend `wsl --shutdown` + reboot to
+  unstick Docker before relying on it again; failing that, swap to
+  Memurai for future local broker work.
+  Finding for Phase 2 backlog (not fixed in this session per brief):
+  `cairn_app.views.context_endpoint` is unreachable from HTTP because
+  global `DEFAULT_AUTHENTICATION_CLASSES=[JWTAuthentication]` rejects
+  the custom `Bearer <CAIRN_API_KEY>` header before `_auth_ok` runs
+  (401 `token_not_valid`). View needs `authentication_classes = []`
+  (or an explicit `CairnKeyAuthentication` class) alongside
+  `@permission_classes([AllowAny])`. Context itself builds correctly
+  when invoked in-process — the bug is DRF layering only.
+  Phase 1 acceptance criterion now met. Phase 1 is COMPLETE.
+
 ## Out of scope for Phase 1
 
 - Attribution model (Phase 2)
