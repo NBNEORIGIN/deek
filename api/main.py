@@ -230,6 +230,61 @@ async def lifespan(app: FastAPI):
             pass
 
 
+def _resolve_codebase_path(project_id: str, config: dict) -> str | None:
+    """Resolve the codebase path for indexing, handling git repos.
+
+    If ``codebase_path`` exists on the local filesystem, use it directly.
+    If it doesn't exist but ``git_repo`` is configured, clone or pull the
+    repo into ``/app/data/repos/{project_id}/`` and return that path.
+    Returns None if neither approach yields a usable path.
+    """
+    import subprocess
+
+    codebase_path = config.get('codebase_path', '')
+    if codebase_path and Path(codebase_path).exists():
+        return codebase_path
+
+    git_repo = config.get('git_repo', '')
+    if not git_repo:
+        return None
+
+    data_dir = os.getenv('DEEK_DATA_DIR') or os.getenv('CLAW_DATA_DIR', './data')
+    checkout_dir = Path(data_dir) / 'repos' / project_id
+    git_branch = config.get('git_branch', 'master')
+
+    # Inject PAT for private repos if available
+    pat = os.getenv('GITHUB_PAT', '').strip()
+    clone_url = git_repo
+    if pat and 'github.com' in clone_url and '@' not in clone_url:
+        clone_url = clone_url.replace('https://github.com', f'https://{pat}@github.com')
+
+    try:
+        if (checkout_dir / '.git').exists():
+            # Pull latest changes
+            subprocess.run(
+                ['git', 'pull', '--ff-only'],
+                cwd=str(checkout_dir),
+                capture_output=True, timeout=120,
+            )
+            print(f'[Deek] git pull complete: {project_id}')
+        else:
+            # Clone fresh
+            checkout_dir.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ['git', 'clone', '--depth=1', '-b', git_branch,
+                 clone_url, str(checkout_dir)],
+                capture_output=True, timeout=300,
+            )
+            print(f'[Deek] git clone complete: {project_id}')
+        return str(checkout_dir)
+    except Exception as e:
+        print(f'[Deek] git checkout failed for {project_id}: {e}')
+        # Fall back to existing checkout if available
+        if checkout_dir.exists():
+            return str(checkout_dir)
+        return None
+
+
 async def _auto_index_if_empty(
     project_id: str,
     agent: DeekAgent,
@@ -237,8 +292,8 @@ async def _auto_index_if_empty(
 ) -> None:
     """
     Check chunk count for this project.
-    If zero: run full index automatically.
-    If > 0: skip — FileWatcher handles incremental.
+    If zero: run full index automatically (cloning via git if needed).
+    If > 0: skip — scheduled reindex handles updates.
     Never blocks startup — logs and continues on error.
     """
     try:
@@ -251,9 +306,12 @@ async def _auto_index_if_empty(
             print(f'[Deek] Project {project_id} already indexed — {count} files')
             return
 
-        codebase_path = agent.config.get('codebase_path', '')
-        if not codebase_path or not Path(codebase_path).exists():
-            print(f'[Deek] Project {project_id} — no codebase_path, skipping auto-index')
+        codebase_path = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: _resolve_codebase_path(project_id, agent.config),
+        )
+        if not codebase_path:
+            print(f'[Deek] Project {project_id} — no codebase_path or git_repo, skipping auto-index')
             return
 
         print(f'[Deek] Project {project_id} has no indexed content — auto-indexing now...')
@@ -281,19 +339,26 @@ async def _auto_index_if_empty(
 
 async def _scheduled_reindex_loop(
     agents: dict[str, DeekAgent],
-    interval_hours: int = 24,
+    interval_hours: int = 6,
 ) -> None:
     """
     Background task started in lifespan handler.
     Runs full reindex for all projects every interval_hours.
+    For projects with git_repo configured, pulls latest code first.
     """
     while True:
         await asyncio.sleep(interval_hours * 3600)
         for project_id, agent in agents.items():
             try:
-                codebase_path = agent.config.get('codebase_path', '')
                 db_url = os.getenv('DATABASE_URL', '')
-                if not codebase_path or not db_url:
+                if not db_url:
+                    continue
+
+                codebase_path = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: _resolve_codebase_path(project_id, agent.config),
+                )
+                if not codebase_path:
                     continue
 
                 print(f'[Deek] Scheduled reindex: {project_id}')
@@ -1195,11 +1260,11 @@ async def index_project(
         raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
 
     config = json.loads(config_path.read_text())
-    codebase_path = config.get('codebase_path')
+    codebase_path = _resolve_codebase_path(project_id, config)
     if not codebase_path:
         raise HTTPException(
             status_code=400,
-            detail="config.json must include 'codebase_path'",
+            detail="config.json must include 'codebase_path' or 'git_repo'",
         )
 
     db_url = os.getenv('DATABASE_URL', '')

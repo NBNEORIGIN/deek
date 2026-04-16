@@ -1,7 +1,7 @@
 {
   "name": "Amazon Listing Intelligence",
   "description": "Amazon listing health pipeline — SP-API automated sync 4x daily, health scoring, diagnosis codes. Feeds live data to Deek chat via context endpoint. Includes listings write API.",
-  "codebase_path": "D:/deek",
+  "codebase_path": "/app",
   "project_type": "coding",
   "force_model": "api",
 

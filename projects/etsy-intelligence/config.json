@@ -1,7 +1,7 @@
 {
   "name": "Etsy Intelligence",
   "description": "Etsy listing health pipeline — orders, listings, stats via Etsy API v3. Mirrors Amazon Intelligence pattern.",
-  "codebase_path": "D:/deek",
+  "codebase_path": "/app",
   "project_type": "coding",
   "force_model": "api",
 

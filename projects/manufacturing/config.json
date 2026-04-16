@@ -1,7 +1,9 @@
 {
   "name": "Origin Designed Manufacturing",
   "description": "Manufacturing management system replacing the Excel/Google Sheets workbook",
-  "codebase_path": "D:/workflow/workflow-app",
+  "codebase_path": "/app/data/repos/manufacturing",
+  "git_repo": "https://github.com/NBNEORIGIN/manufacture.git",
+  "git_branch": "master",
   "project_type": "coding",
   "force_model": "api",
 

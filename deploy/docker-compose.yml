@@ -61,10 +61,12 @@ services:
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-deepseek/deepseek-chat}
       DEEK_MAX_TIER: ${DEEK_MAX_TIER:-4}
       CRM_BASE_URL: ${CRM_BASE_URL:-https://crm.nbnesigns.co.uk}
+      GITHUB_PAT: ${GITHUB_PAT:-}
     ports:
       - "127.0.0.1:8765:8765"
     volumes:
       - cairn-data:/app/data
+      - /opt/nbne/deek/wiki:/app/wiki
 
   deek-web:
     image: deek-web:latest

@@ -2,9 +2,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System deps for psycopg2
+# System deps for psycopg2 + git for repo-based indexing
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libpq-dev && \
+    gcc libpq-dev git && \
     rm -rf /var/lib/apt/lists/*
 
 # Install only what the API needs (no GPU deps)

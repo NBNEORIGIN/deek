@@ -1,7 +1,7 @@
 {
   "name": "DEEK Studio",
   "description": "Local AI video and media generation workspace",
-  "codebase_path": "D:/deek/projects/studio",
+  "codebase_path": "/app/projects/studio",
   "project_type": "creative",
 
   "permissions": [

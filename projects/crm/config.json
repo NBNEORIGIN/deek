@@ -1,7 +1,9 @@
 {
   "name": "NBNE CRM",
   "description": "B2B project management and business development platform — Deek-connected with semantic search, email integration, pipeline analytics",
-  "codebase_path": "D:/crm",
+  "codebase_path": "/app/data/repos/crm",
+  "git_repo": "https://github.com/NBNEORIGIN/crm.git",
+  "git_branch": "master",
   "project_type": "coding",
   "force_model": "api",
 

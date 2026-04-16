@@ -1,7 +1,9 @@
 {
   "name": "Ledger",
   "description": "NBNE Financial Management System - operational financial intelligence replacing the management accounts workbook",
-  "codebase_path": "D:/ledger",
+  "codebase_path": "/app/data/repos/ledger",
+  "git_repo": "https://github.com/NBNEORIGIN/ledger.git",
+  "git_branch": "master",
   "project_type": "coding",
   "force_model": "api",
 
