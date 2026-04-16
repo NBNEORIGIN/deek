@@ -4,7 +4,7 @@
   "description": "Disaster recovery, automated backup, and rapid re-provisioning system for all Phloe tenants",
   "codebase_path": "/app/data/repos/ark",
   "git_repo": "https://github.com/NBNEORIGIN/nbne_business.git",
-  "git_branch": "master",
+  "git_branch": "main",
   "project_type": "infrastructure",
   "force_model": "api",
 

@@ -3,7 +3,7 @@
   "description": "Personalised memorial product order processing and SVG print sheet generation",
   "codebase_path": "/app/data/repos/memorials",
   "git_repo": "https://github.com/NBNEORIGIN/memorials.git",
-  "git_branch": "master",
+  "git_branch": "main",
   "github": "https://github.com/NBNEORIGIN/memorials",
   "project_type": "coding",
   "force_model": "api",

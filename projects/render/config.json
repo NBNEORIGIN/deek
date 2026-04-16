@@ -3,7 +3,7 @@
   "description": "AI-driven sign product design and marketplace publishing system for NBNE",
   "codebase_path": "/app/data/repos/render",
   "git_repo": "https://github.com/NBNEORIGIN/render.git",
-  "git_branch": "master",
+  "git_branch": "main",
   "github": "https://github.com/NBNEORIGIN/render",
   "project_type": "coding",
   "force_model": "api",

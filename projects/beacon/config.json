@@ -3,7 +3,7 @@
   "description": "Google Ads conversion upload + campaign observability for NBNE tenants. Django backend, OAuth-connected Google Ads accounts, Celery-scheduled syncs.",
   "codebase_path": "/app/data/repos/beacon",
   "git_repo": "https://github.com/NBNEORIGIN/beacon.git",
-  "git_branch": "master",
+  "git_branch": "main",
   "project_type": "coding",
   "force_model": "api",
 

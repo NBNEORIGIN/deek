@@ -3,7 +3,7 @@
   "description": "Multi-tenant Workflow as a Service platform for UK SMBs",
   "codebase_path": "/app/data/repos/phloe",
   "git_repo": "https://github.com/NBNEORIGIN/nbne_platform.git",
-  "git_branch": "master",
+  "git_branch": "main",
   "project_type": "coding",
   "force_model": "api",
 
