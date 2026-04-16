@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: cairn
       POSTGRES_PASSWORD: ${DB_PASSWORD:-cairn_secure_pw}
     volumes:
-      - deek-pgdata:/var/lib/postgresql/data
+      - cairn-pgdata:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5433:5432"
     healthcheck:
@@ -47,6 +47,7 @@ services:
       DEEK_FORCE_API: "true"
       DEEK_EMBED_PROVIDER: "openai"
       DEEK_API_KEY: ${DEEK_API_KEY:-deek-dev-key-change-in-production}
+      CAIRN_API_KEY: ${DEEK_API_KEY:-deek-dev-key-change-in-production}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       DEEPSEEK_ENABLED: "true"
@@ -59,15 +60,11 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-deepseek/deepseek-chat}
       DEEK_MAX_TIER: ${DEEK_MAX_TIER:-4}
-      # Shared token for server-to-server calls into the CRM's
-      # /api/cairn/* routes. Both deek-api and the CRM container
-      # read this same env var — rotate on both sides together.
-      DEEK_API_KEY: ${DEEK_API_KEY:-}
       CRM_BASE_URL: ${CRM_BASE_URL:-https://crm.nbnesigns.co.uk}
     ports:
       - "127.0.0.1:8765:8765"
     volumes:
-      - deek-data:/app/data
+      - cairn-data:/app/data
 
   deek-web:
     image: deek-web:latest
@@ -80,7 +77,6 @@ services:
       DEEK_API_URL: http://deek-api:8765
       CLAW_API_URL: http://deek-api:8765
       DEEK_API_KEY: ${DEEK_API_KEY:-deek-dev-key-change-in-production}
-      DEEK_API_KEY: ${DEEK_API_KEY:-deek-dev-key-change-in-production}
       PHLOE_API_URL: http://host.docker.internal:8004
       PHLOE_TENANT_SLUG: nbne
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -90,5 +86,5 @@ services:
       - "127.0.0.1:3020:3000"
 
 volumes:
-  deek-pgdata:
-  deek-data:
+  cairn-pgdata:
+  cairn-data:
