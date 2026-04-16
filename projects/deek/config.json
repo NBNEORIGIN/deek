@@ -1,7 +1,7 @@
 {
   "name": "DEEK",
   "description": "DEEK itself — the sovereign AI coding agent platform",
-  "codebase_path": "D:/deek",
+  "codebase_path": "/app",
   "project_type": "coding",
   "force_model": "api",
 
