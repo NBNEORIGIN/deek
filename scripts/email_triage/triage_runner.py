@@ -125,6 +125,26 @@ def fetch_candidate_emails(
     return out[:max_emails]
 
 
+def _daily_triage_count(db_url: str) -> int:
+    """Count triage rows written today (UTC) to enforce daily budget."""
+    conn = psycopg2.connect(db_url, connect_timeout=8)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM cairn_intel.email_triage "
+                "WHERE triaged_at >= CURRENT_DATE"
+            )
+            return cur.fetchone()[0]
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
+# Default daily budget — overridable via CAIRN_TRIAGE_DAILY_LIMIT env var.
+DEFAULT_DAILY_LIMIT = 50
+
+
 def run_triage(
     *,
     commit: bool,
@@ -157,6 +177,24 @@ def run_triage(
         intel_ensure_schema(db_url=db_url)
     except Exception as exc:
         log.warning('triage_runner: ensure_schema raised: %s', exc)
+
+    # ── Daily budget cap ──────────────────────────────────────────────
+    daily_limit = int(os.getenv('CAIRN_TRIAGE_DAILY_LIMIT', str(DEFAULT_DAILY_LIMIT)))
+    today_count = _daily_triage_count(db_url)
+    if today_count >= daily_limit:
+        log.info(
+            'triage_runner: daily budget exhausted (%d/%d) — skipping run',
+            today_count, daily_limit,
+        )
+        return 0
+    # Reduce max_emails to stay within budget for the rest of the day
+    remaining = daily_limit - today_count
+    if max_emails > remaining:
+        log.info(
+            'triage_runner: capping max_emails from %d to %d (daily budget)',
+            max_emails, remaining,
+        )
+        max_emails = remaining
 
     emails = fetch_candidate_emails(db_url, window_days, max_emails, mailboxes=mailboxes)
     log.info(
@@ -320,8 +358,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument('--commit', action='store_true',
                         help='Write triage rows to DB (default: dry-run)')
-    parser.add_argument('--max-emails', type=int, default=20,
-                        help='Max emails to process per run (default 20)')
+    parser.add_argument('--max-emails', type=int, default=5,
+                        help='Max emails to process per run (default 5)')
     parser.add_argument('--window-days', type=int, default=7,
                         help='Process emails received in the last N days (default 7)')
     parser.add_argument('--mailbox', action='append', default=None,
