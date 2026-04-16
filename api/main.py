@@ -261,26 +261,32 @@ def _resolve_codebase_path(project_id: str, config: dict) -> str | None:
     try:
         if (checkout_dir / '.git').exists():
             # Pull latest changes
-            subprocess.run(
+            result = subprocess.run(
                 ['git', 'pull', '--ff-only'],
                 cwd=str(checkout_dir),
-                capture_output=True, timeout=120,
+                capture_output=True, text=True, timeout=120,
             )
-            print(f'[Deek] git pull complete: {project_id}')
+            if result.returncode != 0:
+                print(f'[Deek] git pull failed for {project_id}: {result.stderr.strip()}')
+            else:
+                print(f'[Deek] git pull complete: {project_id}')
         else:
             # Clone fresh
             checkout_dir.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run(
+            result = subprocess.run(
                 ['git', 'clone', '--depth=1', '-b', git_branch,
                  clone_url, str(checkout_dir)],
-                capture_output=True, timeout=300,
+                capture_output=True, text=True, timeout=300,
             )
+            if result.returncode != 0:
+                print(f'[Deek] git clone failed for {project_id}: {result.stderr.strip()}')
+                return None
             print(f'[Deek] git clone complete: {project_id}')
-        return str(checkout_dir)
+        return str(checkout_dir) if (checkout_dir / '.git').exists() else None
     except Exception as e:
         print(f'[Deek] git checkout failed for {project_id}: {e}')
         # Fall back to existing checkout if available
-        if checkout_dir.exists():
+        if (checkout_dir / '.git').exists():
             return str(checkout_dir)
         return None
 
