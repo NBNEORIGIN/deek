@@ -56,6 +56,8 @@ class SkuMargin:
     gross_margin_pct: Optional[Decimal]        # gross_profit / net_revenue
     net_profit: Optional[Decimal]              # gross_profit - ad_spend
     net_margin_pct: Optional[Decimal]          # net_profit / net_revenue
+    blank_raw: Optional[str]
+    blank_normalized: Optional[str]
     fee_source: str                            # 'snapshot' | 'missing'
     cost_source: str                           # 'override' | 'blank' | 'fallback' | 'missing'
     is_composite: bool
@@ -212,11 +214,15 @@ async def compute_margins(
             cogs_total = (cogs_per_unit * units).quantize(TWO_PLACES)
             cost_source = cost_row.get('source') or 'missing'
             is_composite = bool(cost_row.get('is_composite'))
+            blank_raw = cost_row.get('blank_raw')
+            blank_normalized = cost_row.get('blank_normalized')
         else:
             cogs_per_unit = None
             cogs_total = None
             cost_source = 'missing'
             is_composite = False
+            blank_raw = None
+            blank_normalized = None
 
         ad_spend = ads.get(asin, ZERO)
 
@@ -247,6 +253,8 @@ async def compute_margins(
             gross_margin_pct=gross_margin_pct,
             net_profit=net_profit,
             net_margin_pct=net_margin_pct,
+            blank_raw=blank_raw,
+            blank_normalized=blank_normalized,
             fee_source=fee_source,
             cost_source=cost_source,
             is_composite=is_composite,
