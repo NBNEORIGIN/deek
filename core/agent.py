@@ -141,7 +141,11 @@ class DeekAgent:
             "5. NEVER access module databases directly via psql or SQL commands. "
             "Use search_crm() for CRM data, query_amazon_intel() for Amazon data, "
             "and get_module_snapshot() for other modules. Module databases are "
-            "on private networks and must only be accessed via their API tools.\n\n"
+            "on private networks and must only be accessed via their API tools.\n"
+            "6. When the user asks about clients, projects, quotes, enquiries, or "
+            "anything in 'the CRM', ALWAYS use search_crm() — NOT search_code(). "
+            "search_code greps source files; search_crm queries LIVE business data "
+            "(clients, projects, emails, quotes, materials, lessons learned).\n\n"
         )
 
     def _request_deadline_seconds(self) -> float:
