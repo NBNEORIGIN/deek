@@ -137,7 +137,11 @@ class DeekAgent:
             "read_file takes 'file_path', edit_file takes 'file_path'/'old_str'/"
             "'new_str'. Do not use 'path', 'parameters', or other variants.\n"
             "4. If you are unsure what a file contains, call read_file to find "
-            "out — do not guess.\n\n"
+            "out — do not guess.\n"
+            "5. NEVER access module databases directly via psql or SQL commands. "
+            "Use search_crm() for CRM data, query_amazon_intel() for Amazon data, "
+            "and get_module_snapshot() for other modules. Module databases are "
+            "on private networks and must only be accessed via their API tools.\n\n"
         )
 
     def _request_deadline_seconds(self) -> float:
