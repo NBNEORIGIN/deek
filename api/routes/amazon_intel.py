@@ -951,6 +951,90 @@ async def margin_buckets(
     }
 
 
+# ── Orders export (cross-module read for Ledger daily sync) ─────────────────
+
+# Marketplace ID → country code mapping
+_MKT_TO_COUNTRY = {
+    'ATVPDKIKX0DER': 'US', 'A2EUQ1WTGCTBG2': 'CA', 'A1AM78C64UM0Y8': 'MX',
+    'A1F83G8C2ARO7P': 'GB', 'A1PA6795UKMFR9': 'DE', 'A13V1IB3VIYZZH': 'FR',
+    'APJ6JRA9NG5V4': 'IT', 'A1RKKUPIHCS9HS': 'ES', 'A1805IZSGTT6HS': 'NL',
+    'A2NODRKZP88ZB9': 'SE', 'A1C3SOZRARQ6R3': 'PL', 'A33AVAJ2PDY3EV': 'TR',
+    'A39IBJ37TRP1C6': 'AU', 'A21TJRUUN4KGV': 'IN', 'A1VC38T7YXB528': 'JP',
+}
+
+
+@router.get("/orders/export")
+async def export_orders(
+    days: int = Query(7, ge=1, le=365, description="Look back N days from today."),
+    marketplace: str = Query("all", description="Country code (GB, US, DE, etc.) or 'all'."),
+):
+    """
+    Transaction-level Amazon order lines for the last `days` days.
+
+    Returns a flat JSON array of order lines from `ami_orders`. Built for
+    Ledger's daily polling framework. Auth via router-level X-API-Key.
+    """
+    from core.amazon_intel.db import get_conn
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                # Build marketplace filter
+                mkt_filter = ""
+                params: list = [days]
+                if marketplace.lower() != "all":
+                    mkt_filter = "AND marketplace = %s"
+                    params.append(marketplace.upper())
+
+                sql = f"""
+                    SELECT amazon_order_id,
+                           marketplace,
+                           asin,
+                           merchant_sku,
+                           m_number,
+                           order_date,
+                           quantity,
+                           item_price_amount,
+                           item_price_currency,
+                           item_tax_amount,
+                           shipping_price_amount
+                    FROM ami_orders
+                    WHERE order_date >= CURRENT_DATE - make_interval(days => %s)
+                      AND COALESCE(shipment_status, '') NOT IN ('Cancelled')
+                      {mkt_filter}
+                    ORDER BY order_date DESC
+                """
+                cur.execute(sql, params)
+                cols = [d[0] for d in cur.description]
+                raw_rows = cur.fetchall()
+    except Exception as e:
+        import logging
+        logging.getLogger("deek.ami").exception("Failed to query ami_orders export")
+        raise HTTPException(500, f"ami_orders export query failed: {e}")
+
+    rows = []
+    for row in raw_rows:
+        r = dict(zip(cols, row))
+        # Map marketplace ID to country code if needed
+        mkt = r.get("marketplace", "")
+        if len(mkt) > 5:  # looks like a marketplace ID, not a country code
+            r["marketplace"] = _MKT_TO_COUNTRY.get(mkt, mkt)
+        # Rename for Ledger contract
+        r["order_id"] = r.pop("amazon_order_id")
+        r["sku"] = r.pop("merchant_sku")
+        # Normalise date
+        if r.get("order_date") and hasattr(r["order_date"], "isoformat"):
+            r["order_date"] = r["order_date"].isoformat()
+        # Coerce Decimals to float
+        for k in ("item_price_amount", "item_tax_amount",
+                  "shipping_price_amount"):
+            if r.get(k) is not None:
+                r[k] = float(r[k])
+        rows.append(r)
+
+    return rows
+
+
 @router.post("/notifications/processor")
 async def run_notification_processor_endpoint(
     background_tasks: BackgroundTasks,

@@ -32,6 +32,14 @@
       "interval_minutes": 15,
       "enabled": true,
       "notes": "WaaS booking platform — tenant metrics, booking volume, revenue, active paradigms. Aggregates across all Phloe tenants."
+    },
+    {
+      "name": "ledger",
+      "snapshot_url": "https://ledger.nbnesigns.co.uk/api/deek/context",
+      "auth_header_env": "DEEK_API_KEY",
+      "interval_minutes": 60,
+      "enabled": true,
+      "notes": "Financial system — cash position, revenue MTD/YTD, expenditure, P&L, document stats. See D:/ledger/backend/app/api/deek_context.py"
     }
   ]
 }

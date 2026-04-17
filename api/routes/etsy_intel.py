@@ -334,6 +334,77 @@ async def list_sales(
     }
 
 
+# ── Transaction-level sales (cross-module read for Ledger daily sync) ────────
+
+@router.get("/sales/transactions")
+async def list_sales_transactions(
+    days: int = Query(
+        7, ge=1, le=365,
+        description="Rolling window size in days. Default 7.",
+    ),
+    shop_id: Optional[int] = Query(
+        None,
+        description="Filter to a single shop. Default: all configured shops.",
+    ),
+    _: bool = Depends(verify_api_key),
+):
+    """
+    Transaction-level Etsy sales for the last `days` days.
+
+    Returns one row per transaction with individual pricing. Built for
+    Ledger's daily polling framework which needs per-transaction prices,
+    quantities, shipping, and discounts to compute revenue.
+
+    Requires `X-API-Key` header matching `DEEK_API_KEY`.
+    """
+    from core.etsy_intel.db import get_conn
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                sql = """
+                    SELECT es.transaction_id,
+                           es.listing_id,
+                           el.sku,
+                           el.title,
+                           es.price,
+                           es.quantity,
+                           es.shipping,
+                           es.discount,
+                           es.total,
+                           es.sale_date,
+                           COALESCE(el.currency, 'GBP') AS currency
+                    FROM etsy_sales es
+                    JOIN etsy_listings el ON el.listing_id = es.listing_id
+                    WHERE es.sale_date >= NOW() - make_interval(days => %s)
+                      AND (%s IS NULL OR es.shop_id = %s)
+                      AND COALESCE(es.status, 'paid') NOT IN ('cancelled', 'refunded')
+                    ORDER BY es.sale_date DESC
+                """
+                cur.execute(sql, (days, shop_id, shop_id))
+                cols = [d[0] for d in cur.description]
+                raw_rows = cur.fetchall()
+    except Exception as e:
+        log.exception("Failed to query etsy_sales transactions")
+        raise HTTPException(500, f"etsy_sales transaction query failed: {e}")
+
+    rows = []
+    for row in raw_rows:
+        r = dict(zip(cols, row))
+        # Normalise dates to ISO date strings
+        if r.get("sale_date") and hasattr(r["sale_date"], "date"):
+            r["sale_date"] = r["sale_date"].date().isoformat()
+        elif r.get("sale_date") and hasattr(r["sale_date"], "isoformat"):
+            r["sale_date"] = r["sale_date"].isoformat()
+        # Coerce Decimals to float for JSON
+        for k in ("price", "shipping", "discount", "total"):
+            if r.get(k) is not None:
+                r[k] = float(r[k])
+        rows.append(r)
+
+    return rows
+
+
 # ── Underperformers ──────────────────────────────────────────────────────────
 
 @router.get("/underperformers")
