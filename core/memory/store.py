@@ -238,7 +238,7 @@ class MemoryStore:
         """, (session_id, limit)).fetchall()
 
         return [
-            {'role': r[0], 'content': r[1], 'timestamp': r[2]}
+            {'role': r[0], 'content': r[1] or '(empty)', 'timestamp': r[2]}
             for r in reversed(rows)
         ]
 

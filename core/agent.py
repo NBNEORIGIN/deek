@@ -307,10 +307,15 @@ class DeekAgent:
         if active_skill_ids:
             self.memory.set_session_skills(session_id, active_skill_ids)
 
+        user_content = envelope.content or (
+            '[tool approved]' if envelope.tool_approval and envelope.tool_approval.get('approved')
+            else '[tool rejected]' if envelope.tool_approval
+            else '(empty)'
+        )
         self.memory.add_message(
             session_id=session_id,
             role='user',
-            content=envelope.content,
+            content=user_content,
             channel=envelope.channel.value,
             subproject_id=effective_subproject_id,
         )
