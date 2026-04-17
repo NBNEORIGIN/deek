@@ -24,7 +24,13 @@
     "web_fetch",
     "web_check_status",
     "web_search",
-    "query_amazon_intel"
+    "query_amazon_intel",
+    "search_crm",
+    "get_module_snapshot",
+    "retrieve_similar_decisions",
+    "search_wiki",
+    "search_emails",
+    "analyze_enquiry"
   ],
 
   "model_preferences": {

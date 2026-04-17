@@ -24,6 +24,7 @@ DEFAULT_PERMISSIONS = {
         'edit_file', 'create_file', 'run_migration',
         'query_amazon_intel',
         'get_module_snapshot', 'search_emails', 'search_wiki',
+        'retrieve_similar_decisions', 'search_crm', 'analyze_enquiry',
     ],
     'readonly': [
         'read_file', 'search_code', 'query_amazon_intel',
