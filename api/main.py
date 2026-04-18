@@ -2808,6 +2808,10 @@ from api.routes.deek_federation import router as federation_router
 app.include_router(federation_router, prefix="/api/deek")
 app.include_router(federation_router, prefix="/api/cairn")  # legacy alias
 
+# Register ambient + voice Phase 0 routes (morning-number, ambient, tasks)
+from api.routes.ambient import router as ambient_router
+app.include_router(ambient_router, prefix="/api/deek")
+
 # Register Counterparty Risk proxy routes (Phase 0)
 from api.routes.counterparty_risk import router as counterparty_risk_router
 app.include_router(counterparty_risk_router)
