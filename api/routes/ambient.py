@@ -916,7 +916,7 @@ async def chat_voice(
     # ── Route to main chat agent with voice-specific overrides ────────
     try:
         from api.main import get_agent
-        from core.delegation.context import MessageEnvelope, Channel
+        from core.channels.envelope import MessageEnvelope, Channel
     except Exception as exc:
         _log_voice_telemetry(
             session_id=session_id, user_label=body.user, location=body.location,
