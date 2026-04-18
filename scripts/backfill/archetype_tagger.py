@@ -16,10 +16,15 @@ catching.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
+import httpx
+
 from .llm_budget import LLMBudget
+
+log = logging.getLogger(__name__)
 
 
 # Canonical taxonomy — do NOT extend without a re-tagging pass.
@@ -87,6 +92,23 @@ class ArchetypeTagger:
 
     def summarise(self, raw_text: str, source_label: str = 'unknown') -> str:
         self.budget.consume_bulk(source=source_label)
+
+        # ── Primary path: local Ollama ────────────────────────────────
+        local_model = os.getenv('OLLAMA_CLASSIFIER_MODEL', '').strip()
+        if local_model:
+            local_out = _call_ollama(
+                system=_SUMMARISE_SYSTEM,
+                user=raw_text[:8000],
+                model=local_model,
+                max_tokens=300,
+                use_json_format=False,
+            )
+            if local_out is not None:
+                return local_out.strip()
+
+        # ── Fallback: Haiku ───────────────────────────────────────────
+        if not self.api_key:
+            return ''
         client = self._get_client()
         resp = client.messages.create(
             model=self.model,
@@ -100,6 +122,25 @@ class ArchetypeTagger:
 
     def tag(self, summary: str, source_label: str = 'unknown') -> list[str]:
         self.budget.consume_bulk(source=source_label)
+
+        # ── Primary path: local Ollama (no json format — output is a bare array) ─
+        local_model = os.getenv('OLLAMA_CLASSIFIER_MODEL', '').strip()
+        if local_model:
+            local_out = _call_ollama(
+                system=_TAG_SYSTEM,
+                user=summary[:4000],
+                model=local_model,
+                max_tokens=120,
+                use_json_format=False,
+            )
+            if local_out is not None:
+                tags = _parse_tags(local_out.strip())
+                if tags:
+                    return tags
+
+        # ── Fallback: Haiku ───────────────────────────────────────────
+        if not self.api_key:
+            return []
         client = self._get_client()
         resp = client.messages.create(
             model=self.model,
@@ -123,6 +164,45 @@ def _first_text(response: Any) -> str:
     except Exception:
         pass
     return ''
+
+
+def _call_ollama(
+    system: str, user: str, model: str, max_tokens: int,
+    use_json_format: bool = True,
+) -> str | None:
+    """Call local Ollama /api/chat. Returns text content or None on failure.
+
+    ``use_json_format`` enables Ollama's format=json for callers that
+    expect structured JSON. Summarisation should leave this False so
+    the model can emit prose; tag parsing is forgiving so False is fine
+    there too (the bare array is easily parsed).
+    """
+    base_url = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
+    payload: dict[str, Any] = {
+        'model': model,
+        'messages': [
+            {'role': 'system', 'content': system},
+            {'role': 'user', 'content': user},
+        ],
+        'stream': False,
+        'options': {'num_predict': max_tokens, 'temperature': 0.0},
+    }
+    if use_json_format:
+        payload['format'] = 'json'
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            r = client.post(f'{base_url}/api/chat', json=payload)
+    except Exception as exc:
+        log.warning('archetype_tagger: Ollama call failed (%s) — falling back',
+                    type(exc).__name__)
+        return None
+    if r.status_code != 200:
+        log.warning('archetype_tagger: Ollama HTTP %d — falling back', r.status_code)
+        return None
+    try:
+        return (r.json().get('message', {}) or {}).get('content', '')
+    except Exception:
+        return None
 
 
 def _parse_tags(raw: str) -> list[str]:

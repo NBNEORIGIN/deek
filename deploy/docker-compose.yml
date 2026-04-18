@@ -52,6 +52,7 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder:7b}
       OLLAMA_MODEL_PREFERRED: ${OLLAMA_MODEL_PREFERRED:-qwen2.5-coder:7b}
+      OLLAMA_CLASSIFIER_MODEL: ${OLLAMA_CLASSIFIER_MODEL:-}
       OLLAMA_VRAM_GB: ${OLLAMA_VRAM_GB:-8}
       DEEK_HARDWARE_PROFILE: ${DEEK_HARDWARE_PROFILE:-cloud_cpu}
       DEEK_API_KEY: ${DEEK_API_KEY:-deek-dev-key-change-in-production}

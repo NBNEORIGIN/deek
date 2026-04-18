@@ -178,10 +178,11 @@ class CrmReflectionSource:
                 'crm_reflection: DEEK_API_KEY is not set — cannot '
                 'authenticate against the CRM /api/cairn/search endpoint'
             )
-        if not self.anthropic_key:
+        local_model = os.getenv('OLLAMA_CLASSIFIER_MODEL', '').strip()
+        if not self.anthropic_key and not local_model:
             raise RuntimeError(
-                'crm_reflection: ANTHROPIC_API_KEY is not set — cannot '
-                'run Haiku reflection'
+                'crm_reflection: neither ANTHROPIC_API_KEY nor '
+                'OLLAMA_CLASSIFIER_MODEL is set — cannot run reflection'
             )
 
         # Preload the existing hashes so we can dedupe cheaply before
@@ -304,6 +305,17 @@ class CrmReflectionSource:
             'Return strict JSON only.'
         )
 
+        # ── Primary path: local Ollama with format=json ───────────────
+        local_model = os.getenv('OLLAMA_CLASSIFIER_MODEL', '').strip()
+        if local_model:
+            local_result = _reflect_via_ollama(system, user_prompt, local_model)
+            if local_result is not None:
+                return local_result
+            # Fall through to Haiku on local failure
+
+        # ── Fallback: Haiku API ───────────────────────────────────────
+        if not self.anthropic_key:
+            return None
         client = self._get_anthropic_client()
         resp = client.messages.create(
             model=self.haiku_model,
@@ -453,6 +465,54 @@ def _first_text(resp: Any) -> str:
     except Exception:
         pass
     return ''
+
+
+def _reflect_via_ollama(system: str, user_prompt: str, model: str) -> dict | None:
+    """Run a reflection call against local Ollama with format=json.
+
+    Returns the parsed dict on success, or None on any failure
+    (network, timeout, bad JSON) so the caller can fall back to Haiku.
+    Never raises.
+    """
+    base_url = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            r = client.post(
+                f'{base_url}/api/chat',
+                json={
+                    'model': model,
+                    'messages': [
+                        {'role': 'system', 'content': system},
+                        {'role': 'user', 'content': user_prompt},
+                    ],
+                    'stream': False,
+                    'format': 'json',
+                    'options': {'num_predict': 500, 'temperature': 0.0},
+                },
+            )
+    except Exception as exc:
+        log.warning('crm_reflection: Ollama call failed (%s) — falling back to Haiku',
+                    type(exc).__name__)
+        return None
+
+    if r.status_code != 200:
+        log.warning('crm_reflection: Ollama HTTP %d — falling back to Haiku',
+                    r.status_code)
+        return None
+
+    try:
+        raw = (r.json().get('message', {}) or {}).get('content', '').strip()
+    except Exception:
+        return None
+    if not raw:
+        return None
+
+    parsed = _parse_json_output(raw)
+    if not parsed:
+        log.warning('crm_reflection: local JSON parse failed — falling back to Haiku')
+        return None
+    log.info('crm_reflection: local model=%s produced reflection', model)
+    return parsed
 
 
 def _parse_json_output(raw: str) -> dict | None:
