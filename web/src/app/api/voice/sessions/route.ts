@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     params.set('session_id', sessionId)
   } else {
     // Fallback to cross-device continuity by user
-    params.set('user', session.email || session.id)
+    params.set('user', session.email)
   }
 
   try {

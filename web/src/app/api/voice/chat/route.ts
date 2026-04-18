@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   // Attach the user label so the backend can log it in telemetry.
   const payload = {
     ...body,
-    user: session.email || session.id,
+    user: session.email,
   }
 
   try {
