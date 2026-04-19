@@ -1,0 +1,162 @@
+# DEEK_MODULES.yaml
+#
+# Machine-readable registry of NBNE modules Deek knows about.
+# Loaded at process boot by core/identity/assembler.py.
+# Reachability probed on startup + every 60s by core/identity/probe.py.
+#
+# Changes require a PR. Never mutated at runtime.
+#
+# Schema (per entry):
+#   name:             string   — machine slug, lowercase, no spaces
+#   display_name:     string   — human-readable
+#   purpose:          string   — one paragraph: what it is and why it exists
+#   when_to_consult:  string   — one paragraph: triggers that should make
+#                                Deek reach for this module
+#   base_url:         string   — e.g. "https://ami.nbnesigns.co.uk"
+#   health_endpoint:  string   — relative path, e.g. "/api/health"
+#   context_endpoint: string   — relative path, e.g. "/api/ami/context"
+#   auth_mode:        enum     — "service_token" | "session" | "none"
+#   owner:            string   — human owner, usually "Toby"
+#   status:           enum     — "production" | "development" | "spec" | "greenfield"
+#
+# If a URL or endpoint is not yet confirmed, leave a TODO(toby) marker
+# and set status: "spec" or "greenfield". Do not guess URLs.
+
+modules:
+  - name: deek
+    display_name: Deek
+    purpose: >
+      NBNE's sovereign AI brain. Memory layer, retrieval engine, model
+      router and intelligence substrate sitting above every other module.
+      This module is itself — the one answering the question — listed
+      here so every system prompt can declare it explicitly.
+    when_to_consult: >
+      For any question about retrieval, memory, cross-module synthesis,
+      cost routing, or Deek's own state. Effectively always reachable by
+      definition of the request being in flight.
+    base_url: https://deek.nbnesigns.co.uk
+    health_endpoint: /api/deek/health
+    context_endpoint: /api/deek/context
+    auth_mode: none
+    owner: Toby
+    status: production
+
+  - name: phloe
+    display_name: Phloe
+    purpose: >
+      Multi-tenant booking / scheduling SaaS. Powers several live client
+      sites (DemNurse, Ganbarukai, Amble Pin Cushion, NAPCO Pizza, and
+      the Proving Ground demo estate). Each tenant gets its own
+      database and container.
+    when_to_consult: >
+      For booking flows, customer-facing calendars, appointment state,
+      workshop/event capacity, or any tenant-scoped question about a
+      Phloe client site. Not the right module for commercial signage
+      enquiries — those live in the CRM.
+    base_url: https://phloe.co.uk
+    health_endpoint: /api/health
+    context_endpoint: /api/deek/context  # TODO(toby) confirm per-tenant or aggregated
+    auth_mode: service_token
+    owner: Toby
+    status: production
+
+  - name: manufacture
+    display_name: Manufacture
+    purpose: >
+      Production planning, make-list, machine state and restock
+      planning for NBNE's D2C and Amazon fulfilment. Includes the
+      Newsvendor FBA restock planner that Origin Designed relies on.
+    when_to_consult: >
+      For questions about what is being made today, machine utilisation,
+      restock recommendations, FBA shipment plans, or production
+      capacity. Works hand-in-hand with AMI for the Amazon side.
+    base_url: https://manufacture.nbnesigns.co.uk
+    health_endpoint: /api/health
+    context_endpoint: /api/deek/context
+    auth_mode: service_token
+    owner: Toby
+    status: production
+
+  - name: ledger
+    display_name: Ledger
+    purpose: >
+      NBNE's financial module — cash position, revenue, margin, and
+      business-level numbers. FastAPI + Next.js, port 8001/3001 in dev.
+    when_to_consult: >
+      For cash, revenue, margin, profit, P&L, forecast, or any numerical
+      answer about business finances. Never answer these from memory —
+      always fetch live.
+    base_url: https://ledger.nbnesigns.co.uk
+    health_endpoint: /api/health
+    context_endpoint: /api/deek/context
+    auth_mode: service_token
+    owner: Toby
+    status: production
+
+  - name: ami
+    display_name: Amazon Intelligence
+    purpose: >
+      SP-API integration across all five Amazon marketplaces (UK, US,
+      CA, AU, DE). Orders, traffic, velocity, catalogue enrichment,
+      search-term reports, SQS notifications. Revenue Truth Engine for
+      Origin Designed.
+    when_to_consult: >
+      For any question about Amazon sales, velocity, impressions,
+      conversion, search-term performance, FBA inventory, or specific
+      ASINs. The canonical source of truth for everything Amazon.
+    base_url: https://ami.nbnesigns.co.uk
+    health_endpoint: /api/health
+    context_endpoint: /api/deek/context
+    auth_mode: service_token
+    owner: Toby
+    status: production
+
+  - name: crm
+    display_name: CRM
+    purpose: >
+      NBNE's commercial-signage CRM — clients, projects, quotes,
+      enquiries, email threads, materials, lessons learned. The
+      authoritative record of B2B signage work. Accessed by Deek via
+      the search_crm tool rather than direct DB.
+    when_to_consult: >
+      For any question mentioning a client name, a project, a quote,
+      an enquiry, a lesson learned, or "the CRM". Not for Amazon
+      (that's AMI) or booking (that's Phloe).
+    base_url: https://crm.nbnesigns.co.uk
+    health_endpoint: /api/health
+    context_endpoint: /api/deek/context
+    auth_mode: service_token
+    owner: Toby
+    status: production
+
+  - name: render
+    display_name: Render
+    purpose: >
+      Etsy + eBay marketplace integration. Handles listings, orders,
+      variation grouping, and marketplace-specific quirks (eBay's
+      X-EBAY-C-MARKETPLACE-ID header, Etsy OAuth).
+    when_to_consult: >
+      For any question about Etsy or eBay orders, listings, or
+      performance. Not for Amazon — that's AMI.
+    base_url: https://render.nbnesigns.co.uk
+    health_endpoint: /api/health
+    context_endpoint: /api/deek/context
+    auth_mode: service_token
+    owner: Toby
+    status: production
+
+  - name: beacon
+    display_name: Beacon
+    purpose: >
+      Google Ads + attribution. Campaigns, ad groups, keywords, ads,
+      daily Celery analysis, GCLID capture across the web estate.
+      Phase 4 wires Phloe bookings into Beacon conversions.
+    when_to_consult: >
+      For any question about Google Ads, paid search, impressions,
+      CTR, conversion rate, GCLID attribution, or campaign performance.
+    base_url: https://beacon.nbnesigns.co.uk
+    health_endpoint: /api/health
+    context_endpoint: /api/deek/context
+    auth_mode: service_token
+    owner: Toby
+    status: production

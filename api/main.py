@@ -230,6 +230,37 @@ async def lifespan(app: FastAPI):
     except Exception as sched_err:
         print(f'[DEEK startup] Briefing scheduler disabled: {sched_err}')
 
+    # ── Identity layer: probe modules + emit startup log block ──────────
+    try:
+        from core.identity import assembler as _identity_assembler
+        from core.identity import probe as _identity_probe
+        await _identity_probe.start(run_initial=True)
+
+        _modules = _identity_assembler.get_modules()
+        _reachable = _identity_probe.get_reachable_modules()
+        _errors = _identity_probe.get_errors()
+        _names = [m.name for m in _modules]
+        _unreach_lines = []
+        for m in _modules:
+            if m.name not in _reachable:
+                _unreach_lines.append(
+                    f"{m.name} ({_errors.get(m.name, 'unknown')} at {m.health_url})"
+                )
+        print('================ DEEK IDENTITY LOADED ================')
+        print('identity: DEEK_IDENTITY.md + DEEK_MODULES.yaml')
+        print(f'hash:     {_identity_assembler.get_identity_hash()}')
+        print(f'modules declared: {len(_modules)} — {", ".join(_names)}')
+        print(f'modules reachable: {len(_reachable)}/{len(_modules)}')
+        if _unreach_lines:
+            print(f'unreachable: {"; ".join(_unreach_lines)}')
+        else:
+            print('unreachable: (none)')
+        print('=====================================================')
+    except Exception as id_err:
+        # Identity-broken Deek is worse than offline — fail loudly.
+        print(f'[DEEK startup] FATAL: identity layer failed to load: {id_err}')
+        raise
+
     yield
 
     if _reindex_task and not _reindex_task.done():
@@ -238,6 +269,11 @@ async def lifespan(app: FastAPI):
         _snapshot_task.cancel()
     if _briefing_task and not _briefing_task.done():
         _briefing_task.cancel()
+    try:
+        from core.identity import probe as _identity_probe
+        await _identity_probe.stop()
+    except Exception:
+        pass
 
     for watcher in active_watchers:
         try:
@@ -1972,6 +2008,40 @@ async def _all_project_chunk_counts() -> dict[str, int]:
         )
     except Exception:
         return {}
+
+
+@app.get("/identity/status")
+async def identity_status():
+    """Deek identity + module reachability. No auth (internal)."""
+    from core.identity import assembler as _identity_assembler
+    from core.identity import probe as _identity_probe
+    probe_status = _identity_probe.get_probe_status()
+    modules = _identity_assembler.get_modules()
+    return {
+        'identity_hash': _identity_assembler.get_identity_hash(),
+        'loaded_module_count': len(modules),
+        'declared_modules': [m.name for m in modules],
+        'reachability': probe_status['modules'],
+        'last_probe': probe_status['last_probe'],
+    }
+
+
+@app.get("/identity/prompt")
+async def identity_prompt():
+    """Exact system-prompt prefix the next request would use.
+
+    Gated behind DEEK_DEBUG=true — the prefix can contain sensitive
+    configuration hints and shouldn't be public.
+    """
+    if os.getenv('DEEK_DEBUG', '').lower() not in {'1', 'true', 'yes', 'on'}:
+        raise HTTPException(status_code=404, detail='not found')
+    from core.identity import assembler as _identity_assembler
+    from core.identity import probe as _identity_probe
+    prefix = _identity_assembler.get_system_prompt_prefix(
+        reachable=_identity_probe.get_reachable_modules(),
+        errors=_identity_probe.get_errors(),
+    )
+    return {'prefix': prefix, 'hash': _identity_assembler.get_identity_hash()}
 
 
 @app.get("/health")

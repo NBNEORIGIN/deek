@@ -20,6 +20,8 @@ from .memory.store import MemoryStore
 from .memory.summariser import SessionSummariser
 from .skills.manager import SkillManager
 from .models.message_normaliser import MessageNormaliser
+from .identity import assembler as identity_assembler
+from .identity import probe as identity_probe
 
 logger = logging.getLogger(__name__)
 
@@ -126,8 +128,22 @@ class DeekAgent:
             raise GenerationStopped(f'Stopped session {session_id}')
 
     def _system_prompt_prefix(self) -> str:
-        return (
-            "You are DEEK, NBNE's sovereign AI brain.\n"
+        """Build the identity prefix.
+
+        Delegates identity content to core.identity.assembler — loaded
+        from DEEK_IDENTITY.md + DEEK_MODULES.yaml at process boot.
+        Reachable-module list is live-filtered via the probe cache.
+
+        Tool-usage rules remain here because they describe the *runtime
+        contract* (how the model should call tools) rather than Deek's
+        self-description. Identity is code; tool rules are code too.
+        """
+        identity_prefix = identity_assembler.get_system_prompt_prefix(
+            reachable=identity_probe.get_reachable_modules(),
+            errors=identity_probe.get_errors(),
+        )
+        tool_rules = (
+            "## How to use your tools\n\n"
             "KEY TOOLS for business queries:\n"
             "- search_crm(query, types, limit) — search LIVE CRM data: clients, "
             "projects, quotes, emails, materials, lessons. Use this for ANY question "
@@ -152,8 +168,11 @@ class DeekAgent:
             "6. When the user asks about clients, projects, quotes, enquiries, or "
             "anything in 'the CRM', ALWAYS use search_crm() — NOT search_code(). "
             "search_code greps source files; search_crm queries LIVE business data "
-            "(clients, projects, emails, quotes, materials, lessons learned).\n\n"
+            "(clients, projects, emails, quotes, materials, lessons learned).\n"
+            "7. If a module is UNREACHABLE per the Modules section above, do not "
+            "claim live data from it — say it's unreachable and stop.\n\n"
         )
+        return identity_prefix + tool_rules
 
     def _request_deadline_seconds(self) -> float:
         raw = os.getenv('DEEK_REQUEST_TIMEOUT_SECONDS') or os.getenv('CLAW_REQUEST_TIMEOUT_SECONDS', '90')

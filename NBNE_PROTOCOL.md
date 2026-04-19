@@ -561,12 +561,55 @@ If the target project is not loaded: check config.json, restart API.
 
 ---
 
+## Identity Layer
+
+Deek's sense of itself — who it is, what the company is, what modules
+it can reach — is **code, not data**. It lives at the repo root in two
+version-controlled files:
+
+- `DEEK_IDENTITY.md` — company facts, team, sovereignty principle, hard
+  rules. Prose. Used as the opening of every system prompt.
+- `DEEK_MODULES.yaml` — machine-readable registry of NBNE modules, one
+  entry per module, with `base_url`, `health_endpoint`,
+  `context_endpoint`, `auth_mode`, `status`, and human-readable
+  `purpose` + `when_to_consult`.
+
+Both are loaded once at process boot by `core/identity/assembler.py`.
+The sha256 hash of the two files combined is logged at startup and
+exposed via `GET /identity/status` so deploy-parity checks are trivial:
+identical hash across Hetzner and `D:\claw` = identical identity.
+
+**Rules:**
+
+- Identity changes require a PR. Never mutate identity via the DB, an
+  env var, or any runtime path.
+- `core/identity/assembler.py` is the only place that builds the
+  identity prefix of the system prompt. Nothing else writes to the
+  system prompt before it.
+- Module reachability is probed on startup and every 60s by
+  `core/identity/probe.py`. The module list in every system prompt is
+  filtered by live reachability. **Unreachable modules are declared as
+  unreachable, with a reason — not silently omitted.** Deek must not
+  claim live data from a module it cannot reach.
+- If `DEEK_IDENTITY.md` or `DEEK_MODULES.yaml` are missing or
+  malformed, the process fails to start with a clear error.
+  Identity-broken Deek is worse than offline Deek.
+
+Diagnostic endpoints:
+
+- `GET /identity/status` — `{identity_hash, loaded_module_count,
+  declared_modules, reachability, last_probe}`. No auth.
+- `GET /identity/prompt` — exact system-prompt prefix the next request
+  would use. Gated behind `DEEK_DEBUG=true`.
+
+---
+
 ## The Principle
 
 Every prompt: **retrieve first, delegate appropriately, write back after.**
 
 The procedure is the memory. The memory is the product. The brain stays
-in Northumberland.
+in Northumberland. Identity is code. Memory is data.
 
 ---
 
