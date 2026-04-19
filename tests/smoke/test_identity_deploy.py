@@ -39,7 +39,11 @@ from urllib.error import URLError, HTTPError
 
 FIXTURE_PATH = Path(__file__).parent / 'golden_identity.json'
 PLACEHOLDER_KEY = 'deek-dev-key-change-in-production'
-BUNDLE_GLOB = '/app/.next/server/app/api/voice/chat/agent-stream/route.js'
+# Grep EVERY compiled route handler — SWC folds process.env.* into any
+# route that reads it at module scope (which is 25 files today), so one
+# ad-hoc docker build without the build-arg could silently bake the
+# placeholder into any of them.
+BUNDLE_DIR = '/app/.next/server/app/api'
 
 
 def log(msg: str) -> None:
@@ -165,10 +169,12 @@ def check_web_bundle() -> list[str]:
     try:
         grep = subprocess.run(
             ['docker', 'exec', container, 'sh', '-c',
-             f'grep -l "{PLACEHOLDER_KEY}" '
-             '/app/.next/server/app/api/voice/chat/*/route.js '
-             '2>/dev/null || true'],
-            capture_output=True, text=True, timeout=10,
+             # -r recurses, -l lists files only, --include limits to
+             # compiled route handlers. All 25 API routes go through
+             # this tree so one scan covers the entire blast radius.
+             f'grep -rl --include="route.js" "{PLACEHOLDER_KEY}" '
+             f'{BUNDLE_DIR} 2>/dev/null || true'],
+            capture_output=True, text=True, timeout=15,
         )
     except Exception as exc:
         log(f'[SKIP] [bundle.placeholder] docker exec failed: {exc}')
@@ -176,11 +182,14 @@ def check_web_bundle() -> list[str]:
 
     hits = [ln for ln in (grep.stdout or '').splitlines() if ln.strip()]
     if hits:
+        # Trim /app/.next/server/app/api/ prefix for readable output.
+        short = [h.replace(BUNDLE_DIR + '/', '') for h in hits]
         fail('bundle.placeholder',
-             f'placeholder key baked into: {hits} — was DEEK_API_KEY build-arg '
-             'passed? see deploy/build-deek-web.sh')
+             f'placeholder key baked into {len(hits)} route(s): '
+             f'{short} — was DEEK_API_KEY build-arg passed? '
+             'see deploy/build-deek-web.sh and audit R3.')
         return ['bundle.placeholder']
-    passed('bundle.placeholder')
+    passed(f'bundle.placeholder (scanned all routes in {BUNDLE_DIR})')
     return []
 
 
