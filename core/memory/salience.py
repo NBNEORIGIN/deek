@@ -277,17 +277,21 @@ def extract_salience(
         dict for auditing.
     """
     metadata = metadata or {}
+    # Cast to native Python float at the boundary — recent embeddings
+    # arrive from pgvector as numpy float32 arrays and would otherwise
+    # propagate np.float32 into the signals dict, which breaks
+    # json.dumps downstream.
     signals = {
-        'money': score_money(memory_text),
-        'customer_pushback': score_customer_pushback(memory_text),
-        'outcome_weight': score_outcome(metadata),
-        'novelty': score_novelty(memory_text, embedding_fn, recent_embeddings),
-        'toby_flag': score_toby_flag(metadata),
+        'money': float(score_money(memory_text)),
+        'customer_pushback': float(score_customer_pushback(memory_text)),
+        'outcome_weight': float(score_outcome(metadata)),
+        'novelty': float(score_novelty(memory_text, embedding_fn, recent_embeddings)),
+        'toby_flag': float(score_toby_flag(metadata)),
     }
     weights, base, min_score, max_score = _load_weights()
     weighted_sum = sum(signals[k] * weights.get(k, 0.0) for k in signals)
-    score = base + weighted_sum
-    score = max(min_score, min(max_score, score))
+    score = float(base + weighted_sum)
+    score = max(float(min_score), min(float(max_score), score))
     return SalienceResult(score=score, signals=signals)
 
 
