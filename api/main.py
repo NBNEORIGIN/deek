@@ -3216,6 +3216,10 @@ app.include_router(whatsapp_router)
 from api.routes.amazon_intel import router as ami_router
 app.include_router(ami_router)
 
+# Register dream-state routes (Brief 4 Phase B)
+from api.routes.dream import router as dream_router
+app.include_router(dream_router)
+
 # Register Amazon Analytics routes (Sprint 1 Revenue Truth Engine)
 from api.routes.analytics import router as ami_analytics_router
 app.include_router(ami_analytics_router)

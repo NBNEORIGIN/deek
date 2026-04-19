@@ -13,11 +13,11 @@ default. The value is in the filter.** Budget ~100 attempts in → ~3
 surface. Every surfaced candidate cites specific source memory IDs
 and is falsifiable on inspection.
 
-Status: **Phase A — nocturnal loop runnable, no cron, no PWA
-surfacing**. Runnable manually via
-`python scripts/dream_nightly.py`. Phase B wires cron + the
-`/briefing/morning` API + PWA Brief tab extension. Phase C adds the
-feedback loop, staleness sweeps, and `nbne-policy` patch.
+Status: **Phase B — nightly loop, morning API, PWA surfacing live**.
+Cron fires at 02:30 UTC; candidates surface in the PWA Brief tab
+with accept/reject/edit/defer cards; accepted cards promote to
+`schemas` and become retrievable. Phase C adds the stale-candidate
+sweep, schema decay, Postmark digest, and `nbne-policy` patch.
 
 ## Mechanism
 
@@ -124,16 +124,85 @@ Seeds exist, bundles may form, but either no shared entities surface
 distant companions, or the filter kills the generator's output.
 Build now; observe; tune once memory volume reaches ~100+.
 
-## Not in Phase A
+## Phase B additions
 
-- Cron scheduling → Phase B
-- `GET /briefing/morning` API endpoint → Phase B
-- PWA Brief tab extension for candidate review → Phase B
-- Feedback loop (accept promotes to schema, reject trains dedupe) → Phase C
-- Stale-candidate sweep (7-day auto-archive) → Phase C
-- Schema decay (90-day → dormant, 180-day → archived) → Phase C
-- Postmark daily digest → Phase C
-- `NBNE_PROTOCOL.md` patch → Phase C
+### Cron (installed 2026-04-19)
+
+```cron
+# Deek dream state — nightly nocturnal loop
+30 2 * * * docker exec -w /app -e PYTHONPATH=/app deploy-deek-api-1 \
+  python scripts/dream_nightly.py \
+  >> /var/log/deek-dream.log 2>&1
+```
+
+Fires at 02:30 UTC — 30 minutes after the consolidation cron — so
+schemas written by consolidation are visible to the dedupe gate
+during the same pass.
+
+### `GET /api/deek/briefing/morning`
+
+Returns the top-K unreviewed surfaced candidates from the most
+recent run. Empty candidates array when there's nothing to show:
+
+```json
+{
+  "date": "2026-04-19",
+  "candidates": [
+    {
+      "id": "uuid",
+      "text": "Jobs involving ACM on listed buildings ...",
+      "type": "pattern",
+      "confidence": 0.82,
+      "score": 0.71,
+      "source_memory_ids": [42623, 42624, 42933],
+      "source_summaries": [
+        {"memory_id": 42623, "text": "..."},
+        ...
+      ],
+      "generated_at": "2026-04-19T02:30:17Z",
+      "actions": ["accept", "reject", "edit", "defer"]
+    }
+  ]
+}
+```
+
+### `POST /api/deek/briefing/candidate/{id}/review`
+
+Body: `{action: "accept"|"reject"|"edit"|"defer", notes?: string, edited_text?: string}`.
+
+- **accept** — marks reviewed, embeds the candidate text,
+  creates a `schemas` row with `status='active'`, sets
+  `promoted_schema_id`. Retrievable immediately.
+- **edit** — same as accept but promotes the `edited_text` instead.
+- **reject** — marks reviewed; candidate lives on as a negative
+  example for future duplication-gate comparisons.
+- **defer** — clears `surfaced_at` so the next morning re-surfaces
+  the candidate. `reviewed_at` stays NULL.
+
+### PWA Brief tab
+
+`BriefingView.tsx` now shows an "Overnight" section above the
+live briefing. Each card has:
+
+- Candidate type + confidence
+- Plain-English statement
+- Expandable source-memory summaries
+- Four buttons: Accept / Reject / Edit / Defer
+- Edit opens inline textarea; Save commits edited text as the
+  promoted schema
+
+Empty state: *"No candidates survived the filter. Memory is the
+product — some nights there's nothing worth saying."*
+
+## Not yet (Phase C)
+
+- Stale-candidate sweep (7-day auto-archive + alert if > 50%
+  expire unreviewed)
+- Schema decay (90-day → dormant, 180-day → archived) — extends
+  Brief 2's schema lifecycle
+- Postmark daily digest email
+- `nbne-policy#3` — new NBNE_PROTOCOL.md section stacked on
+  `#1` (identity+impressions) and `#2` (crosslink)
 
 ## Files
 

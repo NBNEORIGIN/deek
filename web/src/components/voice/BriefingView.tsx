@@ -7,7 +7,18 @@
  * (refreshable). Tasks are listed with tap-to-done actions.
  */
 import { useCallback, useEffect, useState } from 'react'
-import { RefreshCw, CheckCircle2, AlertTriangle } from 'lucide-react'
+import {
+  RefreshCw,
+  CheckCircle2,
+  AlertTriangle,
+  Sparkles,
+  Check,
+  X,
+  Edit3,
+  Clock,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react'
 import type { VoiceLoopTurn } from '@/hooks/useVoiceLoop'
 
 interface Task {
@@ -44,6 +55,23 @@ interface PendingBriefing {
   incorrect_reason: string | null
 }
 
+interface DreamCandidate {
+  id: string
+  text: string
+  type: 'pattern' | 'rule' | 'analogy' | 'prediction' | string
+  confidence: number
+  score: number
+  source_memory_ids: number[]
+  source_summaries: { memory_id: number; text: string }[]
+  generated_at: string | null
+  actions: string[]
+}
+
+interface DreamBriefing {
+  date: string | null
+  candidates: DreamCandidate[]
+}
+
 export function BriefingView({
   onTasksChanged,
 }: {
@@ -51,17 +79,21 @@ export function BriefingView({
 }) {
   const [liveBriefing, setLiveBriefing] = useState<BriefingResponse | null>(null)
   const [pending, setPending] = useState<PendingBriefing[]>([])
+  const [dream, setDream] = useState<DreamBriefing | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionBusy, setActionBusy] = useState<number | null>(null)
+  const [dreamBusy, setDreamBusy] = useState<string | null>(null)
+  const [dreamToast, setDreamToast] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const [bRes, pRes] = await Promise.all([
+      const [bRes, pRes, dRes] = await Promise.all([
         fetch('/api/voice/briefing', { cache: 'no-store' }),
         fetch('/api/voice/briefings/pending', { cache: 'no-store' }),
+        fetch('/api/voice/briefing/morning', { cache: 'no-store' }),
       ])
       if (bRes.ok) {
         setLiveBriefing(await bRes.json())
@@ -83,6 +115,9 @@ export function BriefingView({
             body: JSON.stringify({ action: 'seen' }),
           })
         }
+      }
+      if (dRes.ok) {
+        setDream(await dRes.json())
       }
     } catch (err: any) {
       setError(err?.message || String(err))
@@ -116,6 +151,54 @@ export function BriefingView({
       }
     },
     [onTasksChanged]
+  )
+
+  const reviewDream = useCallback(
+    async (
+      id: string,
+      action: 'accept' | 'reject' | 'edit' | 'defer',
+      opts: { edited_text?: string; notes?: string } = {},
+    ) => {
+      setDreamBusy(id)
+      try {
+        const res = await fetch(
+          `/api/voice/briefing/candidate/${id}/review`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, ...opts }),
+          },
+        )
+        if (res.ok) {
+          const data = await res.json()
+          // Remove the card from the local list with a toast
+          setDream(d =>
+            d
+              ? { ...d, candidates: d.candidates.filter(c => c.id !== id) }
+              : d,
+          )
+          const summary =
+            action === 'accept' || action === 'edit'
+              ? data.promoted_schema_id
+                ? 'Promoted to memory'
+                : 'Accepted (not embedded — check logs)'
+              : action === 'reject'
+              ? 'Rejected — filter will learn'
+              : action === 'defer'
+              ? 'Deferred to tomorrow'
+              : 'Done'
+          setDreamToast(summary)
+          setTimeout(() => setDreamToast(null), 2500)
+        } else {
+          const data = await res.json().catch(() => ({}))
+          setDreamToast(`Review failed: ${data?.detail || res.status}`)
+          setTimeout(() => setDreamToast(null), 3500)
+        }
+      } finally {
+        setDreamBusy(null)
+      }
+    },
+    [],
   )
 
   const markIncorrect = useCallback(async (briefingId: number) => {
@@ -167,6 +250,47 @@ export function BriefingView({
         {error && (
           <div className="rounded-lg bg-rose-950/60 px-3 py-2 text-sm text-rose-200">
             {error}
+          </div>
+        )}
+
+        {/* Dream-state candidates (Brief 4 Phase B). Empty state only
+            rendered when there was a run but nothing survived the
+            filter — the "memory is the product" line. */}
+        {dream && (
+          <section className="space-y-2">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-violet-400">
+              <Sparkles size={12} />
+              Overnight
+              {dream.date && (
+                <span className="text-slate-500 normal-case tracking-normal">
+                  · {dream.date}
+                </span>
+              )}
+            </div>
+            {dream.candidates.length === 0 ? (
+              <div className="rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 text-xs text-slate-500">
+                {dream.date
+                  ? 'No candidates survived the filter. Memory is the product — some nights there\'s nothing worth saying.'
+                  : 'No overnight run yet. The nocturnal loop fires at 02:30 UTC.'}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {dream.candidates.map(c => (
+                  <DreamCard
+                    key={c.id}
+                    candidate={c}
+                    busy={dreamBusy === c.id}
+                    onAction={(action, opts) => reviewDream(c.id, action, opts)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {dreamToast && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 rounded-lg bg-slate-800 px-4 py-2 text-xs text-slate-100 shadow-xl">
+            {dreamToast}
           </div>
         )}
 
@@ -259,6 +383,125 @@ export function BriefingView({
     </div>
   )
 }
+
+function DreamCard({
+  candidate,
+  busy,
+  onAction,
+}: {
+  candidate: DreamCandidate
+  busy: boolean
+  onAction: (
+    action: 'accept' | 'reject' | 'edit' | 'defer',
+    opts?: { edited_text?: string; notes?: string },
+  ) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(candidate.text)
+
+  return (
+    <div className="rounded-xl border border-violet-900/40 bg-violet-950/20 p-4">
+      <div className="mb-2 flex items-center justify-between text-xs">
+        <span className="rounded-full bg-violet-900/50 px-2 py-0.5 uppercase tracking-wider text-violet-200">
+          {candidate.type}
+        </span>
+        <span className="text-slate-500">
+          confidence {Math.round(candidate.confidence * 100)}%
+        </span>
+      </div>
+
+      {editing ? (
+        <textarea
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          rows={3}
+          className="mb-3 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
+        />
+      ) : (
+        <div className="mb-3 text-sm leading-relaxed text-slate-100">
+          {candidate.text}
+        </div>
+      )}
+
+      {candidate.source_summaries.length > 0 && (
+        <button
+          onClick={() => setExpanded(x => !x)}
+          className="mb-2 flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200"
+        >
+          {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          {candidate.source_summaries.length} source{' '}
+          {candidate.source_summaries.length === 1 ? 'memory' : 'memories'}
+        </button>
+      )}
+
+      {expanded && (
+        <div className="mb-3 space-y-1 rounded-md bg-slate-900/60 p-2 text-xs text-slate-400">
+          {candidate.source_summaries.map(s => (
+            <div key={s.memory_id}>
+              <span className="text-slate-600">#{s.memory_id}</span> {s.text}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        {editing ? (
+          <>
+            <button
+              onClick={() => onAction('edit', { edited_text: draft })}
+              disabled={busy || !draft.trim()}
+              className="flex items-center gap-1 rounded-md bg-emerald-700 px-3 py-1 text-xs text-white disabled:opacity-50"
+            >
+              <Check size={12} /> Save & accept
+            </button>
+            <button
+              onClick={() => {
+                setEditing(false)
+                setDraft(candidate.text)
+              }}
+              className="flex items-center gap-1 rounded-md border border-slate-700 px-3 py-1 text-xs text-slate-300"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={() => onAction('accept')}
+              disabled={busy}
+              className="flex items-center gap-1 rounded-md bg-emerald-700 px-3 py-1 text-xs text-white hover:bg-emerald-600 disabled:opacity-50"
+            >
+              <Check size={12} /> Accept
+            </button>
+            <button
+              onClick={() => onAction('reject')}
+              disabled={busy}
+              className="flex items-center gap-1 rounded-md bg-rose-900 px-3 py-1 text-xs text-rose-100 hover:bg-rose-800 disabled:opacity-50"
+            >
+              <X size={12} /> Reject
+            </button>
+            <button
+              onClick={() => setEditing(true)}
+              disabled={busy}
+              className="flex items-center gap-1 rounded-md border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:border-slate-500 disabled:opacity-50"
+            >
+              <Edit3 size={12} /> Edit
+            </button>
+            <button
+              onClick={() => onAction('defer')}
+              disabled={busy}
+              className="flex items-center gap-1 rounded-md border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:border-slate-500 disabled:opacity-50"
+            >
+              <Clock size={12} /> Defer
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 
 function MarkdownBlock({ md }: { md: string }) {
   // Lightweight markdown rendering — just handle headings, bold, bullet
