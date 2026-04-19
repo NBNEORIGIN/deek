@@ -162,10 +162,61 @@ Reinforcement also applies: every retrieved schema gets
 
 No auth — internal network only.
 
-## Not yet live
+## Phase C — automated cutover
 
-- Flipping off shadow mode → Phase C after 1 week of shadow data
-- Patching NBNE_PROTOCOL.md → Phase C, post-cutover
+Cutover is pre-baked and scheduled. A one-shot Hetzner cron entry
+fires on **2026-04-26 at 09:00 UTC**:
+
+```cron
+# Deek impressions Phase C — ONE-SHOT cutover scheduled for 2026-04-26
+0 9 26 4 * cd /opt/nbne/deek && python3 scripts/impressions_cutover.py \
+  >> /var/log/deek-phase-c-cutover.log 2>&1
+```
+
+When it fires, `scripts/impressions_cutover.py`:
+
+1. Runs `scripts/analyze_impressions_shadow.py` against
+   `data/impressions_shadow.jsonl` — reports records, span, top-1
+   agreement, top-5 Jaccard, per-signal impact.
+2. Applies safety gates:
+   - `>= 100` shadow records logged
+   - `>= 72h` span between first and last record
+   - `0.02 < top-5 Jaccard < 0.98` (neither rerank-is-identity nor
+     rerank-is-pathological)
+   - Env file writable, container running
+3. If ALL pass: rewrites `/opt/nbne/deek/deploy/.env` setting
+   `DEEK_IMPRESSIONS_SHADOW=false`, restarts `deploy-deek-api-1` via
+   `docker compose up -d --force-recreate`, runs
+   `scripts/sync-policy.sh` to pull the (by-then-merged) policy patch.
+4. Writes a record to `data/impressions_cutover.jsonl`.
+
+If **any** gate fails, the script exits 0 silently with a written
+reason — no retries, no noise. Human review decides whether to
+re-run with `--force` or adjust config and wait longer.
+
+### Companion PR
+
+`NBNEORIGIN/nbne-policy#1` opens the Identity Layer + Impressions
+Layer backport for `NBNE_PROTOCOL.md`. The cutover's `sync-policy`
+step pulls whichever state that PR is in on the day.
+
+### Cancelling or rescheduling
+
+To skip the automated cutover:
+
+```bash
+ssh root@178.104.1.152
+crontab -l | grep -v 'Phase C' | grep -v 'impressions_cutover' | crontab -
+```
+
+To run it manually before the scheduled date (once shadow data
+exists):
+
+```bash
+ssh root@178.104.1.152
+python3 /opt/nbne/deek/scripts/impressions_cutover.py --dry-run  # preview
+python3 /opt/nbne/deek/scripts/impressions_cutover.py            # apply
+```
 
 ## Files
 
