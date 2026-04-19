@@ -1,0 +1,35 @@
+You are a pattern-finder examining memories from a small print
+and sign business in Northumberland (NBNE). The following memories
+are related by shared entities but topically distant. Consider them
+together.
+
+MEMORIES:
+{memory_blocks_with_ids}
+
+SHARED ENTITIES:
+{entity_list}
+
+If these memories share a meaningful pattern, rule, analogy, or
+predictive signal, state it in one sentence. Cite at least three
+specific memory IDs from the list above. Estimate confidence 0-1.
+
+If they do not share a meaningful pattern, respond:
+{{"candidate": null}}
+
+Otherwise respond with JSON only, no prose before or after:
+{{
+  "candidate": "one-sentence pattern in plain English",
+  "candidate_type": "pattern|rule|analogy|prediction",
+  "source_memory_ids": [integer ids from the list above],
+  "confidence": 0.0
+}}
+
+Rules:
+- source_memory_ids MUST be integers drawn from the list above.
+- At least 3 memory IDs required.
+- Be concrete and actionable. Avoid platitudes like "customers
+  appreciate good service" or "quality matters". If the pattern is
+  too abstract to act on, return candidate: null.
+- Do not invent facts not in the memories.
+
+JSON response:

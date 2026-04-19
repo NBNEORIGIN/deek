@@ -1,0 +1,43 @@
+# config/dream/anti_pattern_list.yaml
+#
+# Generic truisms that dream candidates must NOT match. The specificity
+# gate in core/dream/filter.py scans candidate text for these substrings
+# and rejects on any match. Case-insensitive.
+#
+# Grow the list as Deek produces platitudes that slip through other
+# gates. Each addition is a data point about what "too generic" means
+# in NBNE's context — the list IS the calibration.
+
+anti_patterns:
+  # Universal bromides
+  - "customers prefer"
+  - "customers appreciate"
+  - "quality matters"
+  - "attention to detail"
+  - "good communication is important"
+  - "clear communication"
+  - "customer is always right"
+  - "timely delivery"
+  - "professional appearance"
+  - "strong brand"
+  - "market conditions"
+  - "industry standard"
+  - "best practice"
+  - "win-win"
+  - "synergy"
+  - "going forward"
+
+  # Trivially-true production truisms
+  - "materials should be ordered"
+  - "jobs should be completed"
+  - "deadlines should be met"
+  - "communication is key"
+  - "planning is important"
+  - "preparation matters"
+
+  # Money non-insights
+  - "higher margin"
+  - "more profit"
+  - "reduce costs"
+  - "maximise revenue"
+  - "increase sales"
