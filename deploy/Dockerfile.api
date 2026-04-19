@@ -48,6 +48,8 @@ COPY core/ ./core/
 COPY projects/ ./projects/
 COPY wiki/ ./wiki/
 COPY scripts/ ./scripts/
+COPY config/ ./config/
+COPY migrations/ ./migrations/
 COPY deploy/modules.json ./deploy/modules.json
 # Identity layer — loaded at boot by core/identity/assembler.py.
 # Missing either file fails startup loudly.
