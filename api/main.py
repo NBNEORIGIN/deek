@@ -2057,7 +2057,6 @@ async def _all_project_chunk_counts() -> dict[str, int]:
         return {}
 
 
-@app.get("/api/deek/identity/status")
 @app.get("/memory/salience/distribution")
 @app.get("/api/deek/memory/salience/distribution")
 async def memory_salience_distribution():
@@ -2170,6 +2169,7 @@ async def memory_consolidation_last_run():
 
 
 @app.get("/identity/status")
+@app.get("/api/deek/identity/status")
 async def identity_status():
     """Deek identity + module reachability. No auth (internal)."""
     from core.identity import assembler as _identity_assembler
