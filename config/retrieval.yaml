@@ -15,3 +15,9 @@ gamma: 0.25   # recency weight
 tau_hours: 72.0   # recency half-life (3 days). Hits this old score 0.37.
 
 top_k: 20     # how many RRF candidates to pass into the rerank pass
+
+# ── Brief 3 Phase B — crosslink graph walk ─────────────────────────────
+graph_max_hops: 2                 # 1 or 2. 2-hop is cheap at current scale.
+graph_2hop_edge_threshold: 2.0    # only follow 2-hop on edges >= this weight
+graph_weight: 0.15                # boost applied to memories found via graph
+graph_max_memories: 10            # cap on graph-surfaced candidates

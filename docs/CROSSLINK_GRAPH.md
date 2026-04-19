@@ -7,11 +7,10 @@ memories becomes edges. Later phases will walk the graph at retrieval
 to surface structurally-related memories that pure cosine similarity
 misses.
 
-Status: **Phase A — graph populated, retrieval unchanged**. Every new
-memory write extracts entities and reinforces the graph; the existing
-16 memory rows are backfilled via `scripts/seed_entity_graph.py`.
-Graph walk at retrieval + 4-way RRF fusion is Phase B; cutover is
-Phase C.
+Status: **Phase B — graph walk live in shadow mode**. Every retrieval
+runs the walk in the background, logs divergence to
+`data/graph_shadow.jsonl`, but returns the pre-Phase-B result to the
+caller. Cutover (flipping `DEEK_CROSSLINK_SHADOW=false`) is Phase C.
 
 ## Entity taxonomy
 
@@ -88,18 +87,69 @@ To grow the lists:
    extract the newly-canonical entities from existing memories
    (idempotent — already-populated pairs are no-ops)
 
-## Inspecting the graph (Phase B+)
+## Graph walk at retrieval (Phase B)
 
-Diagnostic endpoints land in Phase B:
+On every retrieval:
+
+1. Extract query entities using the same extractor as write-time
+2. Resolve canonical names to `entity_nodes.id`
+3. BFS 1 hop along all incident edges (scored by `edge_weight *
+   (1 + max(-0.9, outcome_signal))`)
+4. Optional 2-hop along edges with `weight >= graph_2hop_edge_threshold`
+   (default 2.0), with a 0.5× decay
+5. Visit `memory_entities` to surface memories linked to walked
+   entities
+6. Down-weight by `1 / mention_count` so ubiquitous entities don't
+   dominate — "Origin Designed" in 50 memories contributes 1/50 of
+   the score that "M1234" in 2 memories does
+
+Returns up to `graph_max_memories` candidates (default 10). Config:
+
+```yaml
+# config/retrieval.yaml
+graph_max_hops: 2
+graph_2hop_edge_threshold: 2.0
+graph_weight: 0.15
+graph_max_memories: 10
+```
+
+## Shadow mode
+
+Controlled by `DEEK_CROSSLINK_SHADOW` (default `true`). Under shadow
+the walk runs and `data/graph_shadow.jsonl` records:
+
+- Query
+- Old top-5 chunk IDs (what retrieval returned)
+- Graph top candidates with score + path entities
+
+Analyse with `scripts/analyze_graph_shadow.py`:
+
+```
+Records logged:            123
+With a graph hit:          34 (27.6%)
+Empty walks:               89 (72.4%)
+Graph added new memories:  22 of queries
+Mean candidates / query:   1.3
+Top path entities (degenerate nodes cluster here):
+    flowers by julie   14
+    beacon             12
+    ...
+```
+
+Flip live via `DEEK_CROSSLINK_SHADOW=false` + restart API.
+
+## Inspecting the graph (Phase B)
+
+Diagnostic endpoints (no auth, internal network):
 
 - `GET /api/deek/memory/graph/stats` — node count by type, top-10
   edge weights, orphan count
-- `GET /api/deek/memory/graph/entity/{id}` — 2-hop neighbourhood
-- `GET /api/deek/memory/graph/walk?query=...` — show the walk for a
-  given query
+- `GET /api/deek/memory/graph/entity/{id}` — 2-hop neighbourhood for
+  one entity
+- `GET /api/deek/memory/graph/walk?query=...` — debug: show the walk
+  the retriever would run for a query
 
-Until then, direct SQL against `entity_nodes` / `entity_edges` is the
-way to see state.
+Direct SQL against `entity_nodes` / `entity_edges` also works.
 
 ## Scale expectation (2026-04-19)
 
@@ -109,10 +159,11 @@ tests is likely to be unreachable at this scale — the infrastructure
 is correct but there aren't enough memories yet for cross-domain
 patterns to emerge. Revisit when memory volume reaches ~100+.
 
-## Not in Phase A
+## Not yet live (Phase C)
 
-- Graph walk at retrieval → Phase B
-- 4-way RRF fusion (BM25 + pgvector episodic + pgvector schemas + graph) → Phase B
-- Diagnostic endpoints → Phase B
-- Shadow-mode review → Phase C
-- `NBNE_PROTOCOL.md` patch → Phase C
+- Flipping `DEEK_CROSSLINK_SHADOW=false` after shadow review
+- `NBNE_PROTOCOL.md` patch (in `nbne-policy`)
+
+Phase C automation pattern will mirror Impressions Phase C: a
+cron-scheduled cutover script with safety gates that runs after
+sufficient shadow data accumulates.

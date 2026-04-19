@@ -2192,6 +2192,143 @@ async def memory_consolidation_last_run():
     return {'last_run': last}
 
 
+@app.get("/memory/graph/stats")
+@app.get("/api/deek/memory/graph/stats")
+async def memory_graph_stats():
+    """Entity graph stats — node count by type, edge total, top edges."""
+    db_url = os.getenv('DATABASE_URL', '')
+    if not db_url:
+        raise HTTPException(status_code=503, detail='database not configured')
+    try:
+        import psycopg2
+        conn = psycopg2.connect(db_url, connect_timeout=3)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f'db: {exc}')
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT type, COUNT(*) FROM entity_nodes GROUP BY type ORDER BY 2 DESC"
+            )
+            nodes_by_type = {r[0]: int(r[1]) for r in cur.fetchall()}
+            cur.execute("SELECT COUNT(*) FROM entity_nodes")
+            (node_total,) = cur.fetchone()
+            cur.execute("SELECT COUNT(*) FROM entity_edges")
+            (edge_total,) = cur.fetchone()
+            cur.execute(
+                """SELECT
+                     (SELECT canonical_name FROM entity_nodes WHERE id=e.source_id),
+                     (SELECT canonical_name FROM entity_nodes WHERE id=e.target_id),
+                     e.weight, e.co_occurrence_count, e.outcome_signal
+                   FROM entity_edges e
+                   ORDER BY e.weight DESC LIMIT 10"""
+            )
+            top_edges = [
+                {
+                    'source': r[0], 'target': r[1],
+                    'weight': round(float(r[2] or 0), 3),
+                    'co_occurrence': int(r[3] or 0),
+                    'outcome_signal': round(float(r[4] or 0), 3),
+                }
+                for r in cur.fetchall()
+            ]
+            # Orphan nodes — no edges at all
+            cur.execute(
+                """SELECT COUNT(*) FROM entity_nodes n
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM entity_edges e
+                        WHERE e.source_id = n.id OR e.target_id = n.id)"""
+            )
+            (orphans,) = cur.fetchone()
+    finally:
+        conn.close()
+    return {
+        'nodes_total': int(node_total or 0),
+        'nodes_by_type': nodes_by_type,
+        'edges_total': int(edge_total or 0),
+        'orphan_nodes': int(orphans or 0),
+        'top_edges_by_weight': top_edges,
+    }
+
+
+@app.get("/memory/graph/entity/{entity_id}")
+@app.get("/api/deek/memory/graph/entity/{entity_id}")
+async def memory_graph_entity(entity_id: str):
+    """2-hop neighbourhood of a single entity for manual inspection."""
+    db_url = os.getenv('DATABASE_URL', '')
+    if not db_url:
+        raise HTTPException(status_code=503, detail='database not configured')
+    try:
+        import psycopg2
+        conn = psycopg2.connect(db_url, connect_timeout=3)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f'db: {exc}')
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT type, canonical_name, display_name, mention_count "
+                "FROM entity_nodes WHERE id = %s::uuid",
+                (entity_id,),
+            )
+            root = cur.fetchone()
+            if not root:
+                raise HTTPException(status_code=404, detail='entity not found')
+            cur.execute(
+                """SELECT
+                     CASE WHEN source_id::text = %s THEN target_id::text ELSE source_id::text END AS neighbour_id,
+                     (SELECT canonical_name FROM entity_nodes
+                        WHERE id = CASE WHEN e.source_id::text = %s THEN e.target_id ELSE e.source_id END) AS neighbour_name,
+                     (SELECT type FROM entity_nodes
+                        WHERE id = CASE WHEN e.source_id::text = %s THEN e.target_id ELSE e.source_id END) AS neighbour_type,
+                     weight, co_occurrence_count, outcome_signal
+                   FROM entity_edges e
+                  WHERE source_id::text = %s OR target_id::text = %s
+                  ORDER BY weight DESC LIMIT 50""",
+                (entity_id, entity_id, entity_id, entity_id, entity_id),
+            )
+            neighbours = [
+                {
+                    'id': r[0], 'name': r[1], 'type': r[2],
+                    'weight': round(float(r[3] or 0), 3),
+                    'co_occurrence': int(r[4] or 0),
+                    'outcome_signal': round(float(r[5] or 0), 3),
+                }
+                for r in cur.fetchall()
+            ]
+    finally:
+        conn.close()
+    return {
+        'entity': {
+            'id': entity_id, 'type': root[0],
+            'canonical_name': root[1], 'display_name': root[2],
+            'mention_count': int(root[3] or 0),
+        },
+        'neighbours': neighbours,
+    }
+
+
+@app.get("/memory/graph/walk")
+@app.get("/api/deek/memory/graph/walk")
+async def memory_graph_walk(query: str):
+    """Show the graph walk that would run for a given query — debug aid."""
+    from core.memory.graph_walk import walk_for_query, extract_query_entities
+    entities = extract_query_entities(query)
+    candidates = walk_for_query(query)
+    return {
+        'query': query,
+        'extracted_entities': [
+            {'type': t, 'canonical_name': c} for t, c in entities
+        ],
+        'graph_candidates': [
+            {
+                'chunk_id': c.chunk_id,
+                'graph_score': round(c.graph_score, 4),
+                'path_entities': c.path_entities,
+            }
+            for c in candidates
+        ],
+    }
+
+
 @app.get("/identity/status")
 @app.get("/api/deek/identity/status")
 async def identity_status():

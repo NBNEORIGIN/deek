@@ -445,6 +445,18 @@ class HybridRetriever:
         top_k = self.context_engine.MAX_TIER2_CHUNKS
         final = self._follow_backlinks(boosted[:top_k])
 
+        # ── Graph walk (Brief 3 Phase B) ────────────────────────────
+        # Extract query entities, walk 1-2 hops, surface memories
+        # linked to visited entities. Shadow-gated by
+        # DEEK_CROSSLINK_SHADOW — under shadow we log the diff but
+        # don't touch the returned result.
+        graph_candidates = []
+        try:
+            from core.memory.graph_walk import walk_for_query
+            graph_candidates = walk_for_query(task)
+        except Exception as exc:
+            logger.debug('[retriever] graph walk failed: %s', exc)
+
         # ── Schema retrieval (Brief 2 Phase B, Task 7) ──────────────
         # Strategic queries also pull top-K schemas from the consolidation
         # table. Schema hits are attached as a separate list on the
@@ -491,6 +503,23 @@ class HybridRetriever:
                 result = old_dicts
             else:
                 result = new_order
+
+            # ── Graph fusion (Brief 3 Phase B) ─────────────────────
+            # Shadow-mode gated separately from impressions shadow so
+            # we can cut over the two layers independently.
+            try:
+                from core.memory.graph_walk import (
+                    shadow_enabled as gw_shadow, fuse_into, log_shadow,
+                )
+                if gw_shadow():
+                    if graph_candidates:
+                        log_shadow(task, result, graph_candidates)
+                    # Shadow returns result unchanged.
+                else:
+                    result = fuse_into(result, graph_candidates)
+            except Exception as exc:
+                logger.debug('[retriever] graph fuse failed: %s', exc)
+
             # Attach schema hits as a trailing section so existing
             # callers that just iterate the list see them, but the
             # metadata (chunk_type='schema') makes them filterable.
