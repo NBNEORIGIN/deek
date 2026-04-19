@@ -12,7 +12,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 const CLAW_API = process.env.CLAW_API_URL || process.env.DEEK_API_URL || 'http://localhost:8765'
-const CLAW_KEY = process.env.DEEK_API_KEY || process.env.DEEK_API_KEY || 'deek-dev-key-change-in-production'
+// NEVER fall back to the placeholder literal — SWC folds it into the
+// compiled bundle at build time and ships it to production. See
+// docs/audit/IDENTITY_ISOLATION_AUDIT_2026-04.md audit finding F3 and
+// recommendation R4. Empty string is honest; placeholder is not.
+const CLAW_KEY = process.env.DEEK_API_KEY || process.env.CLAW_API_KEY || ''
 
 async function proxyToBackend(
   request: NextRequest,
