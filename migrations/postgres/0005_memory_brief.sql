@@ -34,17 +34,19 @@ CREATE TABLE IF NOT EXISTS memory_brief_runs (
   dry_run BOOLEAN NOT NULL DEFAULT FALSE
 );
 
-CREATE INDEX IF NOT EXISTS ix_memory_brief_runs_user_date
-  ON memory_brief_runs (user_email, (generated_at::date) DESC);
+CREATE INDEX IF NOT EXISTS ix_memory_brief_runs_user
+  ON memory_brief_runs (user_email, generated_at DESC);
 
 CREATE INDEX IF NOT EXISTS ix_memory_brief_runs_status
   ON memory_brief_runs (delivery_status, generated_at DESC);
 
--- Idempotency index — one non-dry-run per user per day.
--- Dry-runs are allowed to repeat for testing.
-CREATE UNIQUE INDEX IF NOT EXISTS ux_memory_brief_runs_user_date
-  ON memory_brief_runs (user_email, (generated_at::date))
-  WHERE dry_run = FALSE AND delivery_status <> 'failed';
+-- NOTE: idempotency (one non-dry-run per user per day) is enforced
+-- in application code — scripts/send_memory_brief.py queries for an
+-- existing successful send before inserting a new row. A SQL-level
+-- UNIQUE index on (user_email, generated_at::date) would be neater
+-- but Postgres refuses to index on the timezone-dependent `::date`
+-- cast (not IMMUTABLE). The app-level check is sufficient because
+-- the script is the only writer.
 
 
 -- Responses are populated by Phase B (reply parser hooks into the
