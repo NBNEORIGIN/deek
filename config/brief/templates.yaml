@@ -1,0 +1,97 @@
+# config/brief/templates.yaml
+#
+# Versioned question-framing templates for the Memory Brief. Changes
+# here are a PR (per the strategic preamble — configuration that will
+# change frequently lives in version control, not in runtime config
+# or the DB).
+#
+# Each template has a fixed reply format so Phase B's parser can
+# extract answers deterministically. Don't make the reply format
+# free text unless Phase B is ready to handle it.
+#
+# Available placeholders:
+#   {schema_text}        — full schema.schema_text
+#   {schema_age_days}    — days since schema.derived_at
+#   {source_count}       — len(schema.source_memory_ids)
+#   {confidence}         — schema.confidence (0-1)
+#   {salience}           — schema.salience (0-10) or memory salience
+#   {memory_snippet}     — first ~200 chars of memory chunk_content
+#   {memory_date}        — date of memory write
+#   {signal_block}       — formatted salience signal breakdown
+
+version: 1
+
+templates:
+
+  belief_audit:
+    # Pick an active schema with access_count <= 2 — either it's
+    # wrong, or it's correct-but-ignored. Either way, confirmation
+    # is cheap and valuable.
+    description: >
+      Surfaces a low-access active schema for TRUE/FALSE confirmation.
+      Worth more than a high-access schema (which Deek has already
+      seen working); low-access = never corroborated in practice.
+    reply_format: "TRUE / FALSE / [correction]"
+    prompt: |
+      BELIEF AUDIT — {schema_age_days} days old, used {access_count} times
+
+      I currently believe:
+        {schema_text}
+
+      Is this still true?
+      Reply: TRUE  /  FALSE  /  [correction]
+
+  gist_validation:
+    # Recent consolidation output (7-30 days old), middling confidence
+    # 0.7-0.9 — low enough to be worth checking, high enough to have
+    # survived the consolidation filter.
+    description: >
+      A recently-distilled schema. Asks whether the gist matches
+      what the human would actually take away from the source
+      memories. Prevents the model's consolidation from being indexed
+      as authoritative when it's subtly wrong.
+    reply_format: "YES / NO / [revised text]"
+    prompt: |
+      GIST VALIDATION — distilled {schema_age_days} days ago from {source_count} memories (confidence {confidence:.2f})
+
+      I extracted this as a pattern:
+        {schema_text}
+
+      Does that match what you'd actually take away?
+      Reply: YES  /  NO  /  [revised text]
+
+  salience_calibration:
+    # Yesterday's highest-salience memory. Asks whether it's
+    # genuinely important long-term or noise that happened to score
+    # high on money/pushback/failure signals.
+    description: >
+      Checks whether yesterday's salience extractor got it right.
+      Primarily catches false positives — memories that scored high
+      on surface signals but aren't actually worth prioritising.
+    reply_format: "YES / NO / [why or why not]"
+    prompt: |
+      SALIENCE CHECK — flagged yesterday with salience {salience:.1f}/10
+
+      From {memory_date}:
+        {memory_snippet}
+
+      Signal breakdown: {signal_block}
+
+      Is this genuinely important long-term?
+      Reply: YES  /  NO  /  [why or why not]
+
+  open_ended:
+    # Always included. No source query — this is the "tell me
+    # something I didn't know to ask" slot.
+    description: >
+      Open prompt for things the generator couldn't have derived
+      from memory state. Catches important events that didn't make
+      it into a memory write, or nuance that algorithmic selection
+      would miss.
+    reply_format: "Free text (one or two sentences)"
+    prompt: |
+      OPEN —
+
+      One thing from yesterday worth remembering long-term.
+
+      Reply: (free text — one or two sentences)
