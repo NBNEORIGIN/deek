@@ -45,6 +45,40 @@ PLACEHOLDER_KEY = 'deek-dev-key-change-in-production'
 # placeholder into any of them.
 BUNDLE_DIR = '/app/.next/server/app/api'
 
+# ── Cron-health check (added 2026-04-21) ────────────────────────────
+# After the Memory Brief session where the IMAP poll was silently
+# failing for 5 days (cron referenced an old script name after the
+# cairn→deek rename), we added this to catch the class. Scans the
+# tail of common cron log files for invocation-level errors that
+# indicate the cron entry is broken. Distinguishes from task-level
+# errors (those are noisy and not what we want to surface).
+CRON_LOG_PATHS = (
+    '/var/log/deek-dream.log',
+    '/var/log/deek-dream-maint.log',
+    '/var/log/deek-memory-brief.log',
+    '/var/log/deek-memory-brief-replies.log',
+    '/var/log/cairn-email-ingest.log',
+    '/var/log/cairn-triage.log',
+    '/var/log/cairn-digest.log',
+    '/var/log/cairn-wiki-compile.log',
+    '/var/log/cairn-wiki-sync.log',
+    '/var/log/cairn-material-prices.log',
+    '/var/log/cairn-crm-reflection.log',
+)
+
+# Invocation-level failure patterns. Seeing ANY of these in the last
+# tail means the cron entry itself is broken (wrong path, missing
+# container, etc.) — not that a well-formed task had a runtime error.
+CRON_BROKEN_PATTERNS = (
+    "can't open file",                    # python: wrong script path
+    "No such file or directory",          # bash or docker can't find it
+    "No such container",                  # docker exec against a dead container
+    "executable file not found in",       # wrong entrypoint
+    "command not found",                  # shell couldn't find the binary
+    "ImportError:",                       # python can't load the module
+    "ModuleNotFoundError:",
+)
+
 
 def log(msg: str) -> None:
     print(msg, flush=True)
@@ -141,6 +175,60 @@ def check_identity(url: str, golden: dict) -> list[str]:
     return failures
 
 
+def check_cron_health() -> list[str]:
+    """Scan cron log tails for invocation-level failures.
+
+    The class of bug this catches: cron entry references a path that
+    no longer exists (rename gone wrong, script moved, container
+    renamed). Every 15 minutes the cron fires, fails the same way,
+    logs an identical error, and no one notices until the downstream
+    work (email parsing, wiki sync, etc.) goes stale.
+
+    Skips cleanly when the log files aren't reachable (running from
+    a dev box, not Hetzner). When they ARE reachable, fails if the
+    last 20 lines of any log contain a broken-invocation pattern.
+
+    Returns list of failure codes; empty = passed.
+    """
+    failures: list[str] = []
+
+    existing_logs = [p for p in CRON_LOG_PATHS if os.path.isfile(p)]
+    if not existing_logs:
+        log('[SKIP] [cron.health] no cron logs reachable on this host')
+        return []
+
+    broken_logs: list[tuple[str, str]] = []
+    for path in existing_logs:
+        try:
+            with open(path, 'rb') as f:
+                # Tail the file — read last 64KB, decode, take last 40 lines
+                try:
+                    f.seek(-65536, 2)
+                except OSError:
+                    f.seek(0)
+                tail = f.read().decode('utf-8', errors='replace').splitlines()[-40:]
+        except Exception as exc:
+            log(f'[SKIP] [cron.health] cannot read {path}: {exc}')
+            continue
+
+        for line in tail:
+            for pattern in CRON_BROKEN_PATTERNS:
+                if pattern in line:
+                    broken_logs.append((path, line.strip()[:200]))
+                    break
+            if broken_logs and broken_logs[-1][0] == path:
+                break  # one hit per log is enough
+
+    if broken_logs:
+        detail = '; '.join(f'{p}: {msg!r}' for p, msg in broken_logs)
+        fail('cron.health',
+             f'{len(broken_logs)} cron(s) silently failing — {detail}')
+        failures.append('cron.health')
+    else:
+        passed(f'cron.health (scanned {len(existing_logs)} cron logs)')
+    return failures
+
+
 def check_web_bundle() -> list[str]:
     """Assert the compiled web route has no placeholder API key.
 
@@ -220,6 +308,7 @@ def main() -> int:
     failures += check_identity(args.url, golden)
     if not args.skip_bundle:
         failures += check_web_bundle()
+    failures += check_cron_health()
 
     log('')
     if failures:
