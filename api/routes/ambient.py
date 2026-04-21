@@ -1233,6 +1233,22 @@ async def chat_voice(
         cost_usd=0.0, latency_ms=latency_ms, outcome="success",
     )
 
+    # Brief 1a.2 Phase B — audit log every model response for later
+    # divergence analysis. Fire-and-forget so the hot path isn't blocked.
+    try:
+        from core.memory.response_audit import log_async, ResponseAuditRow
+        log_async(ResponseAuditRow(
+            path='voice',
+            system_prompt=system_prompt,
+            response_text=reply,
+            session_id=session_id,
+            model=voice_model,
+            user_question=question,
+            latency_ms=latency_ms,
+        ))
+    except Exception:
+        pass
+
     return VoiceChatResponse(
         response=reply,
         session_id=session_id,
@@ -1400,6 +1416,22 @@ async def chat_voice_stream(
             question=question, response=full_reply, model_used=voice_model,
             cost_usd=0.0, latency_ms=latency_ms, outcome="success",
         )
+
+        # Brief 1a.2 Phase B — audit log. Same row shape as the
+        # non-streaming path; fire-and-forget.
+        try:
+            from core.memory.response_audit import log_async, ResponseAuditRow
+            log_async(ResponseAuditRow(
+                path='voice_stream',
+                system_prompt=system_prompt,
+                response_text=full_reply,
+                session_id=session_id,
+                model=voice_model,
+                user_question=question,
+                latency_ms=latency_ms,
+            ))
+        except Exception:
+            pass
 
         yield f"event: done\ndata: {_json.dumps({'session_id': session_id, 'model_used': voice_model, 'latency_ms': latency_ms, 'outcome': 'success', 'cost_usd': 0.0})}\n\n"
 

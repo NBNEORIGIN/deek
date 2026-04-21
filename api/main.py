@@ -938,12 +938,37 @@ async def chat_stream(
     )
 
     async def event_generator():
+        # Brief 1a.2 Phase B — capture the final response for audit
+        # logging. The agent emits a `complete` event carrying the
+        # response text; we also snapshot the system prompt it ran
+        # with for the integrity hash.
+        captured_response = ''
+        captured_model = ''
         try:
             async for event in agent.process_streaming(envelope):
+                if isinstance(event, dict):
+                    if event.get('type') == 'complete':
+                        captured_response = event.get('response') or ''
+                        captured_model = event.get('model_used') or ''
                 yield f'data: {_json.dumps(event)}\n\n'
         except Exception as exc:
             yield f'data: {_json.dumps({"type": "error", "message": str(exc)})}\n\n'
         finally:
+            try:
+                if captured_response:
+                    from core.memory.response_audit import (
+                        log_async, ResponseAuditRow,
+                    )
+                    log_async(ResponseAuditRow(
+                        path='chat',
+                        system_prompt=agent._system_prompt_prefix(),
+                        response_text=captured_response,
+                        session_id=session_id,
+                        model=captured_model,
+                        user_question=message,
+                    ))
+            except Exception:
+                pass
             yield 'data: {"type": "done"}\n\n'
 
     return StreamingResponse(
@@ -1008,12 +1033,37 @@ async def chat_stream_post(
     )
 
     async def event_generator():
+        # Brief 1a.2 Phase B — capture the final response for audit
+        # logging. The agent emits a `complete` event carrying the
+        # response text; we also snapshot the system prompt it ran
+        # with for the integrity hash.
+        captured_response = ''
+        captured_model = ''
         try:
             async for event in agent.process_streaming(envelope):
+                if isinstance(event, dict):
+                    if event.get('type') == 'complete':
+                        captured_response = event.get('response') or ''
+                        captured_model = event.get('model_used') or ''
                 yield f'data: {_json.dumps(event)}\n\n'
         except Exception as exc:
             yield f'data: {_json.dumps({"type": "error", "message": str(exc)})}\n\n'
         finally:
+            try:
+                if captured_response:
+                    from core.memory.response_audit import (
+                        log_async, ResponseAuditRow,
+                    )
+                    log_async(ResponseAuditRow(
+                        path='chat',
+                        system_prompt=agent._system_prompt_prefix(),
+                        response_text=captured_response,
+                        session_id=session_id,
+                        model=captured_model,
+                        user_question=message,
+                    ))
+            except Exception:
+                pass
             yield 'data: {"type": "done"}\n\n'
 
     return StreamingResponse(
@@ -2343,6 +2393,73 @@ async def identity_status():
         'declared_modules': [m.name for m in modules],
         'reachability': probe_status['modules'],
         'last_probe': probe_status['last_probe'],
+    }
+
+
+@app.get("/identity/runtime-check")
+@app.get("/api/deek/identity/runtime-check")
+async def identity_runtime_check(question: str = ''):
+    """Brief 1a.2 Task 6 — returns the exact system prompt that would
+    be sent for a given question on each path, plus a diff. Gated
+    behind DEEK_DEBUG=true. Side-effect-free — does not call the
+    model.
+    """
+    if os.getenv('DEEK_DEBUG', '').lower() not in {'1', 'true', 'yes', 'on'}:
+        raise HTTPException(status_code=404, detail='not found')
+
+    from core.identity import assembler as _identity_assembler
+    from core.identity import probe as _identity_probe
+
+    identity_prefix = _identity_assembler.get_system_prompt_prefix(
+        reachable=_identity_probe.get_reachable_modules(),
+        errors=_identity_probe.get_errors(),
+    )
+
+    # Chat path — DeekAgent._system_prompt_prefix() for the deek project
+    try:
+        agent = _agents.get('deek')
+        chat_prompt = agent._system_prompt_prefix() if agent else identity_prefix
+    except Exception:
+        chat_prompt = identity_prefix
+
+    # Voice path — the unified voice prompt builder (Phase A Task 1)
+    try:
+        from api.routes.ambient import _build_voice_system_prompt
+        voice_prompt = _build_voice_system_prompt('office')
+    except Exception as exc:
+        voice_prompt = f'(build failed: {exc})'
+
+    import difflib
+    diff_lines = list(difflib.unified_diff(
+        chat_prompt.splitlines(keepends=False),
+        voice_prompt.splitlines(keepends=False),
+        fromfile='chat', tofile='voice', lineterm='', n=2,
+    ))
+
+    import hashlib
+    def _sha(s: str) -> str:
+        return 'sha256:' + hashlib.sha256(s.encode('utf-8')).hexdigest()[:16] + '...'
+
+    return {
+        'question': question or '(question-independent — identity prefix is the same)',
+        'identity_hash': _identity_assembler.get_identity_hash(),
+        'reachability': (
+            _identity_probe.get_probe_status() or {}
+        ).get('modules', {}),
+        'identity_prefix_sha': _sha(identity_prefix),
+        'chat_path': {
+            'prompt_sha': _sha(chat_prompt),
+            'length': len(chat_prompt),
+            'contains_identity_prefix': identity_prefix in chat_prompt,
+            'prompt': chat_prompt,
+        },
+        'voice_path': {
+            'prompt_sha': _sha(voice_prompt),
+            'length': len(voice_prompt),
+            'contains_identity_prefix': identity_prefix in voice_prompt,
+            'prompt': voice_prompt,
+        },
+        'diff': '\n'.join(diff_lines) if diff_lines else '(paths identical)',
     }
 
 
