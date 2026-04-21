@@ -1,5 +1,5 @@
 {
-  "identity_hash": "sha256:e9a3517652aa82fe933a179fa4d30e1210f5ad85e6806c4e0b5beb487440d02b",
+  "identity_hash": "sha256:d61f4ed92a661c8e230e73824a28b2a30676a5e4150a2f13b2e54aec536447e9",
   "declared_modules": [
     "deek",
     "phloe",
@@ -17,8 +17,8 @@
     "render",
     "beacon"
   ],
-  "fixture_captured_at": "2026-04-19T12:30:45Z",
-  "fixture_captured_by": "brief-1b-task-1",
+  "fixture_captured_at": "2026-04-21T08:50:00Z",
+  "fixture_captured_by": "brief-1a2-phase-a-content-update",
   "notes": {
     "deek_self_probe": "Deek's self-probe hairpins through its own public nginx. At fixture capture time it was reachable (354ms), but the path has historically flapped with HTTP 502 under load. 'deek' is intentionally EXCLUDED from expected_reachable_on_hetzner so the smoke test does not false-alarm on hairpin flaps. If 'deek' is unreachable AND all six peer modules are reachable, the smoke test passes.",
     "d_claw_environment": "D:\\\\claw is a developer workstation running a local Python process, not a production deployment target. The smoke test takes --url as a required argument; no default, no automatic D:\\\\claw probing.",
