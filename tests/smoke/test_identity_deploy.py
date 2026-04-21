@@ -185,12 +185,20 @@ def check_cron_health() -> list[str]:
     logs an identical error, and no one notices until the downstream
     work (email parsing, wiki sync, etc.) goes stale.
 
-    Skips cleanly when the log files aren't reachable (running from
-    a dev box, not Hetzner). When they ARE reachable, fails if the
-    last 20 lines of any log contain a broken-invocation pattern.
+    Uses the log file's MTIME as the freshness proxy — if a log
+    hasn't been written to for over CRON_STALE_HOURS, we don't count
+    any of its old errors (the cron may have been fixed since, or
+    retired; flagging historical failures permanently blocks
+    deploys long after the underlying fix). If the log IS fresh,
+    any broken-invocation pattern in the last tail is still a fail
+    — because a fresh log means the cron fired recently, and a
+    fresh log containing "No such file" means it failed recently.
+
+    Skips cleanly when the log files aren't reachable (dev-box run).
 
     Returns list of failure codes; empty = passed.
     """
+    import time
     failures: list[str] = []
 
     existing_logs = [p for p in CRON_LOG_PATHS if os.path.isfile(p)]
@@ -198,11 +206,23 @@ def check_cron_health() -> list[str]:
         log('[SKIP] [cron.health] no cron logs reachable on this host')
         return []
 
+    # 2h mtime window — long enough to catch a cron that's been
+    # broken across multiple recent firings, short enough that a
+    # log containing only historical failures doesn't block deploys
+    # after the underlying cron has been fixed.
+    CRON_STALE_HOURS = 2
+    now = time.time()
+    stale_cutoff = CRON_STALE_HOURS * 3600
+
     broken_logs: list[tuple[str, str]] = []
+    stale_count = 0
     for path in existing_logs:
         try:
+            mtime = os.path.getmtime(path)
+            if now - mtime > stale_cutoff:
+                stale_count += 1
+                continue  # log hasn't been written in >2h; ignore
             with open(path, 'rb') as f:
-                # Tail the file — read last 64KB, decode, take last 40 lines
                 try:
                     f.seek(-65536, 2)
                 except OSError:
@@ -226,7 +246,10 @@ def check_cron_health() -> list[str]:
              f'{len(broken_logs)} cron(s) silently failing — {detail}')
         failures.append('cron.health')
     else:
-        passed(f'cron.health (scanned {len(existing_logs)} cron logs)')
+        note = f'scanned {len(existing_logs) - stale_count} active cron logs'
+        if stale_count:
+            note += f' (skipped {stale_count} stale > {CRON_STALE_HOURS}h)'
+        passed(f'cron.health ({note})')
     return failures
 
 
