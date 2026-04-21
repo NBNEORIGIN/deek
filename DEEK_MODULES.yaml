@@ -26,14 +26,23 @@ modules:
   - name: deek
     display_name: Deek
     purpose: >
-      NBNE's sovereign AI brain. Memory layer, retrieval engine, model
-      router and intelligence substrate sitting above every other module.
-      This module is itself — the one answering the question — listed
-      here so every system prompt can declare it explicitly.
+      NBNE's sovereign AI brain. Built on Claude (Sonnet for reasoning,
+      Opus for critical work) with local Ollama models on deek-gpu
+      (qwen2.5:7b-instruct for voice, deepseek-coder-v2:16b for code)
+      routed through a cost-discipline ladder. Deek maintains a memory
+      layer over every NBNE module's outputs using hybrid BM25 +
+      pgvector retrieval with an impressions overlay (salience +
+      recency decay, Brief 2), a crosslink entity graph (Brief 3), and
+      nightly dream-state consolidation producing schemas that surface
+      as morning briefings (Brief 4). Deek sends and receives email
+      via the shared SMTP + IMAP path and writes decisions back to
+      memory on every non-trivial task. Deek does not own any module's
+      data; it reads each module's context endpoint and synthesises.
     when_to_consult: >
-      For any question about retrieval, memory, cross-module synthesis,
-      cost routing, or Deek's own state. Effectively always reachable by
-      definition of the request being in flight.
+      For any question about Deek's own state, memory, routing, model
+      choices, communication capabilities, or cross-module synthesis.
+      Effectively always reachable by definition of the request being
+      in flight. The request itself is proof Deek is up.
     base_url: https://deek.nbnesigns.co.uk
     health_endpoint: /health
     context_endpoint: /api/deek/context

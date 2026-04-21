@@ -896,71 +896,49 @@ async def patch_task(
 # ── Voice chat ──────────────────────────────────────────────────────────────
 
 
-VOICE_SYSTEM_PROMPT = (
-    "You are Deek, NBNE's sovereign business brain, answering a VOICE query. "
+# Voice-specific behavioural rules. These append to the unified
+# identity prefix (NOT replace it). Identity is in DEEK_IDENTITY.md —
+# loaded by core.identity.assembler. These rules only describe the
+# TTS-specific constraints; everything else comes from identity.
+#
+# Brief 1a.2 Task 1: a single call site (core.identity.assembler.
+# get_system_prompt_prefix) is the source of truth across ALL paths.
+# The previous VOICE_SYSTEM_PROMPT constant (which contained its own
+# "I don't have that information" instruction directly at odds with
+# the identity layer's behavioural directive) is deleted.
+VOICE_TTS_RULES = (
+    "\n## Voice-mode output constraints\n"
     "Your response will be read aloud by text-to-speech, so:\n"
     "- Keep it UNDER 60 words.\n"
-    "- Use short sentences. No markdown, no code blocks, no bullet points.\n"
-    "- No tool calls — rely only on the context provided in this conversation.\n"
-    "- Copy figures EXACTLY from the context. Never round or rephrase numbers. "
-    "Say '£28,275' not 'two thousand eight hundred seventy-five pounds' — "
-    "the text-to-speech will pronounce it correctly.\n"
-    "- If you don't know, say so plainly: 'I don't have that information.'\n"
-    "- If the user is at the WORKSHOP, prioritise production + machine data.\n"
-    "- If OFFICE, prioritise CRM + email + client data.\n"
-    "- If HOME, softer tone, prioritise financial + high-level summary.\n"
+    "- Use short sentences. No markdown, no code blocks, no bullets.\n"
+    "- No tool calls on this path — rely on the identity above + the live\n"
+    "  context block below.\n"
+    "- Copy figures EXACTLY from context. Never round or rephrase numbers;\n"
+    "  TTS pronounces '£28,275' correctly.\n"
+    "- If the user's question is about LIVE DATA from a module and that\n"
+    "  module is unreachable per the identity above, say so and name the\n"
+    "  module. For questions about Deek's own capabilities, NBNE, the\n"
+    "  team, modules, LLMs, marketplaces, or email — answer from the\n"
+    "  identity above; do NOT default to 'I don't have that information'.\n"
+    "- Location prioritisation: WORKSHOP → production + machine data;\n"
+    "  OFFICE → CRM + email + client; HOME → softer tone, financial\n"
+    "  + high-level summary.\n"
 )
 
 
-def _voice_identity_block() -> str:
-    """Compact identity-aware header for voice/chat prompts.
+def _build_voice_system_prompt(location: str) -> str:
+    """Return the unified identity prefix + voice-specific rules.
 
-    Keeps voice style intact (short, TTS-friendly) while giving the
-    model the live module-reachability picture and a one-line company
-    identity, both sourced from DEEK_IDENTITY.md + DEEK_MODULES.yaml
-    via the identity layer. Without this, voice prompts bypass
-    core/agent.py and have no self-awareness of what modules Deek can
-    reach.
+    Delegates identity content to core.identity.assembler — the SAME
+    function core/agent.py uses for chat. This is the Brief 1a.2 Task 1
+    deliverable: one call site, zero divergence between paths.
     """
-    try:
-        from core.identity import assembler as _ia, probe as _ip
-        reach = _ip.get_reachable_modules()
-        errs = _ip.get_errors()
-        # Exclude the 'deek' entry — Deek is answering the question, so
-        # self-reachability via the public URL is noisy (nginx hairpin
-        # returns 502 even when Deek is clearly online) and confuses the
-        # 7B voice model into cherry-picking names.
-        modules = [m for m in _ia.get_modules() if m.name != 'deek']
-        reach_names = [m.display_name for m in modules if m.name in reach]
-        unreach = [
-            (m.display_name, errs.get(m.name, 'offline'))
-            for m in modules if m.name not in reach
-        ]
-        lines = [
-            "You are Deek, NBNE's sovereign AI brain for North By North East "
-            "Print & Sign Ltd (Alnwick, Northumberland). Directors: Toby and "
-            "Jo Fletcher.",
-            "",
-            "=== NBNE MODULES (ground truth for 'what can you access?') ===",
-            "ONLINE right now — you can use data from these: "
-            + (", ".join(reach_names) if reach_names else "(none)") + ".",
-        ]
-        if unreach:
-            lines.append(
-                "OFFLINE right now — do NOT claim data from these: "
-                + ", ".join(n for n, _ in unreach) + "."
-            )
-        else:
-            lines.append("OFFLINE right now: (none).")
-        lines.append(
-            "If asked 'what modules can you access' or similar, list the "
-            "ONLINE modules exactly as shown above. Do not invent names. "
-            "Do not include any module from the OFFLINE list."
-        )
-        return '\n'.join(lines) + '\n\n'
-    except Exception:
-        # Identity layer failures must never silently break voice.
-        return ''
+    from core.identity import assembler as _ia, probe as _ip
+    identity_prefix = _ia.get_system_prompt_prefix(
+        reachable=_ip.get_reachable_modules(),
+        errors=_ip.get_errors(),
+    )
+    return identity_prefix + VOICE_TTS_RULES
 
 
 def _ensure_voice_telemetry_schema() -> None:
@@ -1172,13 +1150,20 @@ async def chat_voice(
 
     context_section = "\n\n".join(ctx_blocks) if ctx_blocks else "(no live snapshots available)"
 
+    # Brief 1a.2 Task 1: unified system prompt. The previous
+    # "answer using ONLY the context above, else say I don't have
+    # that information" clause is deliberately removed — it conflicts
+    # with the identity layer's answering-self-referential-questions
+    # directive. The voice TTS rules (in VOICE_TTS_RULES) handle the
+    # "say so explicitly" behaviour correctly.
     system_prompt = (
-        _voice_identity_block()
-        + VOICE_SYSTEM_PROMPT
-        + f"\n\n=== LIVE BUSINESS CONTEXT (location: {body.location}) ===\n"
+        _build_voice_system_prompt(body.location)
+        + f"\n\n## Live business context (location: {body.location})\n"
         + context_section
-        + "\n\nAnswer the user's question using ONLY the context above. "
-          "If the answer isn't there, say 'I don't have that information'."
+        + "\n\nFor questions about LIVE BUSINESS DATA (orders, revenue,"
+          " pipeline, today's numbers), answer from the context above."
+          " For questions about Deek's own capabilities or NBNE itself,"
+          " answer from the identity block at the top."
     )
 
     t0 = time.monotonic()
@@ -1280,13 +1265,16 @@ def _build_voice_context(location: str) -> tuple[str, str]:
             ctx_blocks.append(f"=== {mod.upper()} SNAPSHOT ===\n{md[:2500]}")
 
     context_section = "\n\n".join(ctx_blocks) if ctx_blocks else "(no live snapshots available)"
+    # Brief 1a.2 Task 1 — unified system prompt. See the non-streaming
+    # endpoint above for the full rationale.
     system_prompt = (
-        _voice_identity_block()
-        + VOICE_SYSTEM_PROMPT
-        + f"\n\n=== LIVE BUSINESS CONTEXT (location: {location}) ===\n"
+        _build_voice_system_prompt(location)
+        + f"\n\n## Live business context (location: {location})\n"
         + context_section
-        + "\n\nAnswer the user's question using ONLY the context above. "
-          "If the answer isn't there, say 'I don't have that information'."
+        + "\n\nFor questions about LIVE BUSINESS DATA (orders, revenue,"
+          " pipeline, today's numbers), answer from the context above."
+          " For questions about Deek's own capabilities or NBNE itself,"
+          " answer from the identity block at the top."
     )
     return voice_model, system_prompt
 
