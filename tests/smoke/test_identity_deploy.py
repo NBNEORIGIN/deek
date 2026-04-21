@@ -65,6 +65,7 @@ CRON_LOG_PATHS = (
     '/var/log/cairn-wiki-sync.log',
     '/var/log/cairn-material-prices.log',
     '/var/log/cairn-crm-reflection.log',
+    '/var/log/deek-triage-replies.log',
 )
 
 # Invocation-level failure patterns. Seeing ANY of these in the last
