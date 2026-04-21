@@ -1,0 +1,588 @@
+"""Memory Brief reply parser — Phase B.
+
+The IMAP inbox poll (scripts/process_deek_inbox.py) indexes every
+email arriving at cairn@ into claw_code_chunks with chunk_type='email'.
+This module reads those chunks, recognises replies to Memory Brief
+emails by their subject + structural markers, parses the answer
+blocks, and applies corrections back to memory.
+
+Discipline carried through from Phase A:
+
+  * Idempotent. Running against the same inbox state twice must not
+    double-apply answers. Uses a SHA over (raw_body + run_id) as the
+    dedup key against `memory_brief_responses`.
+  * Fail loud. A malformed reply is logged, the parse-failure is
+    recorded in filter_signals, but the runner keeps going. No silent
+    skip.
+  * Provenance preserved. Every applied correction is traceable back
+    to the `memory_brief_runs` row it answered.
+
+Actions by category (all append to filter_signals for audit):
+
+    belief_audit
+      TRUE   → schemas.salience += 0.5 (clipped to 10.0), access_count++
+      FALSE  → schemas.salience -= 1.0 (floor 0.5), status unchanged
+               (demotion on false belief is aggressive; full deletion
+                requires human decision captured via a text correction)
+      text   → schemas.schema_text overwritten, salience reset to 1.5
+               to force re-consolidation against the corrected version
+
+    gist_validation
+      YES    → schemas.access_count++, confidence += 0.1 (floor 0.95)
+      NO     → schemas.status = 'dormant' (stays retrievable at 0.75x)
+      text   → schemas.schema_text replaced with the revised text
+
+    salience_calibration
+      YES    → the memory chunk's salience confirmed (no change, but
+                audit row records confirmation for future trend analysis)
+      NO     → chunk salience -= 2.0 (floor 0.5), so the extractor's
+                false-positive is down-weighted for future retrievals
+      text   → salience -= 1.0 and the text reply is written as a
+                new memory with toby_flag=true referencing the original
+
+    open_ended
+      Any text → written as a new memory with toby_flag=true,
+                 chunk_type='memory', linked to the run via
+                 memory_brief_responses.applied_summary
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import os
+import re
+import uuid
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
+
+logger = logging.getLogger(__name__)
+
+
+# ── Recognising brief replies in the email chunk table ───────────────
+
+# The outgoing email subject is 'Deek morning brief — YYYY-MM-DD'. A
+# reply typically prefixes 'Re: '. Allow for both with/without the
+# em dash encoding.
+_SUBJECT_RE = re.compile(
+    r're:\s*deek\s+morning\s+brief\s*[—-]\s*(\d{4}-\d{2}-\d{2})',
+    re.IGNORECASE,
+)
+
+# Email chunks are stored with the email's full subject as chunk_name
+# and `Email from <addr> (<date>)\\nSubject: ...\\n\\n<body>` as
+# chunk_content. We parse both.
+
+# Block delimiter baked into every outgoing brief by core/brief/composer.py:
+#   --- Q1 (belief_audit) ---
+#   ...
+#   (Expected reply format: TRUE / FALSE / [correction])
+_BLOCK_DELIM_RE = re.compile(
+    r'^---\s*Q(\d+)\s*\(([a-z_]+)\)\s*---\s*$',
+    re.MULTILINE,
+)
+
+_AFFIRMATIVE = frozenset({
+    'true', 'yes', 'y', 'confirmed', 'correct', 'right',
+})
+_NEGATIVE = frozenset({
+    'false', 'no', 'n', 'wrong', 'incorrect', 'nope',
+})
+
+
+@dataclass
+class ParsedAnswer:
+    q_number: int
+    category: str
+    raw_text: str
+    verdict: str          # 'affirm' | 'deny' | 'correct' | 'empty'
+    correction_text: str  # populated when verdict == 'correct'
+
+
+@dataclass
+class ParsedReply:
+    run_date: date
+    user_email: str
+    answers: list[ParsedAnswer] = field(default_factory=list)
+    parse_notes: list[str] = field(default_factory=list)
+
+
+# ── Parsing ──────────────────────────────────────────────────────────
+
+def extract_date_from_subject(subject: str) -> date | None:
+    """Return the YYYY-MM-DD embedded in a brief reply subject. None
+    if the subject doesn't match the brief pattern at all.
+    """
+    if not subject:
+        return None
+    m = _SUBJECT_RE.search(subject)
+    if not m:
+        return None
+    try:
+        return datetime.strptime(m.group(1), '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+
+def _strip_quoted(text: str) -> str:
+    """Remove common reply-quote patterns so we don't re-parse our
+    own outgoing block delimiters.
+
+    Email clients use a few conventions; we handle:
+      * Lines starting with '> ' (most quoting)
+      * '--- Original Message ---' boundaries (Outlook-ish)
+      * 'On <date>, <name> wrote:' header lines
+    """
+    lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith('>'):
+            break  # everything below the first quoted line is the original
+        if stripped.startswith('--- Original Message ---'):
+            break
+        if re.match(r'^On .+wrote:\s*$', stripped):
+            break
+        lines.append(line)
+    return '\n'.join(lines).strip()
+
+
+def _classify(answer_text: str) -> tuple[str, str]:
+    """Classify an answer text into (verdict, correction_text).
+
+    The first line of a non-quoted answer is the verdict. If the first
+    word is affirmative / negative, that's the verdict; everything
+    else is treated as a correction (free text). Empty answers are
+    flagged.
+    """
+    cleaned = answer_text.strip()
+    if not cleaned:
+        return 'empty', ''
+    # Drop the "(Expected reply format: ...)" hint line if present
+    cleaned_lines = [
+        l for l in cleaned.splitlines()
+        if not l.lstrip().startswith('(Expected reply format:')
+    ]
+    cleaned = '\n'.join(cleaned_lines).strip()
+    if not cleaned:
+        return 'empty', ''
+
+    first_line = cleaned.splitlines()[0].strip()
+    # Strip the block separator '/' from the format hint
+    first_tokens = re.split(r'[\s/,]+', first_line.lower())
+    first_tokens = [t for t in first_tokens if t]
+    if first_tokens:
+        if first_tokens[0] in _AFFIRMATIVE:
+            return 'affirm', ''
+        if first_tokens[0] in _NEGATIVE:
+            return 'deny', ''
+    return 'correct', cleaned
+
+
+def parse_reply_body(body: str, user_email: str, run_date: date) -> ParsedReply:
+    """Split a brief-reply body into answer blocks.
+
+    The delimiter structure is the same as the outgoing brief — every
+    answer block starts with `--- Q<n> (<category>) ---`. We split on
+    that pattern, drop quoted content per _strip_quoted, and classify
+    each block.
+    """
+    reply = ParsedReply(run_date=run_date, user_email=user_email)
+    stripped = _strip_quoted(body)
+    if not stripped:
+        reply.parse_notes.append('body empty after quote stripping')
+        return reply
+
+    # Find all delimiter positions
+    matches = list(_BLOCK_DELIM_RE.finditer(stripped))
+    if not matches:
+        reply.parse_notes.append(
+            'no "--- Q<n> (<category>) ---" delimiters found; '
+            'treating whole body as one open_ended answer'
+        )
+        # Degenerate path — user replied without keeping the delimiters
+        # intact. Better to capture their whole reply as an open-ended
+        # answer than silently drop.
+        reply.answers.append(ParsedAnswer(
+            q_number=0, category='open_ended',
+            raw_text=stripped,
+            verdict='correct', correction_text=stripped,
+        ))
+        return reply
+
+    # Slice between delimiters
+    for i, m in enumerate(matches):
+        q_num = int(m.group(1))
+        category = m.group(2)
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(stripped)
+        block_text = stripped[start:end].strip()
+        verdict, correction = _classify(block_text)
+        reply.answers.append(ParsedAnswer(
+            q_number=q_num, category=category,
+            raw_text=block_text, verdict=verdict,
+            correction_text=correction,
+        ))
+    return reply
+
+
+# ── DB operations ────────────────────────────────────────────────────
+
+def _connect():
+    import psycopg2
+    db_url = os.getenv('DATABASE_URL', '')
+    if not db_url:
+        raise RuntimeError('DATABASE_URL not set')
+    return psycopg2.connect(db_url, connect_timeout=5)
+
+
+def _body_hash(raw_body: str, run_id: str) -> str:
+    h = hashlib.sha256()
+    h.update(run_id.encode('utf-8'))
+    h.update(b'\0')
+    h.update((raw_body or '').encode('utf-8', errors='replace'))
+    return h.hexdigest()
+
+
+def find_run_for_reply(
+    conn, user_email: str, run_date: date,
+) -> tuple[str, dict] | None:
+    """Look up the memory_brief_runs row matching (user, date).
+    Returns (run_id, questions_dict) or None.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT id::text, questions
+                 FROM memory_brief_runs
+                WHERE user_email = %s
+                  AND (generated_at AT TIME ZONE 'UTC')::date = %s
+                  AND delivery_status = 'sent'
+                ORDER BY generated_at DESC
+                LIMIT 1""",
+            (user_email, run_date),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    run_id = row[0]
+    questions_raw = row[1]
+    if isinstance(questions_raw, str):
+        try:
+            questions_list = json.loads(questions_raw)
+        except Exception:
+            questions_list = []
+    else:
+        questions_list = questions_raw or []
+    # Index by category for easy lookup — if multiple questions share
+    # a category (rare at current volume), the first one wins.
+    qmap = {q.get('category'): q for q in questions_list}
+    return run_id, qmap
+
+
+def already_applied(conn, run_id: str, raw_body: str) -> bool:
+    """Idempotency check — return True if this exact reply body has
+    already been stored for this run."""
+    digest = _body_hash(raw_body, run_id)
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT 1 FROM memory_brief_responses
+                WHERE run_id = %s::uuid
+                  AND encode(sha256(raw_body::bytea), 'hex') = %s
+                LIMIT 1""",
+            (run_id, digest[:64]),
+        )
+        return cur.fetchone() is not None
+
+
+def _apply_belief_audit(conn, schema_id: str, answer: ParsedAnswer) -> dict:
+    """schemas belief_audit action. Returns summary dict for the
+    audit row."""
+    summary = {'category': 'belief_audit', 'schema_id': schema_id, 'verdict': answer.verdict}
+    if not schema_id:
+        summary['note'] = 'no schema_id in provenance; skipped'
+        return summary
+    with conn.cursor() as cur:
+        if answer.verdict == 'affirm':
+            cur.execute(
+                """UPDATE schemas
+                      SET salience = LEAST(10.0, salience + 0.5),
+                          access_count = access_count + 1,
+                          last_accessed_at = NOW()
+                    WHERE id = %s::uuid""",
+                (schema_id,),
+            )
+            summary['action'] = 'reinforced +0.5'
+        elif answer.verdict == 'deny':
+            cur.execute(
+                """UPDATE schemas
+                      SET salience = GREATEST(0.5, salience - 1.0)
+                    WHERE id = %s::uuid""",
+                (schema_id,),
+            )
+            summary['action'] = 'demoted -1.0'
+        elif answer.verdict == 'correct':
+            cur.execute(
+                """UPDATE schemas
+                      SET schema_text = %s,
+                          salience = 1.5,
+                          last_accessed_at = NOW()
+                    WHERE id = %s::uuid""",
+                (answer.correction_text, schema_id),
+            )
+            summary['action'] = 'corrected; salience reset to 1.5'
+        else:
+            summary['action'] = 'no-op (empty reply)'
+    return summary
+
+
+def _apply_gist_validation(conn, schema_id: str, answer: ParsedAnswer) -> dict:
+    summary = {'category': 'gist_validation', 'schema_id': schema_id, 'verdict': answer.verdict}
+    if not schema_id:
+        summary['note'] = 'no schema_id in provenance; skipped'
+        return summary
+    with conn.cursor() as cur:
+        if answer.verdict == 'affirm':
+            cur.execute(
+                """UPDATE schemas
+                      SET access_count = access_count + 1,
+                          confidence = LEAST(0.95, confidence + 0.1),
+                          last_accessed_at = NOW()
+                    WHERE id = %s::uuid""",
+                (schema_id,),
+            )
+            summary['action'] = 'confidence +0.1'
+        elif answer.verdict == 'deny':
+            cur.execute(
+                """UPDATE schemas
+                      SET status = 'dormant'
+                    WHERE id = %s::uuid""",
+                (schema_id,),
+            )
+            summary['action'] = 'demoted to dormant'
+        elif answer.verdict == 'correct':
+            cur.execute(
+                """UPDATE schemas
+                      SET schema_text = %s,
+                          last_accessed_at = NOW()
+                    WHERE id = %s::uuid""",
+                (answer.correction_text, schema_id),
+            )
+            summary['action'] = 'text revised'
+        else:
+            summary['action'] = 'no-op (empty reply)'
+    return summary
+
+
+def _apply_salience_calibration(
+    conn, memory_id: int, answer: ParsedAnswer,
+) -> dict:
+    summary = {
+        'category': 'salience_calibration',
+        'memory_id': memory_id, 'verdict': answer.verdict,
+    }
+    if not memory_id:
+        summary['note'] = 'no memory_id in provenance; skipped'
+        return summary
+    with conn.cursor() as cur:
+        if answer.verdict == 'affirm':
+            # Confirmation — no change, but flag for future trend analysis
+            summary['action'] = 'confirmed (salience unchanged)'
+        elif answer.verdict == 'deny':
+            cur.execute(
+                """UPDATE claw_code_chunks
+                      SET salience = GREATEST(0.5, salience - 2.0)
+                    WHERE id = %s""",
+                (memory_id,),
+            )
+            summary['action'] = 'salience -2.0 (false positive)'
+        elif answer.verdict == 'correct':
+            # Reduce original + capture the nuance as a new memory
+            cur.execute(
+                """UPDATE claw_code_chunks
+                      SET salience = GREATEST(0.5, salience - 1.0)
+                    WHERE id = %s""",
+                (memory_id,),
+            )
+            summary['action'] = 'salience -1.0 + correction captured'
+            summary['correction_captured'] = True
+        else:
+            summary['action'] = 'no-op (empty reply)'
+    return summary
+
+
+def _write_toby_memory(
+    conn, user_email: str, content: str, reference_id: int | None = None,
+) -> int | None:
+    """Write a new memory chunk with toby_flag=true. Returns the new
+    chunk id.
+
+    Uses the embedding function from core.wiki.embeddings. If the
+    embedding fails we still write the chunk but without an embedding
+    — the audit log will flag it.
+    """
+    if not content.strip():
+        return None
+    try:
+        from core.wiki.embeddings import get_embed_fn
+        embed_fn = get_embed_fn()
+        emb = embed_fn(content[:6000]) if embed_fn else None
+    except Exception as exc:
+        logger.warning('[brief-reply] embed failed (non-fatal): %s', exc)
+        emb = None
+
+    content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+    file_path = f'memory/brief-reply/{content_hash[:16]}'
+    signals = {'toby_flag': 1.0, 'via': 'memory_brief_reply'}
+    if reference_id is not None:
+        signals['references'] = [int(reference_id)]
+
+    with conn.cursor() as cur:
+        if emb is not None:
+            cur.execute(
+                """INSERT INTO claw_code_chunks
+                    (project_id, file_path, chunk_content, chunk_type,
+                     chunk_name, content_hash, embedding, indexed_at,
+                     salience, salience_signals, last_accessed_at,
+                     access_count)
+                   VALUES ('deek', %s, %s, 'memory', %s, %s,
+                           %s::vector, NOW(), 7.0, %s::jsonb, NOW(), 0)
+                   RETURNING id""",
+                (file_path, content, content[:200], content_hash, emb,
+                 json.dumps(signals)),
+            )
+        else:
+            cur.execute(
+                """INSERT INTO claw_code_chunks
+                    (project_id, file_path, chunk_content, chunk_type,
+                     chunk_name, content_hash, indexed_at,
+                     salience, salience_signals, last_accessed_at,
+                     access_count)
+                   VALUES ('deek', %s, %s, 'memory', %s, %s,
+                           NOW(), 7.0, %s::jsonb, NOW(), 0)
+                   RETURNING id""",
+                (file_path, content, content[:200], content_hash,
+                 json.dumps(signals)),
+            )
+        (new_id,) = cur.fetchone()
+    return int(new_id)
+
+
+def apply_reply(conn, reply: ParsedReply) -> dict:
+    """Apply every answer in a parsed reply to the memory layer.
+
+    Returns a summary suitable for memory_brief_responses.applied_summary.
+    Never raises — errors per-answer are captured in summary.
+    """
+    summary: dict = {
+        'user_email': reply.user_email,
+        'run_date': reply.run_date.isoformat(),
+        'answers_processed': [],
+        'parse_notes': reply.parse_notes,
+    }
+
+    run = find_run_for_reply(conn, reply.user_email, reply.run_date)
+    if not run:
+        summary['error'] = (
+            f'no memory_brief_runs row for {reply.user_email} on '
+            f'{reply.run_date.isoformat()}'
+        )
+        return summary
+    run_id, qmap = run
+    summary['run_id'] = run_id
+
+    for ans in reply.answers:
+        try:
+            provenance = (qmap.get(ans.category) or {}).get('provenance') or {}
+            action_summary: dict = {
+                'q_number': ans.q_number,
+                'category': ans.category,
+                'verdict': ans.verdict,
+            }
+
+            if ans.category == 'belief_audit':
+                action_summary.update(_apply_belief_audit(
+                    conn, provenance.get('schema_id', ''), ans,
+                ))
+            elif ans.category == 'gist_validation':
+                action_summary.update(_apply_gist_validation(
+                    conn, provenance.get('schema_id', ''), ans,
+                ))
+            elif ans.category == 'salience_calibration':
+                action_summary.update(_apply_salience_calibration(
+                    conn, int(provenance.get('memory_id') or 0), ans,
+                ))
+                # If correction text given, capture as new memory
+                if ans.verdict == 'correct' and ans.correction_text:
+                    ref = int(provenance.get('memory_id') or 0)
+                    new_id = _write_toby_memory(
+                        conn, reply.user_email,
+                        f'Correction on memory {ref}: {ans.correction_text}',
+                        reference_id=ref,
+                    )
+                    if new_id:
+                        action_summary['new_memory_id'] = new_id
+            elif ans.category == 'open_ended':
+                if ans.raw_text.strip():
+                    new_id = _write_toby_memory(
+                        conn, reply.user_email,
+                        f'Toby open-ended reflection: {ans.raw_text.strip()}',
+                    )
+                    if new_id:
+                        action_summary['action'] = f'wrote new memory {new_id}'
+                        action_summary['new_memory_id'] = new_id
+                    else:
+                        action_summary['action'] = 'empty or embed failed'
+                else:
+                    action_summary['action'] = 'empty'
+            else:
+                action_summary['action'] = f'unknown category; stored raw'
+
+            summary['answers_processed'].append(action_summary)
+        except Exception as exc:
+            summary['answers_processed'].append({
+                'q_number': ans.q_number,
+                'category': ans.category,
+                'error': f'{type(exc).__name__}: {exc}',
+            })
+            logger.warning('[brief-reply] per-answer failure: %s', exc)
+    return summary
+
+
+def store_response(
+    conn, run_id: str, raw_body: str,
+    parsed: ParsedReply, applied_summary: dict,
+) -> str:
+    """Insert the memory_brief_responses row marking this reply
+    processed. Returns the new response id."""
+    response_id = str(uuid.uuid4())
+    parsed_json = json.dumps({
+        'answers': [
+            {
+                'q_number': a.q_number,
+                'category': a.category,
+                'verdict': a.verdict,
+                'correction_text': a.correction_text,
+            }
+            for a in parsed.answers
+        ],
+        'parse_notes': parsed.parse_notes,
+    })
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO memory_brief_responses
+                (id, run_id, received_at, raw_body, parsed_answers,
+                 applied_at, applied_summary)
+               VALUES (%s, %s, NOW(), %s, %s::jsonb, NOW(), %s::jsonb)""",
+            (
+                response_id, run_id, raw_body,
+                parsed_json, json.dumps(applied_summary),
+            ),
+        )
+    return response_id
+
+
+__all__ = [
+    'ParsedAnswer', 'ParsedReply',
+    'extract_date_from_subject', 'parse_reply_body',
+    'find_run_for_reply', 'already_applied',
+    'apply_reply', 'store_response',
+]

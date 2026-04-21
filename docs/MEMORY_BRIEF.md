@@ -4,10 +4,13 @@ Every morning, Deek emails a small set of questions grounded in live
 memory state. Replies (Phase B) parse back into memory corrections —
 closing the loop between algorithmic beliefs and human ground truth.
 
-**Status: Phase A — send only, no reply parsing yet.** Trial phase
+**Status: Phase B — send + reply parsing live.** Trial phase
 (Toby only). Cron starts in `--dry-run` mode so the first 3 days are
 logged to stdout without sending email; after reviewing question
-quality the `--dry-run` flag comes off the cron.
+quality the `--dry-run` flag comes off the cron. Replies land in
+`cairn@nbnesigns.com`, get indexed by the existing IMAP poll, then
+parsed and applied to memory by a separate reply processor at :05
+and :35 past each hour.
 
 ## Why this exists
 
@@ -72,19 +75,56 @@ overrides the check for manual re-sends.
 ## Reply handling (Phase B)
 
 Replies to the email go to `cairn@nbnesigns.com`, which is polled
-every 15 minutes by the existing inbox infrastructure. Phase B adds
-a parser that:
+every 15 minutes by `scripts/process_deek_inbox.py` (the existing
+inbox infrastructure). Each email gets indexed into
+`claw_code_chunks` with `chunk_type='email'`.
 
-1. Recognises brief-reply emails by the `[Deek brief]` subject
-   prefix (Phase B adds this; Phase A subjects don't carry it)
-2. Splits the body by `--- Q<n> ---` delimiters
-3. For each answer block, looks up the provenance from
-   `memory_brief_runs.questions` and writes the correction to the
-   relevant schema / memory row
-4. Records the parse in `memory_brief_responses`
+At :05 and :35 past the hour (5 minutes after each inbox poll),
+`scripts/process_memory_brief_replies.py` runs. It:
 
-Phase A leaves replies accumulating in the inbox for manual review
-until the parser lands.
+1. Queries `claw_code_chunks` for email chunks indexed in the last
+   48 hours whose subject contains "deek morning brief" (case
+   insensitive)
+2. Extracts the date from the reply subject via regex, looks up
+   the matching `memory_brief_runs` row
+3. Idempotency check: skip if a `memory_brief_responses` row
+   already exists for this `(run_id, raw_body)` pair
+4. Strips quoted / reply-header content from the body
+5. Splits on the `--- Q<n> (<category>) ---` delimiters we baked
+   into every outgoing brief
+6. For each answer block, classifies the first word as affirm /
+   deny / correct / empty and captures the correction text
+7. Applies an action per category (reinforce / demote / correct);
+   see the action table in `core/brief/replies.py` docstring
+8. Writes a `memory_brief_responses` row with the parsed answers
+   and an audit summary of what changed
+
+### Action table
+
+| Category | affirm (YES/TRUE) | deny (NO/FALSE) | correction text |
+|---|---|---|---|
+| `belief_audit` | schemas.salience +0.5 | schemas.salience -1.0 | schemas.schema_text replaced; salience reset to 1.5 |
+| `gist_validation` | schemas.confidence +0.1 | schemas.status → dormant | schemas.schema_text replaced |
+| `salience_calibration` | no change (confirmation) | memory.salience -2.0 | memory.salience -1.0 + new memory captured with `toby_flag=true` citing the original |
+| `open_ended` | — | — | always captured as a new memory with `toby_flag=true` |
+
+### Failure modes
+
+| What | Behaviour |
+|---|---|
+| Reply subject doesn't match pattern | skipped, logged, no response row |
+| Body has no delimiters | whole body stored as one open-ended answer (user replied without keeping headers) |
+| No matching run for the reply date | skipped with audit note |
+| Already-applied reply | idempotent no-op, no row written |
+| Embedding fails during `toby_flag` memory write | chunk written without embedding; surfaced in later retrieval audit |
+
+### Malformed replies
+
+Replies arriving without the `--- Q<n> ---` delimiters get treated
+as a single open-ended answer rather than dropped. This is the
+right failure mode — forcing replies to match a specific format
+trains the user to ignore the brief. Free-text wins; structured
+replies just carry more actionable signal.
 
 ## Tier expansion (Phase C)
 
