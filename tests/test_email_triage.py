@@ -343,7 +343,11 @@ def test_digest_sender_existing_project_body_format():
     subject, body = format_digest_body(row)
     assert 'existing_project_reply' in subject
     assert 'prj-abc-123' in body
-    assert 'follow-up' in body.lower()
+    # Phase A+ digest: structured candidates + reply-back block
+    # (the legacy "follow-up" text is gone). Assert on the shape we
+    # actually ship now.
+    assert '--- Q1 (match_confirm) ---' in body
+    assert 'PROPOSED REPLY' in body or 'CANDIDATE PROJECTS' in body
 
 
 # ── DB helpers smoke test ──────────────────────────────────────────────
