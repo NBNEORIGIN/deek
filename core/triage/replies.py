@@ -245,6 +245,36 @@ def _classify_simple_text(q: int, category: str, text: str) -> ParsedAnswer:
                         raw_text=text, verdict='text', free_text=cleaned)
 
 
+_SKIP_WORDS = frozenset({'skip', 'none', 'n/a', 'na', '-', 'pass'})
+
+
+def _classify_similar_job_useful(text: str) -> ParsedAnswer:
+    """Q5 — which similar past job was useful for this quote?
+
+    Accepted shapes:
+      * '1' / '2' / '3'        → select_candidate
+      * 'SKIP' / 'NONE' / '-'  → empty (no-op, no learning signal)
+      * free text              → text (captured verbatim as a note)
+    """
+    cleaned = (text or '').strip()
+    if not cleaned:
+        return ParsedAnswer(q_number=5, category='similar_job_useful',
+                            raw_text=text, verdict='empty')
+    first = cleaned.splitlines()[0].strip()
+    if first.lower() in _SKIP_WORDS:
+        return ParsedAnswer(q_number=5, category='similar_job_useful',
+                            raw_text=text, verdict='empty')
+    m = _CANDIDATE_NUMBER_RE.match(first)
+    if m:
+        return ParsedAnswer(
+            q_number=5, category='similar_job_useful', raw_text=text,
+            verdict='select_candidate',
+            selected_candidate_index=int(m.group(1)),
+        )
+    return ParsedAnswer(q_number=5, category='similar_job_useful',
+                        raw_text=text, verdict='text', free_text=cleaned)
+
+
 def _strip_format_hint(text: str) -> str:
     """Drop the '(Expected reply format: ...)' hint lines if the user
     left them intact."""
@@ -287,6 +317,10 @@ def parse_reply_body(body: str, user_email: str, triage_id: int | None) -> Parse
         elif category in ('project_folder', 'notes'):
             reply.answers.append(
                 _classify_simple_text(q_num, category, block_text),
+            )
+        elif category == 'similar_job_useful':
+            reply.answers.append(
+                _classify_similar_job_useful(block_text),
             )
         else:
             # Unknown category — preserve for diagnostics
@@ -468,6 +502,41 @@ def _patch_crm_project_folder(
     return out
 
 
+def _mark_similar_job_useful(
+    conn, triage_id: int, useful_index: int,
+) -> int | None:
+    """Flag the most recent triage_similarity_debug row for this
+    triage_id with the candidate index Toby marked useful. Returns
+    the debug row id, or None if no debug row exists (shadow mode
+    was off when the digest went out, or the table hasn't been
+    written yet).
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE cairn_intel.triage_similarity_debug
+                     SET useful_index = %s,
+                         useful_flagged_at = NOW()
+                    WHERE id = (
+                        SELECT id FROM cairn_intel.triage_similarity_debug
+                         WHERE triage_id = %s
+                         ORDER BY created_at DESC
+                         LIMIT 1
+                    )
+                  RETURNING id""",
+                (int(useful_index), int(triage_id)),
+            )
+            row = cur.fetchone()
+        return int(row[0]) if row else None
+    except Exception as exc:
+        logger.warning('[triage-reply] mark-useful failed: %s', exc)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+
+
 def _write_toby_memory(
     conn, text: str, reference_triage_id: int,
     tag: str = 'triage_reply_note',
@@ -611,6 +680,39 @@ def apply_reply(conn, reply: ParsedReply, raw_body: str) -> dict:
                     action['result'] = f'set project folder'
                 else:
                     action['result'] = 'empty; no folder recorded'
+
+            elif ans.category == 'similar_job_useful':
+                # Phase D learning signal. Store on the
+                # triage_similarity_debug row so Phase E can aggregate
+                # across all digests. Also write a toby-flagged memory
+                # chunk so retrieval picks it up.
+                if ans.verdict == 'select_candidate':
+                    idx = ans.selected_candidate_index or 0
+                    marked = _mark_similar_job_useful(
+                        conn, reply.triage_id, idx,
+                    )
+                    action['result'] = (
+                        f'marked similar job #{idx} useful '
+                        f'(debug_row={marked})'
+                    )
+                    _write_toby_memory(
+                        conn,
+                        f'Similar past job #{idx} flagged useful by Toby '
+                        f'for triage {reply.triage_id}.',
+                        reference_triage_id=reply.triage_id,
+                        tag='triage_similarity_useful',
+                    )
+                elif ans.verdict == 'text':
+                    _write_toby_memory(
+                        conn,
+                        f'Similar-jobs free-text on triage '
+                        f'{reply.triage_id}: {ans.free_text}',
+                        reference_triage_id=reply.triage_id,
+                        tag='triage_similarity_note',
+                    )
+                    action['result'] = 'similarity free-text captured'
+                else:
+                    action['result'] = 'empty; no similarity signal'
 
             elif ans.category == 'notes':
                 if ans.verdict == 'text' and ans.free_text:

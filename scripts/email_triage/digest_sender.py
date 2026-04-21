@@ -182,11 +182,48 @@ def _build_draft_block(row: dict) -> list[str]:
     return lines
 
 
-def _build_reply_back_block(row: dict) -> list[str]:
+def _build_similar_jobs_block(jobs: list) -> list[str]:
+    """Phase D — render the top-N similar past jobs below candidates.
+
+    If ``jobs`` is empty, returns an empty list (caller renders nothing,
+    so the digest stays tight when there's no similarity signal).
+    """
+    if not jobs:
+        return []
+    lines = [
+        '=' * 60,
+        'SIMILAR PAST JOBS (for pricing / spec context)',
+        '=' * 60,
+        '',
+    ]
+    for i, j in enumerate(jobs, 1):
+        name = (j.project_name or '(unnamed)')[:80]
+        client = j.client_name or '—'
+        lines.append(f'  {i}. [{j.project_id}] {name}')
+        lines.append(f'       client:   {client}')
+        bits: list[str] = []
+        if j.quoted_amount is not None:
+            bits.append(f'quoted £{j.quoted_amount:,.0f}')
+        if j.status:
+            bits.append(j.status)
+        if bits:
+            lines.append(f'       outcome:  ' + ' · '.join(bits))
+        if j.summary:
+            lines.append(f'       | {j.summary}')
+        lines.append(f'       match:    {j.score:.3f}')
+        lines.append('')
+    return lines
+
+
+def _build_reply_back_block(row: dict, include_q5: bool = False) -> list[str]:
     """The structured answer block Toby fills in. Phase B parses this
     same shape back into CRM updates + memory corrections.
+
+    Q5 is added when a similar-jobs block was rendered (Phase D
+    post-cutover). Shadow mode hides it so we don't ask about jobs
+    Toby can't see.
     """
-    return [
+    lines = [
         '=' * 60,
         'YOUR ANSWER (reply to this email; keep the Q<n> headers intact)',
         '=' * 60,
@@ -208,6 +245,14 @@ def _build_reply_back_block(row: dict) -> list[str]:
         '  Reply: (free text, optional)',
         '',
     ]
+    if include_q5:
+        lines.extend([
+            '--- Q5 (similar_job_useful) ---',
+            '  Which similar past job above helped you quote this one?',
+            '  Reply: 1 / 2 / 3 / SKIP',
+            '',
+        ])
+    return lines
 
 
 def format_digest_body(row: dict) -> tuple[str, str]:
@@ -268,7 +313,16 @@ def format_digest_body(row: dict) -> tuple[str, str]:
         # so a single email closes the loop.
         body_parts.extend(_build_candidates_block(row))
         body_parts.extend(_build_draft_block(row))
-        body_parts.extend(_build_reply_back_block(row))
+
+        # Phase D: similar past jobs. Always run the query (logs to
+        # triage_similarity_debug either way). The rendered block
+        # + Q5 are gated by DEEK_SIMILARITY_SHADOW.
+        similar_jobs, rendered = _similar_jobs_for_digest(row)
+        if rendered and similar_jobs:
+            body_parts.extend(_build_similar_jobs_block(similar_jobs))
+        body_parts.extend(_build_reply_back_block(
+            row, include_q5=(rendered and bool(similar_jobs)),
+        ))
 
     body_parts.append('')
     body_parts.append('=' * 60)
@@ -293,6 +347,52 @@ def format_digest_body(row: dict) -> tuple[str, str]:
     )
 
     return subject, '\n'.join(body_parts)
+
+
+def _similar_jobs_for_digest(row: dict) -> tuple[list, bool]:
+    """Phase D helper. Runs find_and_log() (always, for audit) and
+    returns (jobs, should_render).
+
+    ``should_render`` is True iff DEEK_SIMILARITY_SHADOW is off. In
+    shadow mode the query still runs and the debug table still gets
+    a row, but the digest block + Q5 are suppressed.
+
+    Never raises. On any error returns ([], False).
+    """
+    try:
+        from core.triage.similar_jobs import find_and_log, is_similarity_shadow
+    except Exception as exc:
+        log.warning('_similar_jobs_for_digest: import failed: %s', exc)
+        return [], False
+
+    enquiry = (
+        row.get('analyzer_brief')
+        or row.get('email_subject')
+        or ''
+    )
+    enquiry = _strip_verbatim_wrapper(enquiry) if enquiry else ''
+    if not enquiry:
+        return [], False
+
+    try:
+        import psycopg2
+        db_url = os.getenv('DATABASE_URL', '')
+        if not db_url:
+            return [], False
+        with psycopg2.connect(db_url, connect_timeout=5) as conn:
+            jobs = find_and_log(
+                conn,
+                triage_id=int(row.get('id') or 0),
+                enquiry_summary=enquiry,
+                client_name=row.get('client_name_guess'),
+                exclude_project_id=row.get('project_id'),
+            )
+    except Exception as exc:
+        log.warning('_similar_jobs_for_digest: query failed: %s', exc)
+        return [], False
+
+    should_render = not is_similarity_shadow()
+    return jobs, should_render
 
 
 def _strip_verbatim_wrapper(brief: str) -> str:
