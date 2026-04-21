@@ -410,6 +410,64 @@ def _post_crm_note(
     return (data or {}).get('id')
 
 
+def _patch_crm_project_folder(
+    project_id: str, folder_path: str,
+) -> dict:
+    """Phase C: PATCH the CRM project with a dedicated folder column.
+
+    Tries PATCH /api/cairn/projects/{id}/folder. Returns a summary
+    dict:
+      {'applied': bool, 'endpoint_available': bool, 'note': str}
+
+    On 404/405 the CRM doesn't have the endpoint yet (Phase C brief
+    not merged). We return endpoint_available=False and the caller
+    falls back to embedding folder_path in the note body — the
+    pre-Phase-C behaviour. No-ops on empty path or missing id.
+
+    The probe is cheap (one HTTP round-trip per reply with a folder
+    path set; that's at most a handful per day). Once the endpoint
+    exists, every subsequent call succeeds cleanly.
+    """
+    import httpx
+    out = {'applied': False, 'endpoint_available': False, 'note': ''}
+    if not project_id or not folder_path or not folder_path.strip():
+        out['note'] = 'no-op (empty id or path)'
+        return out
+    base = (os.getenv('CRM_BASE_URL') or 'https://crm.nbnesigns.co.uk').rstrip('/')
+    token = (
+        os.getenv('DEEK_API_KEY')
+        or os.getenv('CAIRN_API_KEY')
+        or os.getenv('CLAW_API_KEY', '')
+    ).strip()
+    if not token:
+        out['note'] = 'no auth token'
+        return out
+    url = f'{base}/api/cairn/projects/{project_id}/folder'
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.patch(
+                url,
+                json={'localFolderPath': folder_path.strip()[:500]},
+                headers={'Authorization': f'Bearer {token}'},
+            )
+    except Exception as exc:
+        out['note'] = f'{type(exc).__name__}: {exc}'
+        return out
+
+    if r.status_code in (404, 405):
+        # Phase C endpoint not live yet. Expected path today; caller
+        # folds the folder_path into the note body instead.
+        out['note'] = f'endpoint not available (HTTP {r.status_code})'
+        return out
+    out['endpoint_available'] = True
+    if r.status_code in (200, 201, 204):
+        out['applied'] = True
+        out['note'] = 'folder path set on CRM project'
+    else:
+        out['note'] = f'CRM returned HTTP {r.status_code}: {r.text[:200]}'
+    return out
+
+
 def _write_toby_memory(
     conn, text: str, reference_triage_id: int,
     tag: str = 'triage_reply_note',
@@ -575,17 +633,33 @@ def apply_reply(conn, reply: ParsedReply, raw_body: str) -> dict:
 
         summary['answers_processed'].append(action)
 
-    # CRM note: post the approved reply (if any) and the folder path
-    # update (if any) as a single consolidated note.
+    # Phase C: if there's a folder path, try the dedicated CRM
+    # endpoint first. On 404/405 (endpoint not deployed yet), the
+    # folder path folds into the note body as Phase B did.
+    folder_handled_by_patch = False
+    if final_project_id and project_folder_path:
+        patch_result = _patch_crm_project_folder(
+            final_project_id, project_folder_path,
+        )
+        summary['crm_folder_patch'] = patch_result
+        folder_handled_by_patch = patch_result.get('applied', False)
+
+    # CRM note: post the approved reply (and the folder path, if it
+    # wasn't already handled by the dedicated endpoint).
     crm_note_id: str | None = None
-    if final_project_id and (approved_reply or project_folder_path):
-        parts = []
-        if approved_reply:
-            parts.append('Approved reply (sent by Toby):\n\n' + approved_reply.strip())
-        if project_folder_path:
+    if final_project_id and approved_reply:
+        parts = ['Approved reply (sent by Toby):\n\n' + approved_reply.strip()]
+        if project_folder_path and not folder_handled_by_patch:
             parts.append(f'Project folder: {project_folder_path}')
         note_body = '\n\n'.join(parts)
         crm_note_id = _post_crm_note(final_project_id, note_body)
+        summary['crm_note_id'] = crm_note_id
+    elif final_project_id and project_folder_path and not folder_handled_by_patch:
+        # Folder-only update, no approved reply — and the dedicated
+        # endpoint wasn't available, so fall back to a note.
+        crm_note_id = _post_crm_note(
+            final_project_id, f'Project folder: {project_folder_path}',
+        )
         summary['crm_note_id'] = crm_note_id
 
     # Update the triage row — single UPDATE so the state is atomic.
