@@ -292,7 +292,13 @@ def _extract_inline_interleaved_answers(body: str) -> list['ParsedAnswer']:
     return out
 
 
-def parse_reply_body(body: str, user_email: str, run_date: date) -> ParsedReply:
+def parse_reply_body(
+    body: str,
+    user_email: str,
+    run_date: date,
+    *,
+    questions: list | None = None,
+) -> ParsedReply:
     """Split a brief-reply body into answer blocks.
 
     The delimiter structure is the same as the outgoing brief — every
@@ -300,7 +306,7 @@ def parse_reply_body(body: str, user_email: str, run_date: date) -> ParsedReply:
     that pattern, drop quoted content per _strip_quoted, and classify
     each block.
 
-    Handles two common shapes:
+    Handles three common shapes:
 
       1. User's answers are at the top, quoted original at the bottom.
          strip_quoted + delimiter split works.
@@ -310,6 +316,11 @@ def parse_reply_body(body: str, user_email: str, run_date: date) -> ParsedReply:
          `> ` prefixed quotes (IONOS webmail default). Detected and
          parsed by _extract_inline_interleaved_answers before the
          standard path.
+
+      3. Free-form prose (no delimiters, no interleaved structure).
+         If ``questions`` is provided, route through the local-LLM
+         conversational normaliser. Shadow-mode gated; see
+         core.brief.conversational.
     """
     reply = ParsedReply(run_date=run_date, user_email=user_email)
 
@@ -327,6 +338,45 @@ def parse_reply_body(body: str, user_email: str, run_date: date) -> ParsedReply:
     # Find all delimiter positions
     matches = list(_BLOCK_DELIM_RE.finditer(stripped))
     if not matches:
+        # Shape 3: free-form prose. Try the conversational normaliser
+        # before falling through to "whole body as one open_ended".
+        if questions:
+            try:
+                from .conversational import (
+                    ConversationalQuestion,
+                    normalise_conversational_reply,
+                )
+                cqs = [
+                    ConversationalQuestion(
+                        q_number=int(q.get('q_number') or i + 1),
+                        category=str(q.get('category') or 'open_ended'),
+                        prompt=str(q.get('prompt') or q.get('text') or ''),
+                        extra=str(q.get('extra') or ''),
+                    )
+                    for i, q in enumerate(questions)
+                ]
+                normalised = normalise_conversational_reply(
+                    stripped, cqs, kind='brief',
+                )
+            except Exception as exc:
+                normalised = None
+                reply.parse_notes.append(
+                    f'conversational normaliser error: {type(exc).__name__}'
+                )
+            if normalised:
+                reply.parse_notes.append(
+                    f'conversational-fallback: normalised {len(normalised)} answers'
+                )
+                for n in normalised:
+                    reply.answers.append(ParsedAnswer(
+                        q_number=n.q_number,
+                        category=n.category,
+                        raw_text=stripped,
+                        verdict=n.verdict if n.verdict != 'text' else 'correct',
+                        correction_text=n.correction_text or n.free_text,
+                    ))
+                return reply
+
         reply.parse_notes.append(
             'no "--- Q<n> (<category>) ---" delimiters found; '
             'treating whole body as one open_ended answer'

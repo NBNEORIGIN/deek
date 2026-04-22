@@ -169,14 +169,66 @@ def process_one(
         result['status'] = f'skipped (no run found for {reply_date.isoformat()})'
         return result
 
-    run_id, _qmap = run
+    run_id, qmap = run
     result['run_id'] = run_id
 
     if already_applied(conn, run_id, body):
         result['status'] = 'already-applied (idempotent skip)'
         return result
 
-    parsed = parse_reply_body(body, sender or 'unknown', reply_date)
+    # Build the question list so the conversational normaliser has
+    # the original prompts if the structured parser falls through.
+    conv_questions: list[dict] = []
+    if isinstance(qmap, list):
+        for i, q in enumerate(qmap):
+            if not isinstance(q, dict):
+                continue
+            conv_questions.append({
+                'q_number': i + 1,
+                'category': q.get('category') or 'open_ended',
+                'prompt': q.get('prompt') or '',
+            })
+
+    parsed = parse_reply_body(
+        body, sender or 'unknown', reply_date,
+        questions=conv_questions or None,
+    )
+    # Shadow-mode audit — log every conversational-fallback run so
+    # Toby can review accuracy before the cutover flips shadow off.
+    try:
+        from core.brief.conversational import (
+            is_conversational_shadow, log_conversational_shadow,
+            NormalisedAnswer,
+        )
+        note_str = ' | '.join(parsed.parse_notes or [])
+        if 'conversational-fallback' in note_str:
+            shadow_answers = [
+                NormalisedAnswer(
+                    q_number=a.q_number, category=a.category,
+                    verdict=a.verdict,
+                    correction_text=a.correction_text,
+                )
+                for a in parsed.answers
+            ]
+            log_conversational_shadow(
+                conn,
+                source='brief', reference_id=run_id,
+                raw_body=body,
+                normalised=shadow_answers,
+                applied=not is_conversational_shadow(),
+            )
+            if is_conversational_shadow():
+                result['status'] = 'conversational-shadow (not applied)'
+                result['shadow_answers'] = [
+                    {'q': a.q_number, 'cat': a.category,
+                     'verdict': a.verdict,
+                     'correction': a.correction_text[:120]}
+                    for a in parsed.answers
+                ]
+                return result
+    except Exception:
+        pass
+
     if not parsed.answers:
         result['status'] = 'parsed but no answers extracted'
         result['parse_notes'] = parsed.parse_notes

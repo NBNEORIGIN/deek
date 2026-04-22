@@ -295,12 +295,23 @@ def _strip_format_hint(text: str) -> str:
     ).strip()
 
 
-def parse_reply_body(body: str, user_email: str, triage_id: int | None) -> ParsedReply:
+def parse_reply_body(
+    body: str,
+    user_email: str,
+    triage_id: int | None,
+    *,
+    triage_context: dict | None = None,
+) -> ParsedReply:
     """Split a triage-reply body into answer blocks.
 
     Same delimiter contract as the Memory Brief. Each block is
     classified according to the category (four fixed categories for
     triage).
+
+    When no delimiters are found and ``triage_context`` is provided
+    (with keys: match_candidates, draft_reply), the body is routed
+    through the conversational normaliser so Toby can reply in
+    plain prose. Shadow-mode gated.
     """
     reply = ParsedReply(triage_id=triage_id, user_email=user_email)
     stripped = strip_quoted(body or '')
@@ -310,6 +321,18 @@ def parse_reply_body(body: str, user_email: str, triage_id: int | None) -> Parse
 
     matches = list(_BLOCK_DELIM_RE.finditer(stripped))
     if not matches:
+        # Try the conversational normaliser when we have the triage
+        # context to build a proper question list.
+        if triage_context:
+            conv_answers = _normalise_triage_conversational(
+                stripped, triage_context,
+            )
+            if conv_answers:
+                reply.parse_notes.append(
+                    f'conversational-fallback: normalised {len(conv_answers)} answers'
+                )
+                reply.answers = conv_answers
+                return reply
         reply.parse_notes.append('no Q<n> delimiters found; treating whole body as notes')
         reply.answers.append(_classify_simple_text(4, 'notes', stripped))
         return reply
@@ -343,6 +366,144 @@ def parse_reply_body(body: str, user_email: str, triage_id: int | None) -> Parse
 
 
 # ── DB + CRM operations ──────────────────────────────────────────────
+
+def _normalise_triage_conversational(
+    body: str, triage_context: dict,
+) -> list[ParsedAnswer]:
+    """Route a free-form triage reply through the local-LLM normaliser.
+
+    ``triage_context`` comes from ``load_triage_row`` and should have
+    ``match_candidates`` and ``draft_reply``. Returns a list of
+    ``ParsedAnswer`` (possibly empty). Never raises.
+    """
+    try:
+        from core.brief.conversational import (
+            ConversationalQuestion, normalise_conversational_reply,
+        )
+    except Exception:
+        return []
+
+    candidates = triage_context.get('match_candidates') or []
+    cand_lines = []
+    for i, c in enumerate(candidates[:3], 1):
+        name = (c or {}).get('project_name') or '(unnamed)'
+        pid = (c or {}).get('project_id') or ''
+        cand_lines.append(f'{i}. {name} (id={pid})')
+    cand_block = '\n'.join(cand_lines) if cand_lines else '(none)'
+
+    draft = (triage_context.get('draft_reply') or '').strip()
+    draft_preview = (draft[:400] + '…') if len(draft) > 400 else draft
+
+    questions = [
+        ConversationalQuestion(
+            q_number=1, category='match_confirm',
+            prompt=(
+                'Is the #1 candidate the correct project? '
+                'If a different candidate is correct, name which. '
+                'If none is correct, say so.'
+            ),
+            extra=f'Candidates:\n{cand_block}',
+        ),
+        ConversationalQuestion(
+            q_number=2, category='reply_approval',
+            prompt=(
+                'Send the drafted reply as-is, reject it, or rewrite it?'
+            ),
+            extra=f'Draft reply:\n{draft_preview}' if draft else '(no draft)',
+        ),
+        ConversationalQuestion(
+            q_number=3, category='project_folder',
+            prompt=(
+                'If the user mentioned where this project lives on '
+                'disk, capture that path. Otherwise empty.'
+            ),
+        ),
+        ConversationalQuestion(
+            q_number=4, category='notes',
+            prompt=(
+                'Any other notes the user wants remembered about '
+                'this project or client?'
+            ),
+        ),
+    ]
+    try:
+        normalised = normalise_conversational_reply(
+            body, questions, kind='triage',
+        )
+    except Exception:
+        return []
+    if not normalised:
+        return []
+
+    out: list[ParsedAnswer] = []
+    for n in normalised:
+        if n.verdict == 'empty':
+            out.append(ParsedAnswer(
+                q_number=n.q_number, category=n.category,
+                raw_text=body, verdict='empty',
+            ))
+            continue
+        if n.category == 'match_confirm':
+            if n.verdict == 'select_candidate':
+                out.append(ParsedAnswer(
+                    q_number=1, category='match_confirm',
+                    raw_text=body, verdict='select_candidate',
+                    selected_candidate_index=n.selected_candidate_index,
+                ))
+            elif n.verdict == 'affirm':
+                out.append(ParsedAnswer(
+                    q_number=1, category='match_confirm',
+                    raw_text=body, verdict='affirm',
+                ))
+            elif n.verdict == 'deny':
+                out.append(ParsedAnswer(
+                    q_number=1, category='match_confirm',
+                    raw_text=body, verdict='deny',
+                ))
+            else:  # 'text' / 'correct'
+                out.append(ParsedAnswer(
+                    q_number=1, category='match_confirm',
+                    raw_text=body, verdict='text',
+                    free_text=n.correction_text or n.free_text,
+                ))
+        elif n.category == 'reply_approval':
+            if n.verdict == 'edit':
+                out.append(ParsedAnswer(
+                    q_number=2, category='reply_approval',
+                    raw_text=body, verdict='edit',
+                    edited_text=n.edited_text or n.correction_text,
+                ))
+            elif n.verdict == 'affirm':
+                out.append(ParsedAnswer(
+                    q_number=2, category='reply_approval',
+                    raw_text=body, verdict='affirm',
+                ))
+            elif n.verdict == 'deny':
+                out.append(ParsedAnswer(
+                    q_number=2, category='reply_approval',
+                    raw_text=body, verdict='deny',
+                ))
+            else:
+                out.append(ParsedAnswer(
+                    q_number=2, category='reply_approval',
+                    raw_text=body, verdict='edit',
+                    edited_text=n.correction_text or n.free_text,
+                ))
+        elif n.category in ('project_folder', 'notes'):
+            text = n.free_text or n.correction_text
+            if text:
+                out.append(ParsedAnswer(
+                    q_number=n.q_number, category=n.category,
+                    raw_text=body, verdict='text',
+                    free_text=text,
+                ))
+            else:
+                out.append(ParsedAnswer(
+                    q_number=n.q_number, category=n.category,
+                    raw_text=body, verdict='empty',
+                ))
+    return out
+
 
 def _connect():
     import psycopg2

@@ -94,6 +94,7 @@ def process_one(
     from core.triage.replies import (
         is_triage_reply, match_triage_row_by_subject,
         already_applied, parse_reply_body, apply_reply,
+        load_triage_row,
     )
 
     subject = _extract_subject(chunk_name, chunk_content)
@@ -120,7 +121,51 @@ def process_one(
         result['status'] = 'already-applied (idempotent skip)'
         return result
 
-    parsed = parse_reply_body(body, sender or 'unknown', triage_id)
+    # Load the triage row so the conversational fallback (if it
+    # fires) has access to the candidate projects and draft reply.
+    triage_context = load_triage_row(conn, triage_id)
+
+    parsed = parse_reply_body(
+        body, sender or 'unknown', triage_id,
+        triage_context=triage_context,
+    )
+    # Shadow-mode audit for conversational-fallback runs.
+    try:
+        from core.brief.conversational import (
+            is_conversational_shadow, log_conversational_shadow,
+            NormalisedAnswer,
+        )
+        note_str = ' | '.join(parsed.parse_notes or [])
+        if 'conversational-fallback' in note_str:
+            shadow_answers = [
+                NormalisedAnswer(
+                    q_number=a.q_number, category=a.category,
+                    verdict=a.verdict,
+                    correction_text=a.free_text or a.edited_text,
+                    selected_candidate_index=a.selected_candidate_index,
+                )
+                for a in parsed.answers
+            ]
+            log_conversational_shadow(
+                conn,
+                source='triage', reference_id=str(triage_id),
+                raw_body=body,
+                normalised=shadow_answers,
+                applied=not is_conversational_shadow(),
+            )
+            if is_conversational_shadow():
+                result['status'] = 'conversational-shadow (not applied)'
+                result['shadow_answers'] = [
+                    {'q': a.q_number, 'cat': a.category,
+                     'verdict': a.verdict,
+                     'candidate': a.selected_candidate_index,
+                     'preview': (a.edited_text or a.free_text or '')[:120]}
+                    for a in parsed.answers
+                ]
+                return result
+    except Exception:
+        pass
+
     if not parsed.answers:
         result['status'] = 'parsed but no answers extracted'
         result['parse_notes'] = parsed.parse_notes
