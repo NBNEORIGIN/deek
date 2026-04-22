@@ -39,7 +39,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-ARXIV_API_URL = 'http://export.arxiv.org/api/query'
+ARXIV_API_URL = 'https://export.arxiv.org/api/query'
 ARXIV_API_TIMEOUT = 20.0
 OLLAMA_DEFAULT_URL = 'http://localhost:11434'
 OLLAMA_DEFAULT_MODEL = 'qwen2.5:7b-instruct'
