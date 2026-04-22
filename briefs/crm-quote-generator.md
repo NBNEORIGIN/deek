@@ -206,7 +206,7 @@ branding:
 
 terms_default_markdown: |
   1. Quote valid for 30 days from issue unless otherwise stated.
-  2. A 50% deposit is payable on acceptance; balance on completion.
+  2. A 25% deposit is payable on acceptance; balance on completion.
   3. Prices exclude VAT unless otherwise stated.
   4. Lead times assume receipt of approved artwork + deposit.
   5. NBNE Signs retains copyright on all artwork unless transferred
