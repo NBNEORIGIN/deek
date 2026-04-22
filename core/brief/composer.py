@@ -76,6 +76,27 @@ def compose_email(
         lines.append(f'(Expected reply format: {q.reply_format})')
         lines.append('')
 
+    # arXiv Stage 3 — append any auto-drafted research briefs the
+    # user should know about. Fires opportunistically; silent if
+    # nothing's been drafted recently.
+    try:
+        drafted = _list_recent_research_drafts()
+    except Exception:
+        drafted = []
+    if drafted:
+        lines.append('=' * 60)
+        lines.append('DRAFTED RESEARCH BRIEFS — ready for review')
+        lines.append('=' * 60)
+        lines.append('')
+        for d in drafted:
+            lines.append(f"  • {d['brief_path']}")
+            lines.append(f"    arxiv {d['arxiv_id']} — {d['title'][:80]}")
+            if d.get('applicability_score') is not None:
+                lines.append(
+                    f"    applicability: {d['applicability_score']:.1f}/10"
+                )
+            lines.append('')
+
     if notes:
         lines.append('--- Generator notes (for debugging, you can ignore) ---')
         for n in notes:
@@ -90,6 +111,42 @@ def compose_email(
         from_addr=os.getenv('SMTP_FROM', DEFAULT_FROM),
         reply_to=os.getenv('DEEK_BRIEF_REPLY_TO', DEFAULT_REPLY_TO),
     )
+
+
+def _list_recent_research_drafts(hours: int = 24) -> list[dict]:
+    """Briefs drafted by the arXiv Stage 3 autodrafter in the last
+    N hours. Returns at most 5 to keep the email compact. Never
+    raises — missing DB or table gives []."""
+    try:
+        import psycopg2
+        db_url = os.getenv('DATABASE_URL', '')
+        if not db_url:
+            return []
+        with psycopg2.connect(db_url, connect_timeout=3) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT arxiv_id, title, brief_path,
+                              applicability_score
+                         FROM cairn_intel.arxiv_candidates
+                        WHERE brief_drafted_at IS NOT NULL
+                          AND brief_drafted_at > NOW() - (INTERVAL '1 hour' * %s)
+                          AND brief_path IS NOT NULL
+                        ORDER BY brief_drafted_at DESC
+                        LIMIT 5""",
+                    (hours,),
+                )
+                rows = cur.fetchall()
+    except Exception:
+        return []
+    return [
+        {
+            'arxiv_id': r[0],
+            'title': r[1] or '',
+            'brief_path': r[2] or '',
+            'applicability_score': float(r[3]) if r[3] is not None else None,
+        }
+        for r in rows
+    ]
 
 
 # ── SMTP send ────────────────────────────────────────────────────────
