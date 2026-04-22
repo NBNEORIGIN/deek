@@ -3387,6 +3387,10 @@ app.include_router(wiki_gen_router)
 from api.routes.admin import router as admin_router
 app.include_router(admin_router)
 
+# Register Shadow-Review admin routes (dashboard + verdict endpoints)
+from api.routes.shadow_review import router as shadow_review_router
+app.include_router(shadow_review_router)
+
 # Register Deek Social routes (drafting + proof-reading assistant for Jo)
 from api.routes.social import router as social_router
 app.include_router(social_router)
