@@ -129,15 +129,26 @@ def _strip_quoted(text: str) -> str:
     own outgoing block delimiters.
 
     Email clients use a few conventions; we handle:
-      * Lines starting with '> ' (most quoting)
+      * Lines starting with '> ' (most quoting — note the SPACE)
       * '--- Original Message ---' boundaries (Outlook-ish)
       * 'On <date>, <name> wrote:' header lines
+
+    We deliberately do NOT break on a bare '>' with no space. Mbox
+    From-munging produces lines like '>From 2026-04-21:' when a
+    client quotes a reply containing a line that starts with the
+    word "From " — this is NOT a reply quote, it's the client
+    escaping what would otherwise look like a new mbox message
+    header. Treating it as a quote boundary loses legitimate content
+    (see 2026-04-22 memory brief parse failure).
     """
     lines: list[str] = []
     for line in text.splitlines():
         stripped = line.lstrip()
-        if stripped.startswith('>'):
-            break  # everything below the first quoted line is the original
+        # Real reply quoting uses '> ' (space after the chevron) or
+        # nested chevrons like '>> '. Plain '>' with no space is
+        # mbox From-munging or a false positive.
+        if stripped.startswith('> ') or stripped.startswith('>>'):
+            break
         if stripped.startswith('--- Original Message ---'):
             break
         if re.match(r'^On .+wrote:\s*$', stripped):

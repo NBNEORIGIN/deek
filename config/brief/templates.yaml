@@ -72,7 +72,7 @@ templates:
     prompt: |
       SALIENCE CHECK — flagged yesterday with salience {salience:.1f}/10
 
-      From {memory_date}:
+      Dated {memory_date}:
         {memory_snippet}
 
       Signal breakdown: {signal_block}

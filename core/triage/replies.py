@@ -168,11 +168,15 @@ def match_triage_row_by_subject(
 def strip_quoted(text: str) -> str:
     """Mirror of core.brief.replies.strip_quoted — drop quoted email
     tails so the original digest content doesn't pollute the parse.
+
+    Requires '> ' (space) or '>>' for reply quoting. A bare '>' is
+    mbox From-munging, not a quote — see core.brief.replies for the
+    full note.
     """
     lines: list[str] = []
     for line in (text or '').splitlines():
         stripped = line.lstrip()
-        if stripped.startswith('>'):
+        if stripped.startswith('> ') or stripped.startswith('>>'):
             break
         if stripped.startswith('--- Original Message ---'):
             break

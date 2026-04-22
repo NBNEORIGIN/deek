@@ -73,6 +73,45 @@ class TestStripQuoted:
     def test_empty(self):
         assert _strip_quoted('') == ''
 
+    def test_mbox_from_munging_does_not_strip(self):
+        """Regression: 2026-04-22 memory brief parse failure.
+
+        Some email clients prefix '>' (no space) to any quoted line
+        that would otherwise start with 'From ' at column 0 — this
+        is mbox From-munging, NOT a reply quote. The old strip_quoted
+        treated it as a quote boundary and cut off everything below,
+        losing Q2 and Q3 answers.
+
+        Real reply quoting uses '> ' (with space).
+        """
+        body = (
+            'My answer to Q1.\n\n'
+            '--- Q2 (salience_calibration) ---\n'
+            'SALIENCE CHECK\n\n'
+            '>From 2026-04-21:\n'           # mbox-munged, NOT a quote
+            '  Erkan replies quickly when Jo is copied.\n\n'
+            'Is this genuinely important?\n'
+            'My answer: Yes, it helps comms efficiency.\n\n'
+            '--- Q3 (open_ended) ---\n'
+            'One thing worth remembering: QA caught a duplicate QR code.\n'
+        )
+        out = _strip_quoted(body)
+        # All three Q-delimiters should survive
+        assert '--- Q2 (salience_calibration) ---' in out
+        assert '--- Q3 (open_ended) ---' in out
+        assert 'QA caught a duplicate' in out
+
+    def test_real_gt_quote_with_space_still_strips(self):
+        """Real reply quoting uses '> ' (with space) and should still
+        be recognised as a quote boundary."""
+        body = 'My reply\n\n> On Mon, Deek wrote:\n> original content'
+        assert _strip_quoted(body) == 'My reply'
+
+    def test_nested_gt_quote_still_strips(self):
+        """'>>' (nested quote) should still strip."""
+        body = 'My reply\n\n>> Very old quoted content'
+        assert _strip_quoted(body) == 'My reply'
+
 
 # ── Answer classification ────────────────────────────────────────────
 
