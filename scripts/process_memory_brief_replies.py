@@ -42,19 +42,23 @@ def _connect():
 
 
 def _fetch_candidate_emails(conn, since_hours: int) -> list[tuple[int, str, str]]:
-    """Return (chunk_id, chunk_name, chunk_content) for email chunks
-    indexed in the last N hours whose subject looks like a Memory Brief
-    reply (contains 'deek morning brief' case-insensitive).
+    """Return (email_id, subject, body_text) for brief-reply candidates
+    in the last N hours.
+
+    Reads from ``cairn_email_raw`` rather than ``claw_code_chunks`` so
+    line structure is preserved — the email embedder collapses all
+    newlines via ``body_text.split()`` which loses the Q-delimiter
+    line anchoring the parser depends on. The raw table has the
+    original body with newlines intact.
     """
     with conn.cursor() as cur:
         cur.execute(
-            """SELECT id, chunk_name, chunk_content
-                 FROM claw_code_chunks
-                WHERE chunk_type = 'email'
-                  AND indexed_at > NOW() - (INTERVAL '1 hour' * %s)
-                  AND (chunk_name ILIKE '%%deek morning brief%%'
-                       OR chunk_content ILIKE '%%deek morning brief%%')
-                ORDER BY indexed_at DESC""",
+            """SELECT id, subject, body_text
+                 FROM cairn_email_raw
+                WHERE mailbox = 'cairn'
+                  AND received_at > NOW() - (INTERVAL '1 hour' * %s)
+                  AND subject ILIKE '%%deek morning brief%%'
+                ORDER BY received_at DESC""",
             (since_hours,),
         )
         return [(int(r[0]), str(r[1] or ''), str(r[2] or '')) for r in cur.fetchall()]
@@ -94,15 +98,42 @@ def process_one(
     conn, chunk_id: int, chunk_name: str, chunk_content: str,
     dry_run: bool,
 ) -> dict:
-    """Parse + apply one email chunk. Returns a result dict."""
+    """Parse + apply one candidate email. Returns a result dict.
+
+    Args kept as (chunk_id, chunk_name, chunk_content) for backward
+    compatibility with callers/tests, but after the 2026-04-22
+    line-preservation fix the caller now passes
+    (email_raw_id, subject, body_text) from cairn_email_raw instead
+    of chunk fields. The variable names below reflect the new
+    meaning; the signature is stable.
+    """
     from core.brief.replies import (
         extract_date_from_subject, parse_reply_body,
         find_run_for_reply, already_applied, apply_reply, store_response,
     )
 
-    subject = _extract_subject(chunk_name, chunk_content)
-    sender = _extract_sender(chunk_content).lower()
-    body = _extract_body(chunk_content)
+    subject = chunk_name or ''
+    body = chunk_content or ''
+    # Sender is stored on cairn_email_raw in its own column; look it
+    # up alongside so we preserve the existing (sender, run_date)
+    # lookup path. Fallback to empty string if anything fails.
+    sender = ''
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT sender FROM cairn_email_raw WHERE id = %s",
+                (chunk_id,),
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                sender = (row[0] or '').strip().lower()
+                # Sender can be 'Name <addr@domain>' — normalise to
+                # just the address for the find_run_for_reply lookup.
+                m = re.search(r'<([^>]+)>', sender)
+                if m:
+                    sender = m.group(1).strip().lower()
+    except Exception:
+        pass
 
     result = {
         'chunk_id': chunk_id,
