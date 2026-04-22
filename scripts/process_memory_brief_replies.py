@@ -41,19 +41,23 @@ def _connect():
     return psycopg2.connect(db_url, connect_timeout=5)
 
 
-def _fetch_candidate_emails(conn, since_hours: int) -> list[tuple[int, str, str]]:
-    """Return (email_id, subject, body_text) for brief-reply candidates
-    in the last N hours.
+def _fetch_candidate_emails(conn, since_hours: int) -> list[tuple[int, str, str, str]]:
+    """Return (email_id, subject, body_text, thread_id) for
+    brief-reply candidates in the last N hours.
 
     Reads from ``cairn_email_raw`` rather than ``claw_code_chunks`` so
     line structure is preserved — the email embedder collapses all
     newlines via ``body_text.split()`` which loses the Q-delimiter
     line anchoring the parser depends on. The raw table has the
     original body with newlines intact.
+
+    ``thread_id`` is the In-Reply-To / References value captured at
+    ingest time — used to correlate the reply to its originating
+    brief run unambiguously (migration 0010).
     """
     with conn.cursor() as cur:
         cur.execute(
-            """SELECT id, subject, body_text
+            """SELECT id, subject, body_text, thread_id
                  FROM cairn_email_raw
                 WHERE mailbox = 'cairn'
                   AND received_at > NOW() - (INTERVAL '1 hour' * %s)
@@ -61,7 +65,10 @@ def _fetch_candidate_emails(conn, since_hours: int) -> list[tuple[int, str, str]
                 ORDER BY received_at DESC""",
             (since_hours,),
         )
-        return [(int(r[0]), str(r[1] or ''), str(r[2] or '')) for r in cur.fetchall()]
+        return [
+            (int(r[0]), str(r[1] or ''), str(r[2] or ''), str(r[3] or ''))
+            for r in cur.fetchall()
+        ]
 
 
 # Email content chunks are stored by the inbox processor in a
@@ -96,7 +103,7 @@ def _extract_subject(chunk_name: str, content: str) -> str:
 
 def process_one(
     conn, chunk_id: int, chunk_name: str, chunk_content: str,
-    dry_run: bool,
+    dry_run: bool, thread_id: str | None = None,
 ) -> dict:
     """Parse + apply one candidate email. Returns a result dict.
 
@@ -146,10 +153,11 @@ def process_one(
         result['status'] = 'skipped (subject doesn\'t match pattern)'
         return result
 
-    # Find the run. Try the sender first; fall back to any recent run
-    # on that date if the sender doesn't quite match (some clients
-    # alias From).
-    run = find_run_for_reply(conn, sender, reply_date)
+    # Find the run. Prefer In-Reply-To → outgoing_message_id match
+    # (unambiguous). Fall back to (user, date) match for legacy runs.
+    run = find_run_for_reply(
+        conn, sender, reply_date, in_reply_to=thread_id,
+    )
     if run is None:
         # Try without sender constraint — look for any user who had a
         # run sent that day. At current volume, always just Toby.
@@ -278,10 +286,11 @@ def main() -> int:
 
         applied = 0
         skipped = 0
-        for chunk_id, name, content in candidates:
+        for chunk_id, name, content, thread_id in candidates:
             try:
                 result = process_one(
                     conn, chunk_id, name, content, args.dry_run,
+                    thread_id=thread_id or None,
                 )
                 log.info('  chunk %d: %s', chunk_id, result.get('status', '?'))
                 if args.verbose and result.get('answers_processed'):

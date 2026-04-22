@@ -161,11 +161,38 @@ def rerank(
     scored: list[tuple[float, dict, RerankDebug]] = []
     for i, c in enumerate(candidates):
         final = alpha * rel_n[i] + beta * sal_n[i] + gamma * rec_n[i]
+        # Salience-signals boost (migration 0010): read the
+        # salience_signals JSONB we now decorate chunks with in
+        # _attach_impressions_fields. Previously the JSONB was
+        # write-only; this is the reader side of that circuit.
+        #
+        # toby_flag > 0     → strong prior, user-authored correction
+        #                     or high-salience memory. +0.15 nudge.
+        # via=triage_reply  → feedback loop output from confirmed
+        #                     triage actions. +0.05 nudge.
+        # via=memory_brief_ → Toby's own memory-brief answers. +0.05.
+        #
+        # Boosts are conservative — the impressions rerank is already
+        # calibrated; this layer mostly breaks ties in favour of
+        # human-touched memories.
+        signals = c.get('salience_signals') or {}
+        signals_boost = 0.0
+        try:
+            tf = float(signals.get('toby_flag') or 0.0)
+        except (TypeError, ValueError):
+            tf = 0.0
+        if tf > 0:
+            signals_boost += 0.15 * min(tf, 1.0)
+        via = str(signals.get('via') or '').lower()
+        if via.startswith('triage_reply') or via.startswith('memory_brief'):
+            signals_boost += 0.05
+        final += signals_boost
         c2 = dict(c)
         c2['impressions_score'] = final
         c2['impressions_debug'] = {
             'rel_n': rel_n[i], 'sal_n': sal_n[i], 'rec_n': rec_n[i],
             'alpha': alpha, 'beta': beta, 'gamma': gamma,
+            'signals_boost': round(signals_boost, 4),
         }
         d = RerankDebug(
             chunk_id=c.get('chunk_id'),

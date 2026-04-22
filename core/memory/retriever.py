@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import json
 import logging
 import re
 import time
@@ -571,6 +572,10 @@ class HybridRetriever:
                 for c in chunks
             ]
             # One query, VALUES-joined — fast even at top_k=20.
+            # Also selects salience_signals so the downstream rerank
+            # can read toby_flag / via / triage_id and boost chunks
+            # accordingly. Before 2026-04-22 this JSONB column was
+            # write-only; migration 0010 added the partial indexes.
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -581,11 +586,11 @@ class HybridRetriever:
                     )
                     SELECT n.file_path, n.chunk_type,
                            c.id, c.salience, c.last_accessed_at,
-                           c.access_count
+                           c.access_count, c.salience_signals
                       FROM needle n
                       LEFT JOIN LATERAL (
                           SELECT id, salience, last_accessed_at,
-                                 access_count
+                                 access_count, salience_signals
                             FROM claw_code_chunks
                            WHERE project_id = n.project_id
                              AND file_path  = n.file_path
@@ -612,11 +617,19 @@ class HybridRetriever:
                     d['salience'] = float(r[3] or 1.0)
                     d['last_accessed_at'] = r[4]
                     d['access_count'] = int(r[5] or 0)
+                    sig = r[6]
+                    if isinstance(sig, str):
+                        try:
+                            sig = json.loads(sig)
+                        except Exception:
+                            sig = {}
+                    d['salience_signals'] = sig or {}
                 else:
                     d.setdefault('chunk_id', None)
                     d.setdefault('salience', 1.0)
                     d.setdefault('last_accessed_at', None)
                     d.setdefault('access_count', 0)
+                    d.setdefault('salience_signals', {})
                 d.setdefault('dedupe_key', f"{c.get('file')}:{c.get('chunk_type')}")
                 decorated.append(d)
             return decorated

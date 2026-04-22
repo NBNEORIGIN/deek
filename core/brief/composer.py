@@ -99,16 +99,27 @@ def _smtp_cfg() -> dict:
     }
 
 
-def send_via_smtp(email: ComposedEmail, to_addr: str) -> None:
+def send_via_smtp(email: ComposedEmail, to_addr: str) -> str:
     """Raises on any failure. Caller records delivery_status='failed'
     on catch.
+
+    Returns the outgoing ``Message-ID`` header we injected so the
+    caller can persist it against the brief run — replies then
+    correlate via ``In-Reply-To`` instead of by date, which is
+    what eliminated the cross-day misattribution bug on 2026-04-22.
     """
+    from email.utils import make_msgid
     cfg = _smtp_cfg()
     msg = EmailMessage()
     msg['Subject'] = email.subject
     msg['From'] = email.from_addr
     msg['To'] = to_addr
     msg['Reply-To'] = email.reply_to
+    # make_msgid() generates an RFC-5322-compliant id of the form
+    # <timestamp.random@domain>. We pick a stable domain so the
+    # reply processor can filter by suffix if needed.
+    message_id = make_msgid(domain='deek.nbnesigns.co.uk')
+    msg['Message-ID'] = message_id
     msg.set_content(email.body)
     context = ssl.create_default_context()
     with smtplib.SMTP(cfg['host'], cfg['port'], timeout=30) as server:
@@ -117,6 +128,7 @@ def send_via_smtp(email: ComposedEmail, to_addr: str) -> None:
         server.ehlo()
         server.login(cfg['user'], cfg['password'])
         server.send_message(msg)
+    return message_id
 
 
 __all__ = ['ComposedEmail', 'compose_email', 'send_via_smtp', 'SMTPNotConfigured']

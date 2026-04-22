@@ -64,6 +64,7 @@ def _already_sent_today(conn, user_email: str) -> bool:
 def _insert_run(
     conn, user_email: str, questions: list, subject: str, body: str,
     dry_run: bool, delivery_status: str, error: str | None,
+    *, outgoing_message_id: str | None = None,
 ) -> str:
     run_id = str(uuid.uuid4())
     questions_json = json.dumps([
@@ -81,11 +82,13 @@ def _insert_run(
         cur.execute(
             """INSERT INTO memory_brief_runs
                 (id, user_email, generated_at, questions, subject,
-                 body_text, delivery_status, delivered_at, error, dry_run)
-               VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s)""",
+                 body_text, delivery_status, delivered_at, error,
+                 dry_run, outgoing_message_id)
+               VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 run_id, user_email, now, questions_json, subject,
                 body, delivery_status, delivered_at, error, dry_run,
+                outgoing_message_id,
             ),
         )
     conn.commit()
@@ -156,9 +159,13 @@ def main() -> int:
             )
             return 0
 
-        # Real send path
+        # Real send path — capture the outgoing Message-ID so that
+        # the reply processor can correlate replies via In-Reply-To
+        # instead of by date (which misattributes when multiple
+        # briefs go out the same day).
+        outgoing_message_id: str | None = None
         try:
-            send_via_smtp(email, args.user)
+            outgoing_message_id = send_via_smtp(email, args.user)
         except SMTPNotConfigured as exc:
             log.error('SMTP not configured — recording run as failed: %s', exc)
             _insert_run(
@@ -180,6 +187,7 @@ def main() -> int:
             conn, args.user, question_set.questions,
             email.subject, email.body,
             dry_run=False, delivery_status='sent', error=None,
+            outgoing_message_id=outgoing_message_id,
         )
         log.info('sent to %s (run_id=%s, %d questions)',
                  args.user, run_id, len(question_set.questions))

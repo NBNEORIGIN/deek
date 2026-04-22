@@ -427,11 +427,36 @@ def _body_hash(raw_body: str, run_id: str) -> str:
 
 def find_run_for_reply(
     conn, user_email: str, run_date: date,
+    *, in_reply_to: str | None = None,
 ) -> tuple[str, dict] | None:
-    """Look up the memory_brief_runs row matching (user, date).
-    Returns (run_id, questions_dict) or None.
+    """Look up the memory_brief_runs row this reply is answering.
+
+    Preferred path (2026-04-22 onward): if the caller knows the
+    reply's ``In-Reply-To`` header value, match on
+    ``memory_brief_runs.outgoing_message_id``. That's unambiguous
+    even when several briefs went out the same day to the same user.
+
+    Fallback: (user, date) match, for legacy runs that predate
+    outgoing_message_id capture (migration 0010).
+
+    Returns ``(run_id, questions_dict)`` or ``None``.
     """
+    irt = (in_reply_to or '').strip()
     with conn.cursor() as cur:
+        if irt:
+            cur.execute(
+                """SELECT id::text, questions
+                     FROM memory_brief_runs
+                    WHERE outgoing_message_id = %s
+                      AND delivery_status = 'sent'
+                    LIMIT 1""",
+                (irt,),
+            )
+            row = cur.fetchone()
+            if row:
+                return _shape_run_result(row)
+            # fall through to date match — reply might correlate via
+            # the references chain root instead of direct parent
         cur.execute(
             """SELECT id::text, questions
                  FROM memory_brief_runs
@@ -445,6 +470,11 @@ def find_run_for_reply(
         row = cur.fetchone()
     if not row:
         return None
+    return _shape_run_result(row)
+
+
+def _shape_run_result(row) -> tuple[str, dict]:
+    """Shape a (id, questions) DB row into (run_id, qmap)."""
     run_id = row[0]
     questions_raw = row[1]
     if isinstance(questions_raw, str):
@@ -454,8 +484,6 @@ def find_run_for_reply(
             questions_list = []
     else:
         questions_list = questions_raw or []
-    # Index by category for easy lookup — if multiple questions share
-    # a category (rare at current volume), the first one wins.
     qmap = {q.get('category'): q for q in questions_list}
     return run_id, qmap
 
