@@ -155,6 +155,257 @@ def _search_crm(
     return '\n'.join(lines).rstrip()
 
 
+# ── Write tools ───────────────────────────────────────────────────────
+#
+# The CRM today exposes three write surfaces under /api/cairn/*:
+#
+#   POST   /api/cairn/memory                — create a recommendation,
+#                                              observation, or alert
+#                                              (writes cairn_recommendations)
+#   PATCH  /api/cairn/memory                — mark a recommendation actioned
+#   PATCH  /api/cairn/projects/{id}/folder  — set localFolderPath
+#                                              (Phase C endpoint; may 404 if
+#                                              CRM-side PR not merged)
+#
+# Richer writes (add note to a project, update project stage/value,
+# create a client) will come via the CRM spanning brief
+# `briefs/crm-write-endpoints.md`. Until those land, this tool set
+# covers the most common thing Toby would ask Deek to persist:
+# "remember that <observation>" against the recommendations table.
+
+CRM_MEMORY_PATH = '/api/cairn/memory'
+CRM_PROJECT_FOLDER_PATH = '/api/cairn/projects/{id}/folder'
+
+_MEMORY_TYPES = {'recommendation', 'observation', 'alert'}
+_PRIORITIES = {'high', 'medium', 'low'}
+
+
+def _bearer_token() -> str:
+    return (
+        os.getenv('DEEK_API_KEY')
+        or os.getenv('CAIRN_API_KEY')
+        or os.getenv('CLAW_API_KEY', '')
+    ).strip()
+
+
+def _crm_base() -> str:
+    return (os.getenv('CRM_BASE_URL') or CRM_DEFAULT_BASE_URL).rstrip('/')
+
+
+def _write_crm_memory(
+    project_root: str,
+    message: str,
+    type: str = 'observation',
+    priority: str = 'medium',
+    project_id: str | None = None,
+    **kwargs,
+) -> str:
+    """Write a recommendation / observation / alert to the CRM.
+
+    Wraps ``POST /api/cairn/memory``. Surfaces in the CRM's Live
+    Recommendations panel and is searchable via search_crm.
+    """
+    # Keep a handle to the builtin because the ``type`` parameter
+    # shadows it inside this function.
+    _exc_type = __builtins__.get('type') if isinstance(__builtins__, dict) else __builtins__.type  # type: ignore[attr-defined]
+
+    message = (message or '').strip()
+    if not message:
+        return "write_crm_memory error: 'message' is required."
+    mem_type = (type or 'observation').strip().lower()
+    if mem_type not in _MEMORY_TYPES:
+        return (
+            f"write_crm_memory error: 'type' must be one of "
+            f"{sorted(_MEMORY_TYPES)}; got {mem_type!r}"
+        )
+    priority = (priority or 'medium').strip().lower()
+    if priority not in _PRIORITIES:
+        return (
+            f"write_crm_memory error: 'priority' must be one of "
+            f"{sorted(_PRIORITIES)}; got {priority!r}"
+        )
+    token = _bearer_token()
+    if not token:
+        return 'write_crm_memory error: DEEK_API_KEY is not set.'
+
+    payload: dict[str, Any] = {
+        'type': mem_type,
+        'priority': priority,
+        'message': message[:3000],
+        'source_modules': ['deek', 'chat'],
+    }
+    if project_id:
+        payload['project_id'] = str(project_id)
+
+    try:
+        with httpx.Client(timeout=CRM_REQUEST_TIMEOUT) as client:
+            r = client.post(
+                f'{_crm_base()}{CRM_MEMORY_PATH}',
+                json=payload,
+                headers={'Authorization': f'Bearer {token}'},
+            )
+    except Exception as exc:
+        return f'write_crm_memory error: {_exc_type(exc).__name__}: {exc}'
+
+    if r.status_code not in (200, 201):
+        return (
+            f'write_crm_memory error: CRM returned HTTP {r.status_code}: '
+            f'{r.text[:300]}'
+        )
+    try:
+        data = r.json() or {}
+    except Exception:
+        data = {}
+    rec_id = data.get('id') or '?'
+    return (
+        f'Wrote CRM {mem_type} (id={rec_id}, priority={priority}'
+        + (f', project={project_id}' if project_id else '')
+        + f'): {message[:200]}'
+        + ('…' if len(message) > 200 else '')
+    )
+
+
+def _mark_crm_actioned(
+    project_root: str,
+    recommendation_id: str,
+    actioned_by: str = 'deek',
+    **kwargs,
+) -> str:
+    """Mark a CRM recommendation actioned. Wraps ``PATCH /api/cairn/memory``.
+    """
+    recommendation_id = (recommendation_id or '').strip()
+    if not recommendation_id:
+        return "mark_crm_actioned error: 'recommendation_id' is required."
+    token = _bearer_token()
+    if not token:
+        return 'mark_crm_actioned error: DEEK_API_KEY is not set.'
+    try:
+        with httpx.Client(timeout=CRM_REQUEST_TIMEOUT) as client:
+            r = client.patch(
+                f'{_crm_base()}{CRM_MEMORY_PATH}',
+                json={
+                    'id': recommendation_id,
+                    'actioned_by': actioned_by or 'deek',
+                },
+                headers={'Authorization': f'Bearer {token}'},
+            )
+    except Exception as exc:
+        return f'mark_crm_actioned error: {type(exc).__name__}: {exc}'
+    if r.status_code == 404:
+        return f'mark_crm_actioned: recommendation {recommendation_id} not found.'
+    if r.status_code not in (200, 201):
+        return (
+            f'mark_crm_actioned error: CRM returned HTTP {r.status_code}: '
+            f'{r.text[:300]}'
+        )
+    return f'Marked CRM recommendation {recommendation_id} actioned by {actioned_by}.'
+
+
+def _set_crm_project_folder(
+    project_root: str,
+    project_id: str,
+    folder_path: str,
+    **kwargs,
+) -> str:
+    """Set a project's localFolderPath. Wraps
+    ``PATCH /api/cairn/projects/{id}/folder`` (Phase C endpoint).
+
+    Returns a user-visible string describing the outcome. If the
+    CRM hasn't deployed the Phase C endpoint yet (404/405) the tool
+    says so explicitly rather than silently failing.
+    """
+    project_id = (project_id or '').strip()
+    folder_path = (folder_path or '').strip()
+    if not project_id:
+        return "set_crm_project_folder error: 'project_id' is required."
+    if not folder_path:
+        return "set_crm_project_folder error: 'folder_path' is required."
+    token = _bearer_token()
+    if not token:
+        return 'set_crm_project_folder error: DEEK_API_KEY is not set.'
+    url = f"{_crm_base()}{CRM_PROJECT_FOLDER_PATH.format(id=project_id)}"
+    try:
+        with httpx.Client(timeout=CRM_REQUEST_TIMEOUT) as client:
+            r = client.patch(
+                url,
+                json={'localFolderPath': folder_path[:500]},
+                headers={'Authorization': f'Bearer {token}'},
+            )
+    except Exception as exc:
+        return f'set_crm_project_folder error: {type(exc).__name__}: {exc}'
+    if r.status_code in (404, 405):
+        return (
+            'set_crm_project_folder: CRM endpoint not available yet '
+            '(Phase C PR not merged). Fall back to write_crm_memory '
+            'with the path in the message so it still gets captured.'
+        )
+    if r.status_code not in (200, 201, 204):
+        return (
+            f'set_crm_project_folder error: CRM returned HTTP '
+            f'{r.status_code}: {r.text[:300]}'
+        )
+    return (
+        f'Set project {project_id} folder to {folder_path}.'
+    )
+
+
+write_crm_memory_tool = Tool(
+    name='write_crm_memory',
+    description=(
+        'Write a recommendation, observation, or alert into the CRM '
+        'knowledge base. Persists to the cairn_recommendations table; '
+        'appears in the CRM Live Recommendations panel and is '
+        'searchable by search_crm thereafter. Use this when the user '
+        'tells you something worth persisting about a project, client, '
+        'or operational observation — e.g. "remember that Julie '
+        "prefers callbacks after 3pm\", \"flag that the Mitre QR codes "
+        'had duplicates", "recommend we revisit the Bamburgh quote". '
+        'Arguments: message (required, free text — the observation), '
+        "type (default 'observation'; use 'recommendation' when you're "
+        "proposing an action, 'alert' for urgent issues), "
+        "priority ('low' | 'medium' (default) | 'high'), project_id "
+        '(optional — attach to a specific CRM project so it appears on '
+        'that project\'s page).'
+    ),
+    risk_level=RiskLevel.SAFE,
+    fn=_write_crm_memory,
+    required_permission='write_crm_memory',
+)
+
+
+mark_crm_actioned_tool = Tool(
+    name='mark_crm_actioned',
+    description=(
+        'Mark a CRM recommendation as actioned (clears it from the '
+        'Live Recommendations panel). Use when the user says a '
+        'recommendation has been handled, or when the recommendation '
+        'becomes irrelevant. Arguments: recommendation_id (required, '
+        'the UUID returned by write_crm_memory or GET /api/cairn/memory), '
+        "actioned_by (default 'deek')."
+    ),
+    risk_level=RiskLevel.SAFE,
+    fn=_mark_crm_actioned,
+    required_permission='mark_crm_actioned',
+)
+
+
+set_crm_project_folder_tool = Tool(
+    name='set_crm_project_folder',
+    description=(
+        "Set a CRM project's localFolderPath — the absolute disk path "
+        'where that project\'s working files live on the office '
+        'workstation. Use when the user tells you where a project '
+        "lives (e.g. \"the Julie job is at D:\\\\NBNE\\\\Projects\\\\M1234-julie\"). "
+        'Falls back gracefully if the CRM endpoint is not yet '
+        'deployed. Arguments: project_id (required), folder_path '
+        '(required, max 500 chars).'
+    ),
+    risk_level=RiskLevel.SAFE,
+    fn=_set_crm_project_folder,
+    required_permission='set_crm_project_folder',
+)
+
+
 search_crm_tool = Tool(
     name='search_crm',
     description=(
