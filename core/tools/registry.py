@@ -25,6 +25,7 @@ DEFAULT_PERMISSIONS = {
         'query_amazon_intel',
         'get_module_snapshot', 'search_emails', 'search_wiki',
         'retrieve_similar_decisions', 'search_crm', 'analyze_enquiry',
+        'write_crm_memory', 'mark_crm_actioned', 'set_crm_project_folder',
     ],
     'readonly': [
         'read_file', 'search_code', 'query_amazon_intel',
@@ -47,6 +48,7 @@ DEFAULT_PERMISSIONS = {
         'retrieve_similar_decisions',
         'search_crm',
         'analyze_enquiry',
+        'write_crm_memory', 'mark_crm_actioned', 'set_crm_project_folder',
     ],
 }
 
@@ -421,6 +423,58 @@ TOOL_SCHEMAS: dict[str, dict] = {
             },
         },
         'required': ['query'],
+    },
+    'write_crm_memory': {
+        'type': 'object',
+        'properties': {
+            'message': {
+                'type': 'string',
+                'description': 'The observation / recommendation / alert text.',
+            },
+            'type': {
+                'type': 'string',
+                'enum': ['recommendation', 'observation', 'alert'],
+                'description': "Default 'observation'.",
+            },
+            'priority': {
+                'type': 'string',
+                'enum': ['high', 'medium', 'low'],
+                'description': "Default 'medium'.",
+            },
+            'project_id': {
+                'type': 'string',
+                'description': 'Optional CRM project id to attach the memory to.',
+            },
+        },
+        'required': ['message'],
+    },
+    'mark_crm_actioned': {
+        'type': 'object',
+        'properties': {
+            'recommendation_id': {
+                'type': 'string',
+                'description': 'UUID of the recommendation to mark actioned.',
+            },
+            'actioned_by': {
+                'type': 'string',
+                'description': "Who actioned it (default 'deek').",
+            },
+        },
+        'required': ['recommendation_id'],
+    },
+    'set_crm_project_folder': {
+        'type': 'object',
+        'properties': {
+            'project_id': {
+                'type': 'string',
+                'description': 'The CRM project id.',
+            },
+            'folder_path': {
+                'type': 'string',
+                'description': 'Absolute local path, max 500 chars.',
+            },
+        },
+        'required': ['project_id', 'folder_path'],
     },
     'analyze_enquiry': {
         'type': 'object',

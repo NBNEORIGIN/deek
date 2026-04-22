@@ -2450,7 +2450,12 @@ class DeekAgent:
             search_wiki_tool,
         )
         from .tools.intel_tools import retrieve_similar_decisions_tool
-        from .tools.crm_tools import search_crm_tool
+        from .tools.crm_tools import (
+            search_crm_tool,
+            write_crm_memory_tool,
+            mark_crm_actioned_tool,
+            set_crm_project_folder_tool,
+        )
         from .tools.enquiry_analyzer import analyze_enquiry_tool
         for tool in [
             # File
@@ -2478,6 +2483,10 @@ class DeekAgent:
             retrieve_similar_decisions_tool,
             # Live CRM hybrid search (projects, clients, lessons, quotes, emails)
             search_crm_tool,
+            # CRM write-back (recommendations, mark actioned, project folder)
+            write_crm_memory_tool,
+            mark_crm_actioned_tool,
+            set_crm_project_folder_tool,
             # Structured enquiry analyzer — composite retrieval + Sonnet synthesis
             analyze_enquiry_tool,
         ]:
