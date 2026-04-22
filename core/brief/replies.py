@@ -743,6 +743,35 @@ def apply_reply(conn, reply: ParsedReply) -> dict:
                         action_summary['action'] = 'empty or embed failed'
                 else:
                     action_summary['action'] = 'empty'
+            elif ans.category == 'research_prompt':
+                # arXiv Stage 2 verdict capture. Map YES/NO/LATER
+                # to the arxiv_candidates row via provenance.
+                candidate_id = int(provenance.get('arxiv_candidate_id') or 0)
+                verdict_word = ''
+                if ans.verdict == 'affirm':
+                    verdict_word = 'yes'
+                elif ans.verdict == 'deny':
+                    verdict_word = 'no'
+                elif ans.verdict == 'correct':
+                    # 'LATER' or free-text falls under 'correct'.
+                    # Detect 'later' explicitly.
+                    first = (ans.raw_text or '').strip().lower().split()
+                    verdict_word = 'later' if first and first[0].startswith('later') else 'later'
+                if candidate_id and verdict_word:
+                    try:
+                        from core.research.arxiv_loop import record_verdict
+                        ok = record_verdict(conn, candidate_id, verdict_word)
+                        action_summary['action'] = (
+                            f'recorded arxiv verdict={verdict_word}'
+                            if ok else 'verdict write failed'
+                        )
+                        action_summary['arxiv_candidate_id'] = candidate_id
+                    except Exception as exc:
+                        action_summary['action'] = (
+                            f'arxiv verdict error: {type(exc).__name__}'
+                        )
+                else:
+                    action_summary['action'] = 'empty / no provenance'
             else:
                 action_summary['action'] = f'unknown category; stored raw'
 
