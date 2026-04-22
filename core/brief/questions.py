@@ -314,6 +314,57 @@ def _build_salience_calibration(conn, templates: dict) -> Question | None:
     )
 
 
+def _build_research_prompt(conn) -> 'Question | None':
+    """arXiv research-loop Stage 2 — surface the top un-surfaced
+    candidate as a research_prompt question. Returns None when
+    the queue is empty or no candidate clears the threshold.
+
+    Marks the chosen candidate as surfaced_at so it doesn't repeat
+    in tomorrow's brief.
+    """
+    try:
+        from core.research.arxiv_loop import pick_next_candidate, mark_surfaced
+    except Exception:
+        return None
+    cand = pick_next_candidate(conn)
+    if not cand:
+        return None
+
+    title = cand.get('title') or '(untitled)'
+    reason = cand.get('applicability_reason') or ''
+    score = cand.get('applicability_score') or 0.0
+    arxiv_id = cand.get('arxiv_id') or ''
+    pdf_url = cand.get('pdf_url') or ''
+
+    prompt = (
+        f'RESEARCH — applicability {score:.1f}/10\n\n'
+        f'A paper that might be worth a closer look:\n\n'
+        f'  {title}\n'
+        f'  arXiv: {arxiv_id}\n'
+        f'  {pdf_url}\n\n'
+        f'Why it came up: {reason}\n\n'
+        f'Worth a deeper look?\n'
+        f'Reply: YES / NO / LATER'
+    )
+    q = Question(
+        category='research_prompt',
+        prompt=prompt,
+        reply_format='YES / NO / LATER',
+        provenance={
+            'arxiv_candidate_id': cand['id'],
+            'arxiv_id': arxiv_id,
+            'applicability_score': score,
+        },
+    )
+    # Mark surfaced NOW so the SAME paper doesn't appear in two
+    # briefs (e.g. if Jo's run fires a moment after Toby's).
+    try:
+        mark_surfaced(conn, cand['id'])
+    except Exception:
+        pass
+    return q
+
+
 def _open_ended_override(user_email: str) -> str | None:
     """Look up the role-scoped open-ended prompt for this user, if
     any. Returns None for default (director-tier) recipients."""
@@ -413,6 +464,26 @@ def generate_questions(user_email: str) -> QuestionSet:
             conn.close()
         except Exception:
             pass
+
+    # arXiv research-loop Stage 2: if we have an un-surfaced
+    # high-applicability paper, add a research_prompt question.
+    # Fires opportunistically — no question if the queue is empty
+    # or the top candidate is below the surface threshold. Only
+    # applies to tier-1 (director) users so tier-2 replies stay
+    # role-scoped.
+    try:
+        _role = None
+        try:
+            from .user_profile import get_profile
+            _role = get_profile(user_email).role
+        except Exception:
+            _role = 'director'
+        if _role == 'director':
+            research_q = _build_research_prompt(conn)
+            if research_q is not None:
+                questions.append(research_q)
+    except Exception as exc:
+        notes.append(f'research_prompt: {type(exc).__name__}')
 
     questions.append(_build_open_ended(templates, _open_ended_override(user_email)))
 
