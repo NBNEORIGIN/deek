@@ -1,0 +1,74 @@
+# config/brief/user_profiles.yaml
+#
+# Memory Brief Tier 2 — per-recipient profile. Adds role-scoped
+# framing to the daily brief without changing the underlying
+# question generators.
+#
+# Tier 1 (you): full range of categories, Deek-wide scope.
+# Tier 2 (Jo, Ivan): same question mechanics, role-specific
+# open-ended prompt + welcome line.
+# Tier 3 (Gabby, Sanna, Ben): not yet — added here as commented
+# placeholders so the config shape is discoverable.
+#
+# Schema:
+#   users:
+#     <email>:
+#       role:            director | operations | crm_ops | ...
+#       display_name:    first-name for the welcome line
+#       open_ended_prompt:
+#                        overrides the default "one thing from
+#                        yesterday worth remembering long-term"
+#                        with something role-appropriate
+#       active:          bool (if false, no brief is sent)
+#
+# Missing users fall back to the director/Toby defaults.
+
+version: 1
+
+users:
+
+  toby@nbnesigns.com:
+    role: director
+    display_name: Toby
+    # open_ended_prompt unset → uses the default from templates.yaml
+    active: true
+
+  jo@nbnesigns.com:
+    role: operations
+    display_name: Jo
+    open_ended_prompt: |
+      One thing from the shop floor yesterday worth remembering —
+      a production issue, a customer interaction, a supplier quirk,
+      something that nearly went wrong but didn't.
+
+      Reply: (free text — one or two sentences)
+    active: true
+
+  ivan@nbnesigns.com:
+    role: crm_ops
+    display_name: Ivan
+    open_ended_prompt: |
+      One thing about a client or project interaction yesterday
+      worth remembering — a preference, a pattern, a follow-up
+      needed, something that should change how we handle them
+      next time.
+
+      Reply: (free text — one or two sentences)
+    active: true
+
+  # ── Tier 3 placeholders (not yet live) ──────────────────────────
+  #
+  # gabby@nbnesigns.com:
+  #   role: design
+  #   display_name: Gabby
+  #   open_ended_prompt: |
+  #     One design or artwork decision from yesterday worth remembering.
+  #   active: false
+  #
+  # sanna@nbnesigns.com:
+  #   role: production
+  #   ...
+  #
+  # ben@nbnesigns.com:
+  #   role: install
+  #   ...

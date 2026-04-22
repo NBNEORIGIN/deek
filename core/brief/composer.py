@@ -45,9 +45,24 @@ def compose_email(
     date_str = generated_at.strftime('%Y-%m-%d')
     subject = f'Deek morning brief — {date_str}'
 
+    # Personalise the welcome line when we have a profile for this
+    # recipient (Memory Brief Tier 2). Falls back to unpersonalised
+    # for director-tier / unknown users.
+    display_name = ''
+    try:
+        from .user_profile import get_profile
+        display_name = (get_profile(user_email).display_name or '').strip()
+    except Exception:
+        display_name = ''
+    greeting = (
+        f'Hi {display_name},' if display_name else 'Deek morning brief —'
+    )
+
     lines: list[str] = [
         f'Deek morning brief — {date_str}',
         '=' * 60,
+        '',
+        greeting,
         '',
         f'{len(questions)} question{"s" if len(questions) != 1 else ""} for you today.',
         'Reply to this email to answer. One block per question — keep the',

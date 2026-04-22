@@ -314,10 +314,34 @@ def _build_salience_calibration(conn, templates: dict) -> Question | None:
     )
 
 
-def _build_open_ended(templates: dict) -> Question:
+def _open_ended_override(user_email: str) -> str | None:
+    """Look up the role-scoped open-ended prompt for this user, if
+    any. Returns None for default (director-tier) recipients."""
+    try:
+        from .user_profile import get_profile
+        return get_profile(user_email).open_ended_prompt
+    except Exception:
+        return None
+
+
+def _build_open_ended(
+    templates: dict, override_prompt: str | None = None,
+) -> Question:
     """Always returned — no DB query. Fallback-safe in case the
     template file itself is broken: we hard-code a minimal version.
+
+    ``override_prompt`` comes from the recipient's user profile
+    (config/brief/user_profiles.yaml) when set — lets tier-2
+    users like Jo + Ivan get a role-scoped open prompt without
+    touching the templates file.
     """
+    if override_prompt:
+        return Question(
+            category='open_ended',
+            prompt=f'OPEN —\n\n{override_prompt.strip()}',
+            reply_format='Free text (one or two sentences)',
+            provenance={'source': 'user_profile_override'},
+        )
     try:
         prompt, reply = _render(templates.get('open_ended'))
     except Exception:
@@ -358,7 +382,7 @@ def generate_questions(user_email: str) -> QuestionSet:
         conn = _connect()
     except Exception as exc:
         notes.append(f'db unreachable ({type(exc).__name__}); open-ended only')
-        questions.append(_build_open_ended(templates))
+        questions.append(_build_open_ended(templates, _open_ended_override(user_email)))
         return QuestionSet(
             user_email=user_email,
             generated_at=datetime.now(timezone.utc),
