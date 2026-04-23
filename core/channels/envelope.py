@@ -8,6 +8,7 @@ class Channel(str, Enum):
     VSCODE = 'vscode'
     WEB = 'web'
     WHATSAPP = 'whatsapp'
+    TELEGRAM = 'telegram'
 
 
 class MessageRole(str, Enum):

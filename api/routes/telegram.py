@@ -86,9 +86,9 @@ async def telegram_webhook(
 ) -> JSONResponse:
     """Handle inbound Telegram updates.
 
-    Always returns 200 (Telegram retries otherwise). Invalid
-    secrets are logged + dropped silently to avoid leaking
-    endpoint presence to scanners.
+    Always returns 200 fast (Telegram retries otherwise) and
+    dispatches real work on a background task. Invalid secrets
+    are logged + dropped silently.
     """
     expected_secret = (os.getenv('TELEGRAM_WEBHOOK_SECRET') or '').strip()
     if expected_secret and x_telegram_bot_api_secret_token != expected_secret:
@@ -100,16 +100,29 @@ async def telegram_webhook(
     except Exception:
         return JSONResponse({'ok': True}, status_code=200)
 
+    # Kick the dispatch onto a background task so the webhook
+    # responds 200 immediately. Agent.process() can take 10-30s
+    # for a chat call; Telegram will retry aggressively if we
+    # block.
+    import asyncio
     try:
-        _dispatch_update(payload)
+        asyncio.create_task(_dispatch_update_async(payload))
     except Exception as exc:
-        log.exception('[telegram] dispatch error: %s', exc)
+        log.exception('[telegram] task spawn error: %s', exc)
 
     return JSONResponse({'ok': True})
 
 
-def _dispatch_update(payload: dict) -> None:
-    """Route the Telegram update to the right handler."""
+async def _dispatch_update_async(payload: dict) -> None:
+    """Async wrapper around the router — catches everything so the
+    background task never raises into the event loop."""
+    try:
+        await _route_update(payload)
+    except Exception as exc:
+        log.exception('[telegram] dispatch error: %s', exc)
+
+
+async def _route_update(payload: dict) -> None:
     message = payload.get('message') or payload.get('edited_message') or {}
     if not message:
         return
@@ -119,10 +132,10 @@ def _dispatch_update(payload: dict) -> None:
         return
     from_user = message.get('from') or {}
     text = (message.get('text') or '').strip()
+    if not text:
+        return
 
-    # Registration: a plain message that's an 8-char uppercase code
-    # (the shape of our join codes). No other command surface in
-    # Phase A.
+    # 1. Join-code registration (sync, cheap)
     if _looks_like_join_code(text):
         _handle_join_code(
             chat_id=int(chat_id),
@@ -132,17 +145,124 @@ def _dispatch_update(payload: dict) -> None:
         )
         return
 
-    # Anything else: polite ack so Toby knows we saw the message.
-    # Reply-handling to nudges is a Phase B feature (dismiss /
-    # acknowledge / chat thread routing).
-    _send_telegram(
-        int(chat_id),
-        (
-            'Message received. Interactive replies to nudges are '
-            'coming in Phase B — for now, use the chat surface at '
-            'deek.nbnesigns.co.uk/voice for conversation.'
-        ),
+    # 2. Registered user chatting with Deek
+    user_email = _lookup_user_email(int(chat_id))
+    if user_email is None:
+        _send_telegram(
+            int(chat_id),
+            (
+                '👋 You\'re not registered yet. Ask Toby for a join '
+                'code (via `scripts/telegram_join_code.py <your-email>`) '
+                'and send it here to pair.'
+            ),
+        )
+        return
+
+    await _route_chat_message(
+        chat_id=int(chat_id),
+        user_email=user_email,
+        text=text,
     )
+
+
+def _lookup_user_email(chat_id: int) -> str | None:
+    """Look up the registered user_email for a given chat_id.
+    None if the chat isn't paired (or was revoked)."""
+    try:
+        conn = _connect()
+    except Exception:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT user_email
+                     FROM cairn_intel.registered_telegram_chats
+                    WHERE chat_id = %s
+                      AND revoked_at IS NULL
+                    ORDER BY registered_at DESC
+                    LIMIT 1""",
+                (int(chat_id),),
+            )
+            row = cur.fetchone()
+        return row[0] if row else None
+    except Exception as exc:
+        log.warning('[telegram] lookup_user_email failed: %s', exc)
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+async def _route_chat_message(
+    *, chat_id: int, user_email: str, text: str,
+) -> None:
+    """Feed a registered user's Telegram message into the chat
+    agent, stream/collect the response, send back to the chat."""
+    # Quick "thinking" ack so the user sees immediate feedback
+    _send_telegram(chat_id, '🤔 _thinking..._')
+
+    try:
+        from api.main import get_agent
+        from core.channels.envelope import Channel, MessageEnvelope
+
+        agent = get_agent('deek')
+        envelope = MessageEnvelope(
+            content=text,
+            channel=Channel.TELEGRAM,
+            project_id='deek',
+            session_id=f'tg_{chat_id}',
+            # Keep responses tool-light — Telegram isn't a place
+            # for multi-tool exploration loops; a couple of rounds
+            # covers search + answer patterns.
+            max_tool_rounds=4,
+            # False so writes are available (write_crm_memory etc.)
+            read_only=False,
+        )
+        response = await agent.process(envelope)
+        out = (response.content or '').strip()
+        if not out:
+            out = '_(empty response)_'
+    except Exception as exc:
+        log.exception('[telegram] chat route failed: %s', exc)
+        _send_telegram(
+            chat_id,
+            '❌ Something went wrong while processing that. '
+            'Try again, or check `/var/log/` on the server.',
+        )
+        return
+
+    for chunk in _chunk_for_telegram(out):
+        _send_telegram(chat_id, chunk)
+
+
+_TELEGRAM_MSG_LIMIT = 4000   # slight margin under the 4096 hard limit
+
+
+def _chunk_for_telegram(text: str) -> list[str]:
+    """Split a long response into Telegram-friendly chunks. Prefer
+    paragraph boundaries; fall back to hard slice at 4000 chars."""
+    text = (text or '').strip()
+    if len(text) <= _TELEGRAM_MSG_LIMIT:
+        return [text] if text else []
+    chunks: list[str] = []
+    remaining = text
+    while remaining:
+        if len(remaining) <= _TELEGRAM_MSG_LIMIT:
+            chunks.append(remaining)
+            break
+        # Look for the last double newline inside the window
+        window = remaining[:_TELEGRAM_MSG_LIMIT]
+        split_at = window.rfind('\n\n')
+        if split_at == -1 or split_at < 500:
+            # fall back to single newline
+            split_at = window.rfind('\n')
+        if split_at == -1 or split_at < 500:
+            split_at = _TELEGRAM_MSG_LIMIT
+        chunks.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip()
+    return chunks
 
 
 _JOIN_CODE_LEN = 8
