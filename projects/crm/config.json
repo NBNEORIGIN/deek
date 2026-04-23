@@ -25,7 +25,18 @@
     "git_branch",
     "git_stash",
     "web_fetch",
-    "web_check_status"
+    "web_check_status",
+    "search_crm",
+    "write_crm_memory",
+    "mark_crm_actioned",
+    "set_crm_project_folder",
+    "get_quote_context",
+    "search_similar_quotes",
+    "review_quote_draft",
+    "search_wiki",
+    "search_emails",
+    "get_module_snapshot",
+    "retrieve_similar_decisions"
   ],
 
   "model_preferences": {
