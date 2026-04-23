@@ -3397,6 +3397,11 @@ from api.routes.quotes import router as quotes_router
 app.include_router(quotes_router, prefix='/api/deek')
 app.include_router(quotes_router, prefix='/api/cairn')  # legacy alias
 
+# Register Telegram webhook — inbound-only public endpoint,
+# secret-token-guarded (see core.channels.nudge + docs).
+from api.routes.telegram import router as telegram_router
+app.include_router(telegram_router, prefix='/api/deek')
+
 # Register Deek Social routes (drafting + proof-reading assistant for Jo)
 from api.routes.social import router as social_router
 app.include_router(social_router)
