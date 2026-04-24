@@ -61,7 +61,7 @@ def render_brief_for_telegram(
     name = (display_name or '').strip()
     greeting = f'Hi {name},' if name else 'Morning —'
 
-    lines.append(f'🌅 *Deek morning brief — {date_str}*')
+    lines.append(f'🌅 Deek morning brief — {date_str}')
     lines.append('')
     lines.append(greeting)
     lines.append('')
@@ -76,19 +76,19 @@ def render_brief_for_telegram(
     for i, q in enumerate(questions):
         emoji = _EMOJI_BY_INDEX[i] if i < len(_EMOJI_BY_INDEX) else f'{i+1}.'
         label = _CATEGORY_LABEL.get(q.category, q.category)
-        lines.append(f'{emoji} *{label}*')
+        lines.append(f'{emoji} {label}')
         lines.append(_compact_prompt(q.prompt))
         lines.append('')
 
     if drafted_briefs:
-        lines.append('📄 *Research briefs ready to review*')
+        lines.append('📄 Research briefs ready to review')
         for d in drafted_briefs[:3]:
             path = d.get('brief_path') or ''
             title = (d.get('title') or '')[:70]
-            lines.append(f'  • `{path}` — {title}')
+            lines.append(f'  • {path} — {title}')
         lines.append('')
 
-    lines.append('_Reply whenever. No format needed._')
+    lines.append('Reply whenever. No format needed.')
     return '\n'.join(lines)
 
 
@@ -167,12 +167,16 @@ def send_brief_via_telegram(
     try:
         with httpx.Client(timeout=TELEGRAM_TIMEOUT) as client:
             for chunk in chunks:
+                # No parse_mode — brief content contains user + DB
+                # text that can't safely be escaped for Telegram's
+                # legacy Markdown (underscores in emails, asterisks
+                # in quotes, unmatched brackets). Plain text keeps
+                # the emoji + layout without parsing risk.
                 r = client.post(
                     f'{TELEGRAM_API_BASE}/bot{token}/sendMessage',
                     json={
                         'chat_id': int(chat_id),
                         'text': chunk,
-                        'parse_mode': 'Markdown',
                         'disable_web_page_preview': True,
                     },
                 )
