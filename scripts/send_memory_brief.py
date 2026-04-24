@@ -65,6 +65,7 @@ def _insert_run(
     conn, user_email: str, questions: list, subject: str, body: str,
     dry_run: bool, delivery_status: str, error: str | None,
     *, outgoing_message_id: str | None = None,
+    delivered_via: str = 'email',
 ) -> str:
     run_id = str(uuid.uuid4())
     questions_json = json.dumps([
@@ -83,12 +84,12 @@ def _insert_run(
             """INSERT INTO memory_brief_runs
                 (id, user_email, generated_at, questions, subject,
                  body_text, delivery_status, delivered_at, error,
-                 dry_run, outgoing_message_id)
-               VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)""",
+                 dry_run, outgoing_message_id, delivered_via)
+               VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 run_id, user_email, now, questions_json, subject,
                 body, delivery_status, delivered_at, error, dry_run,
-                outgoing_message_id,
+                outgoing_message_id, delivered_via,
             ),
         )
     conn.commit()
@@ -131,13 +132,21 @@ def main() -> int:
         from core.brief.composer import (
             compose_email, send_via_smtp, SMTPNotConfigured,
         )
+        from core.brief.user_profile import get_profile
+
+        profile = get_profile(args.user)
+        channel = profile.channel
 
         question_set = generate_questions(args.user)
-        log.info('generated %d question(s) for %s',
-                 len(question_set.questions), args.user)
+        log.info('generated %d question(s) for %s (channel=%s)',
+                 len(question_set.questions), args.user, channel)
         for n in question_set.notes:
             log.info('  note: %s', n)
 
+        # Always compose the email body — it's the canonical
+        # persistence format stored on memory_brief_runs. Telegram
+        # path uses a re-rendered version but the row captures the
+        # email body too for audit + fallback.
         email = compose_email(
             user_email=args.user,
             generated_at=question_set.generated_at,
@@ -146,23 +155,71 @@ def main() -> int:
         )
 
         if args.dry_run:
-            print('--- DRY RUN — not sending ---')
+            print(f'--- DRY RUN — channel={channel}, not sending ---')
             print(f'To:      {args.user}')
-            print(f'Subject: {email.subject}')
-            print()
-            print(email.body)
+            if channel == 'telegram':
+                from core.brief.telegram_delivery import (
+                    render_brief_for_telegram,
+                )
+                tg_body = render_brief_for_telegram(
+                    display_name=profile.display_name,
+                    generated_at=question_set.generated_at,
+                    questions=question_set.questions,
+                )
+                print(tg_body)
+            else:
+                print(f'Subject: {email.subject}')
+                print()
+                print(email.body)
             print('--- end ---')
             _insert_run(
                 conn, args.user, question_set.questions,
                 email.subject, email.body,
                 dry_run=True, delivery_status='dry_run', error=None,
+                delivered_via=channel,
             )
             return 0
 
-        # Real send path — capture the outgoing Message-ID so that
-        # the reply processor can correlate replies via In-Reply-To
-        # instead of by date (which misattributes when multiple
-        # briefs go out the same day).
+        # Real send — branch on channel
+        if channel == 'telegram':
+            from core.brief.telegram_delivery import (
+                render_brief_for_telegram, send_brief_via_telegram,
+            )
+            tg_body = render_brief_for_telegram(
+                display_name=profile.display_name,
+                generated_at=question_set.generated_at,
+                questions=question_set.questions,
+            )
+            result = send_brief_via_telegram(
+                conn, user_email=args.user, text=tg_body,
+            )
+            if not result.ok:
+                log.error('telegram send failed: %s', result.error)
+                _insert_run(
+                    conn, args.user, question_set.questions,
+                    email.subject, email.body,
+                    dry_run=False, delivery_status='failed',
+                    error=str(result.error), delivered_via='telegram',
+                )
+                return 1
+            outgoing = (
+                f'telegram:{result.chat_id}:{result.message_ids[0]}'
+                if result.message_ids else None
+            )
+            run_id = _insert_run(
+                conn, args.user, question_set.questions,
+                email.subject, email.body,
+                dry_run=False, delivery_status='sent', error=None,
+                outgoing_message_id=outgoing,
+                delivered_via='telegram',
+            )
+            log.info('telegram sent to %s (run_id=%s, %d questions, '
+                     'chat_id=%s)',
+                     args.user, run_id, len(question_set.questions),
+                     result.chat_id)
+            return 0
+
+        # Email path (existing behaviour)
         outgoing_message_id: str | None = None
         try:
             outgoing_message_id = send_via_smtp(email, args.user)
@@ -172,6 +229,7 @@ def main() -> int:
                 conn, args.user, question_set.questions,
                 email.subject, email.body,
                 dry_run=False, delivery_status='failed', error=str(exc),
+                delivered_via='email',
             )
             return 1
         except Exception as exc:
@@ -180,6 +238,7 @@ def main() -> int:
                 conn, args.user, question_set.questions,
                 email.subject, email.body,
                 dry_run=False, delivery_status='failed', error=str(exc),
+                delivered_via='email',
             )
             return 1
 
@@ -188,6 +247,7 @@ def main() -> int:
             email.subject, email.body,
             dry_run=False, delivery_status='sent', error=None,
             outgoing_message_id=outgoing_message_id,
+            delivered_via='email',
         )
         log.info('sent to %s (run_id=%s, %d questions)',
                  args.user, run_id, len(question_set.questions))

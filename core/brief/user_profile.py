@@ -28,6 +28,7 @@ class UserProfile:
     display_name: str
     open_ended_prompt: str | None = None
     active: bool = True
+    channel: str = 'email'   # 'email' | 'telegram'
 
 
 _DEFAULT = UserProfile(
@@ -72,12 +73,16 @@ def _load() -> dict[str, UserProfile]:
     for email, cfg in (data.get('users') or {}).items():
         if not isinstance(cfg, dict):
             continue
+        ch = str(cfg.get('channel') or 'email').strip().lower()
+        if ch not in ('email', 'telegram'):
+            ch = 'email'
         out[email.strip().lower()] = UserProfile(
             email=email.strip().lower(),
             role=str(cfg.get('role') or 'director'),
             display_name=str(cfg.get('display_name') or ''),
             open_ended_prompt=(cfg.get('open_ended_prompt') or None),
             active=bool(cfg.get('active', True)),
+            channel=ch,
         )
     _cache = out
     return out

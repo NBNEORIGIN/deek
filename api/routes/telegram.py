@@ -166,11 +166,85 @@ async def _route_update(payload: dict) -> None:
         if handled:
             return
 
+    # 4. Pending memory brief reply — before routing to chat agent,
+    # check if this user has an unreplied Telegram-delivered brief
+    # in the last 48h. If yes, treat as brief reply.
+    if _route_as_brief_reply(
+        chat_id=int(chat_id), user_email=user_email, text=text,
+    ):
+        return
+
     await _route_chat_message(
         chat_id=int(chat_id),
         user_email=user_email,
         text=text,
     )
+
+
+def _route_as_brief_reply(
+    *, chat_id: int, user_email: str, text: str,
+) -> bool:
+    """If this user has a pending Telegram-delivered brief, route
+    the message to the brief reply parser. Returns True if we
+    handled it (so caller skips chat routing), False otherwise."""
+    conn = _connect()
+    try:
+        from core.brief.telegram_delivery import find_pending_telegram_brief
+        pending = find_pending_telegram_brief(conn, user_email)
+        if not pending:
+            return False
+
+        from core.brief.replies import (
+            parse_reply_body, apply_reply, store_response,
+            already_applied,
+        )
+        from datetime import date as _date
+
+        # Use today's UTC date as run_date — matches how brief
+        # replies over email are keyed. The run_id in pending is
+        # the authoritative link.
+        parsed = parse_reply_body(
+            text, user_email, _date.today(),
+            questions=pending['questions'],
+        )
+        if not parsed.answers:
+            _send_telegram(chat_id, (
+                "I couldn't parse answers to your brief out of "
+                'that message. If you meant to reply to today\'s '
+                'brief, try again with each answer on its own line '
+                '— or send `/help` for other commands.'
+            ))
+            return True
+
+        if already_applied(conn, pending['run_id'], text):
+            _send_telegram(
+                chat_id,
+                "_(already recorded this reply — ignoring duplicate)_",
+            )
+            return True
+
+        applied = apply_reply(conn, parsed)
+        store_response(conn, pending['run_id'], text, parsed, applied)
+        conn.commit()
+
+        # Summarise what landed so Toby sees the effect
+        lines = [
+            f"✅ Brief reply logged (run `{pending['run_id'][:8]}…`)",
+        ]
+        for a in applied.get('answers_processed', []):
+            cat = a.get('category') or '?'
+            action = a.get('action') or '?'
+            lines.append(f'  • {cat}: {action}')
+        _send_telegram(chat_id, '\n'.join(lines))
+        return True
+    except Exception as exc:
+        log.exception('[telegram] brief-reply route failed: %s', exc)
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 async def _handle_slash_command(

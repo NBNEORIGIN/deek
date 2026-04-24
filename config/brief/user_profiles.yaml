@@ -32,6 +32,10 @@ users:
     display_name: Toby
     # open_ended_prompt unset → uses the default from templates.yaml
     active: true
+    # Delivery channel: 'email' (default) or 'telegram'. Telegram
+    # requires the user to be in cairn_intel.registered_telegram_chats
+    # (pair via scripts/telegram_join_code.py).
+    channel: telegram
 
   jo@nbnesigns.com:
     role: operations
