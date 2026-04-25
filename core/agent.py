@@ -2459,6 +2459,7 @@ class DeekAgent:
             similar_quotes_tool,
             review_quote_tool,
         )
+        from .tools.wiki_tools import write_wiki_tool
         from .tools.enquiry_analyzer import analyze_enquiry_tool
         for tool in [
             # File
@@ -2494,6 +2495,8 @@ class DeekAgent:
             quote_context_tool,
             similar_quotes_tool,
             review_quote_tool,
+            # Wiki write (Deek-drafted long-form knowledge)
+            write_wiki_tool,
             # Structured enquiry analyzer — composite retrieval + Sonnet synthesis
             analyze_enquiry_tool,
         ]:

@@ -27,6 +27,7 @@ DEFAULT_PERMISSIONS = {
         'retrieve_similar_decisions', 'search_crm', 'analyze_enquiry',
         'write_crm_memory', 'mark_crm_actioned', 'set_crm_project_folder',
         'get_quote_context', 'search_similar_quotes', 'review_quote_draft',
+        'write_wiki',
     ],
     'readonly': [
         'read_file', 'search_code', 'query_amazon_intel',
@@ -51,6 +52,7 @@ DEFAULT_PERMISSIONS = {
         'analyze_enquiry',
         'write_crm_memory', 'mark_crm_actioned', 'set_crm_project_folder',
         'get_quote_context', 'search_similar_quotes', 'review_quote_draft',
+        'write_wiki',
     ],
 }
 
@@ -513,6 +515,25 @@ TOOL_SCHEMAS: dict[str, dict] = {
             'line_items_summary': {'type': 'string'},
         },
         'required': ['project_id', 'total_inc_vat'],
+    },
+    'write_wiki': {
+        'type': 'object',
+        'properties': {
+            'title': {
+                'type': 'string',
+                'description': 'Article title, becomes the heading + slug.',
+            },
+            'content': {
+                'type': 'string',
+                'description': 'Markdown body. Heading is added if absent.',
+            },
+            'tags': {
+                'type': 'array',
+                'items': {'type': 'string'},
+                'description': 'Optional tags.',
+            },
+        },
+        'required': ['title', 'content'],
     },
     'analyze_enquiry': {
         'type': 'object',

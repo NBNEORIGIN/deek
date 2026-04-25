@@ -33,6 +33,7 @@
     "get_quote_context",
     "search_similar_quotes",
     "review_quote_draft",
+    "write_wiki",
     "search_wiki",
     "search_emails",
     "get_module_snapshot",

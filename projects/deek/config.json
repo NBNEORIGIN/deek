@@ -32,6 +32,7 @@
     "get_quote_context",
     "search_similar_quotes",
     "review_quote_draft",
+    "write_wiki",
     "get_module_snapshot",
     "retrieve_similar_decisions",
     "search_wiki",
