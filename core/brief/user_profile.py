@@ -29,6 +29,12 @@ class UserProfile:
     open_ended_prompt: str | None = None
     active: bool = True
     channel: str = 'email'   # 'email' | 'telegram'
+    # Optional override of the default tier-1 question mix. When
+    # set, the question generator builds the brief from THIS list
+    # of category names (templates.yaml entries). When None, falls
+    # back to the legacy tier-1 mix (belief_audit / gist_validation
+    # / salience_calibration / open_ended).
+    question_categories: list[str] | None = None
 
 
 _DEFAULT = UserProfile(
@@ -76,6 +82,12 @@ def _load() -> dict[str, UserProfile]:
         ch = str(cfg.get('channel') or 'email').strip().lower()
         if ch not in ('email', 'telegram'):
             ch = 'email'
+        raw_cats = cfg.get('question_categories')
+        cats: list[str] | None
+        if isinstance(raw_cats, list) and raw_cats:
+            cats = [str(c).strip() for c in raw_cats if str(c).strip()]
+        else:
+            cats = None
         out[email.strip().lower()] = UserProfile(
             email=email.strip().lower(),
             role=str(cfg.get('role') or 'director'),
@@ -83,6 +95,7 @@ def _load() -> dict[str, UserProfile]:
             open_ended_prompt=(cfg.get('open_ended_prompt') or None),
             active=bool(cfg.get('active', True)),
             channel=ch,
+            question_categories=cats,
         )
     _cache = out
     return out

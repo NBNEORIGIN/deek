@@ -365,6 +365,34 @@ def _build_research_prompt(conn) -> 'Question | None':
     return q
 
 
+def _build_self_prompt(
+    templates: dict, category: str, user_email: str,
+) -> 'Question | None':
+    """Build a self-prompt category (HR / finance / D2C / production /
+    equipment / tech-solve etc.) — no DB query, just renders the
+    template prompt with optional placeholders.
+
+    Templates can include a ``role_tag`` field that gets propagated
+    into provenance so reply persistence can scope the resulting
+    memory chunks by domain.
+    """
+    template_body = templates.get(category)
+    if not template_body or 'prompt' not in template_body:
+        return None
+    try:
+        prompt = str(template_body['prompt']).strip()
+        reply_format = str(template_body.get('reply_format') or 'Free text')
+    except Exception:
+        return None
+    role_tag = template_body.get('role_tag') or category
+    return Question(
+        category=category,
+        prompt=prompt,
+        reply_format=reply_format,
+        provenance={'role_tag': role_tag, 'source': 'self_prompt'},
+    )
+
+
 def _open_ended_override(user_email: str) -> str | None:
     """Look up the role-scoped open-ended prompt for this user, if
     any. Returns None for default (director-tier) recipients."""
@@ -424,10 +452,41 @@ def generate_questions(user_email: str) -> QuestionSet:
     Never raises. If DB is unreachable, returns a set containing
     only the open-ended question (which has no DB dependency) plus
     a note explaining why.
+
+    User profiles can override the default tier-1 mix via the
+    ``question_categories`` field — used for tier-2 users (Jo,
+    Ivan) whose briefs are built around their actual remit
+    rather than Deek's memory-state introspection.
     """
     templates = _load_templates()
     questions: list[Question] = []
     notes: list[str] = []
+
+    # Profile-driven category override — tier-2 path
+    try:
+        from .user_profile import get_profile
+        profile_categories = get_profile(user_email).question_categories
+    except Exception:
+        profile_categories = None
+
+    if profile_categories:
+        for cat in profile_categories:
+            if cat == 'open_ended':
+                questions.append(_build_open_ended(
+                    templates, _open_ended_override(user_email),
+                ))
+            else:
+                q = _build_self_prompt(templates, cat, user_email)
+                if q:
+                    questions.append(q)
+                else:
+                    notes.append(f'{cat}: template missing')
+        return QuestionSet(
+            user_email=user_email,
+            generated_at=datetime.now(timezone.utc),
+            questions=questions,
+            notes=notes,
+        )
 
     try:
         conn = _connect()

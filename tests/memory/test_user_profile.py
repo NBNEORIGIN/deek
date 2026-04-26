@@ -34,19 +34,19 @@ class TestGetProfile:
         monkeypatch.delenv('DEEK_BRIEF_PROFILES_PATH', raising=False)
         reload_profiles()
         p = get_profile('jo@nbnesigns.com')
-        assert p.role == 'operations'
+        # Role broadened 2026-04-26 to reflect actual remit
+        assert p.role == 'operations_hr_finance'
         assert p.display_name == 'Jo'
         assert p.open_ended_prompt is not None
-        assert 'shop floor' in p.open_ended_prompt.lower()
+        assert 'office' in p.open_ended_prompt.lower() or 'shop floor' in p.open_ended_prompt.lower()
 
     def test_tier2_ivan(self, monkeypatch):
         monkeypatch.delenv('DEEK_BRIEF_PROFILES_PATH', raising=False)
         reload_profiles()
         p = get_profile('ivan@nbnesigns.com')
-        assert p.role == 'crm_ops'
+        assert p.role == 'production_tech'
         assert p.display_name == 'Ivan'
         assert p.open_ended_prompt is not None
-        assert 'client' in p.open_ended_prompt.lower()
 
     def test_unknown_user_falls_back_to_director(self, monkeypatch):
         monkeypatch.delenv('DEEK_BRIEF_PROFILES_PATH', raising=False)
@@ -60,7 +60,7 @@ class TestGetProfile:
         monkeypatch.delenv('DEEK_BRIEF_PROFILES_PATH', raising=False)
         reload_profiles()
         p = get_profile('JO@NBNESIGNS.COM')
-        assert p.role == 'operations'
+        assert p.role == 'operations_hr_finance'
 
 
 class TestConfigFallback:

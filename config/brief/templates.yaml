@@ -95,3 +95,106 @@ templates:
       One thing from yesterday worth remembering long-term.
 
       Reply: (free text — one or two sentences)
+
+  # ── Role-specific self-prompt categories ──────────────────────
+  # These have no DB query — they're domain prompts for tier-2
+  # users (Jo: HR/finance/D2C; Ivan: production/equipment/tech).
+  # Replies get persisted with role-tagged salience so retrieval
+  # can scope by domain.
+
+  hr_pulse:
+    description: >
+      Daily HR / staff pulse. Catches morale, timekeeping, training
+      gaps, conflict, anything Jo notices about the team that
+      should be remembered as it accumulates into a pattern.
+    reply_format: "Free text or 'nothing'"
+    role_tag: "hr"
+    prompt: |
+      HR / STAFF PULSE —
+
+      Anything from the team yesterday worth flagging? (timekeeping,
+      mood, training need, conflict, something said that stuck with
+      you, a near-miss). 'nothing' is a valid answer.
+
+      Reply: (free text)
+
+  finance_check:
+    description: >
+      Daily finance pulse. Cashflow surprises, supplier issues,
+      D2C cost movement, anything that affects the books.
+    reply_format: "Free text or 'nothing'"
+    role_tag: "finance"
+    prompt: |
+      FINANCE CHECK —
+
+      Anything financial from yesterday worth Deek noting? (a late
+      invoice, a supplier price change, a refund, a D2C cost
+      surprise, an unexpected payment). 'nothing' is fine.
+
+      Reply: (free text)
+
+  d2c_observation:
+    description: >
+      D2C-specific observation. Order patterns, customer feedback,
+      returns, listing performance, any signal Jo picked up that
+      product / market is moving.
+    reply_format: "Free text or 'nothing'"
+    role_tag: "d2c"
+    prompt: |
+      D2C OBSERVATION —
+
+      Anything you noticed about D2C yesterday? (an order pattern,
+      a customer message, a return reason, a listing change you'd
+      flag). 'nothing' is valid.
+
+      Reply: (free text)
+
+  production_quality:
+    description: >
+      Daily production quality pulse for Ivan. UV print finish,
+      CNC tolerance, material defect, repeated rework — anything
+      that should accumulate into a quality pattern.
+    reply_format: "Free text or 'nothing'"
+    role_tag: "production"
+    prompt: |
+      PRODUCTION QUALITY —
+
+      Anything quality-related from yesterday's runs? (a UV finish
+      issue, CNC tolerance drift, sheet warping, repeated rework, a
+      recurring fault). 'nothing' if all clean.
+
+      Reply: (free text)
+
+  equipment_health:
+    description: >
+      Equipment status. Tool wear, head clogs, calibration drift,
+      maintenance Ivan did or noticed needs doing. Builds the
+      equipment-history record over time.
+    reply_format: "Free text or 'nothing'"
+    role_tag: "equipment"
+    prompt: |
+      EQUIPMENT HEALTH —
+
+      Anything yesterday on tool / printer / CNC condition? (a
+      jam, a wear note, a calibration done, a part Toby should
+      order, a printer behaving oddly). 'nothing' if everything
+      ran clean.
+
+      Reply: (free text)
+
+  technical_solve:
+    description: >
+      Captures Ivan's clever fixes / workarounds / system
+      improvements. Specifically aims at the institutional-knowledge
+      gap where solutions get found once and forgotten.
+    reply_format: "Free text or 'nothing'"
+    role_tag: "tech"
+    prompt: |
+      TECHNICAL SOLVE —
+
+      Any clever fix, workaround, or system improvement from
+      yesterday worth Deek remembering for next time? (a tool
+      setting that worked, a 3D print profile, a PC config, a CNC
+      sequencing trick). 'nothing' is fine.
+
+      Reply: (free text)

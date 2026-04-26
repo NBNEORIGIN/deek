@@ -38,27 +38,43 @@ users:
     channel: telegram
 
   jo@nbnesigns.com:
-    role: operations
+    role: operations_hr_finance
     display_name: Jo
+    active: true
+    # Jo's brief is built around her actual remit: HR, finance,
+    # D2C. The DB-backed categories (belief_audit / gist_validation
+    # / salience_calibration) don't apply to her domain — her
+    # question_categories list overrides the default tier-1 mix.
+    question_categories:
+      - hr_pulse
+      - finance_check
+      - d2c_observation
+      - open_ended
     open_ended_prompt: |
-      One thing from the shop floor yesterday worth remembering —
-      a production issue, a customer interaction, a supplier quirk,
-      something that nearly went wrong but didn't.
+      One thing from the office or shop floor yesterday worth
+      remembering long-term — a process change, a near-miss, a
+      customer or supplier moment, an idea worth trying.
 
       Reply: (free text — one or two sentences)
-    active: true
 
   ivan@nbnesigns.com:
-    role: crm_ops
+    role: production_tech
     display_name: Ivan
+    active: true
+    # Ivan's brief is built around production + technical work:
+    # CNC, UV printing, 3D printing, PC builds. Same override
+    # pattern as Jo.
+    question_categories:
+      - production_quality
+      - equipment_health
+      - technical_solve
+      - open_ended
     open_ended_prompt: |
-      One thing about a client or project interaction yesterday
-      worth remembering — a preference, a pattern, a follow-up
-      needed, something that should change how we handle them
-      next time.
+      One thing from yesterday worth remembering long-term — a
+      decision made, a system tweak, a problem solved, an idea
+      worth trying tomorrow.
 
       Reply: (free text — one or two sentences)
-    active: true
 
   # ── Tier 3 placeholders (not yet live) ──────────────────────────
   #

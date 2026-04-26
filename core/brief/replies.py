@@ -85,6 +85,31 @@ _BLOCK_DELIM_RE = re.compile(
 _AFFIRMATIVE = frozenset({
     'true', 'yes', 'y', 'confirmed', 'correct', 'right',
 })
+
+# Tier-2 role-specific question categories that all share the same
+# "free text or 'nothing'" reply contract. Apply path persists
+# substantive replies as tagged memory, treats 'nothing' as no-op.
+_SELF_PROMPT_CATEGORIES = frozenset({
+    'hr_pulse', 'finance_check', 'd2c_observation',
+    'production_quality', 'equipment_health', 'technical_solve',
+})
+
+_NOTHING_ANSWERS = frozenset({
+    'nothing', 'none', 'n/a', 'na', 'no', '-',
+    'all good', 'all clean', 'clear', 'nope', 'nada',
+})
+
+
+def _is_nothing_answer(text: str) -> bool:
+    """True when the user's reply means 'no signal today'.
+    Catches single-word + simple two-word variants."""
+    cleaned = (text or '').strip().lower().rstrip('.!')
+    if not cleaned:
+        return True
+    if cleaned in _NOTHING_ANSWERS:
+        return True
+    return False
+
 _NEGATIVE = frozenset({
     'false', 'no', 'n', 'wrong', 'incorrect', 'nope',
 })
@@ -772,6 +797,32 @@ def apply_reply(conn, reply: ParsedReply) -> dict:
                         )
                 else:
                     action_summary['action'] = 'empty / no provenance'
+            elif ans.category in _SELF_PROMPT_CATEGORIES:
+                # Tier-2 role-specific categories (HR / finance /
+                # D2C / production / equipment / tech_solve). The
+                # reply is either substantive content → persist as
+                # tagged memory, or "nothing" → no-op.
+                if _is_nothing_answer(ans.raw_text):
+                    action_summary['action'] = 'no-op (nothing reply)'
+                elif ans.raw_text and ans.raw_text.strip():
+                    role_tag = (provenance.get('role_tag')
+                                or ans.category)
+                    new_id = _write_toby_memory(
+                        conn, reply.user_email,
+                        f'{reply.user_email} {ans.category} note: '
+                        f'{ans.raw_text.strip()}',
+                        reference_id=None,
+                    )
+                    if new_id:
+                        action_summary['action'] = (
+                            f'wrote new memory {new_id} '
+                            f'(role={role_tag})'
+                        )
+                        action_summary['new_memory_id'] = new_id
+                    else:
+                        action_summary['action'] = 'embed failed'
+                else:
+                    action_summary['action'] = 'empty'
             else:
                 action_summary['action'] = f'unknown category; stored raw'
 
