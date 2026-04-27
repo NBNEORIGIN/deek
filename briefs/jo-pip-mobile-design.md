@@ -28,12 +28,15 @@ This isn't a compromise. It's recognising that the right primary surface for Jo'
 
 | Surface | When Jo uses it | Status |
 |---|---|---|
-| **Telegram chat with her Pip** | Daily — brief, ad-hoc memory captures, quick lookups, share-back | v0 day 1 — already built |
-| **Tailscale + PWA (web)** | Memory audit, settings, mode review, deletion, exports | v0.5 — needs work |
-| **Voice (PWA `/voice`)** | When she wants hands-free + complex back-and-forth | v0.5 — works today via Tailscale |
-| **Native mobile app** | Never (deferred to v2 of full Pip) | n/a |
+| **Telegram chat with Rex** | Daily — brief, ad-hoc memory captures, quick lookups, share-back. Push-notification advantage. | v0 day 1 |
+| **PWA (Tailscale-bridged)** | Same brief surfaced inside the app + memory search + recent activity | v0 day 1 (minimal) |
+| **PWA (full)** | Memory audit, bulk delete, settings, mode review, exports | v0.5 |
+| **Voice (PWA `/voice`)** | Hands-free + complex back-and-forth | v0.5 |
+| **Native mobile app** | Never (v2 of full Pip) | n/a |
 
-**v0 ships only the first row.** Everything else waits until we've watched her use Telegram for 2 weeks.
+**v0 ships rows 1 + 2 (Telegram + minimal PWA).** Both surfaces are co-primary because Toby flagged 2026-04-27 that the morning brief should be visible inside the PWA, not just in the Telegram thread. Reasoning: Telegram is best for push notifications + quick responses; PWA is best when she wants to think before replying or browse her own memory.
+
+**Both surfaces share state.** Reply once via either channel → both show it as answered. There is one brief per day, not one-per-channel.
 
 ---
 
@@ -125,9 +128,9 @@ The default state is: she sends, Pip responds. Only deviation is the daily brief
 
 ---
 
-## 4. The PWA — what comes in v0.5
+## 4. The PWA — minimal in v0, expanded in v0.5
 
-Once Jo has used Telegram for 2 weeks and we've watched what she actually wants to do, we add a Tailscale-bridged PWA for the things Telegram can't do well.
+The PWA is a **v0 deliverable** (Toby 2026-04-27) — but only with the minimum feature set Jo needs the morning brief to live there. Everything richer waits for v0.5.
 
 ### 4.1 Connectivity model
 
@@ -135,31 +138,40 @@ Jo installs Tailscale on her phone (one-time setup, ~5 min with Toby). When she 
 
 **Reliability concern:** iOS Tailscale has historically had silent disconnects (battery saver, low memory). Mitigations:
 - PWA detects "can't reach jo.nbne.local" and shows a clear "Tailscale not connected — open Tailscale app to reconnect" rather than spinning forever.
-- Critical actions (memory deletion, exports) require Tailscale-authenticated session — so even if Tailscale flakes mid-action, no harmful operation happens against a half-authenticated request.
-- Telegram is always available as a fallback. Even if Tailscale is broken on her phone, she can still talk to her Pip.
+- Critical actions (memory deletion, exports — v0.5+) require Tailscale-authenticated session — so even if Tailscale flakes mid-action, no harmful operation happens against a half-authenticated request.
+- **Telegram is always available as a fallback.** Even if Tailscale is broken on her phone, she can still respond to her brief and chat with Rex via Telegram. The morning brief lands in BOTH surfaces — if PWA is unreachable, Telegram still got the same brief through.
 
-### 4.2 v0.5 PWA features (in priority order)
+### 4.2 v0 PWA — minimum feature set
 
-1. **Memory audit view.** Browse what Pip remembers, organised by topic. Source visible per entry. Filter by date / role / source.
-2. **Bulk delete.** Select multiple entries, confirm, delete. Real deletion (chunks + embeddings + attached files).
-3. **Search across own memory.** Faster + richer than Telegram chat for "what did I say about X."
-4. **Settings panel.** API budget visible. Notification preferences. Quiet hours. Bot username (read-only — changing it requires Toby).
-5. **Activity log.** Every share-back to NBNE-Deek visible with full provenance.
-6. **PMF export placeholder.** "Available in v1 — your data is exportable on request via Toby until then."
+1. **Today's brief at the top.** If unanswered, the four questions are inline with reply boxes. If answered, it shows what she said (and lets her edit if it's still the same day).
+2. **Reply box per question.** Plain prose; the conversational normaliser maps her wording to the right Q. Same backend as Telegram replies.
+3. **Recent chat history.** Read-only view of her last ~50 conversation turns from the Telegram thread, rendered cleanly in the PWA. Continuity across surfaces.
+4. **Memory search.** Single search box: *"what did I say about X?"* — returns matching memory chunks with source + date.
+5. **Recent memory write events.** Chronological list of the last 30 things Rex has stored, latest first. So Jo can see what's been added without searching.
+6. **Header banner: 🔒 Rex — jo.nbne.local.** Persistent confidentiality cue, same role as the Telegram footer.
 
-### 4.3 What the PWA deliberately doesn't do
+### 4.3 v0.5 PWA features (still deferred)
 
-- **Doesn't replace Telegram for daily chat.** The chat surface in PWA exists but is unstyled, basic. Telegram is the primary chat.
-- **Doesn't have voice as a primary action.** Voice via PWA is for power-user moments only.
+1. **Memory audit view.** Browse what Rex remembers, organised by topic + role-tag.
+2. **Bulk delete.** Multi-select + confirm + real deletion (chunks + embeddings + attached files).
+3. **Settings panel.** API budget visible. Notification preferences. Quiet hours.
+4. **Share-to-NBNE-Deek activity log** — every share-back with full provenance + source linking.
+5. **Mode switch** — when v1 ships strict/adaptive.
+6. **PMF export** — when v1 ships the format.
+
+### 4.4 What the v0 PWA deliberately doesn't do
+
+- **Doesn't replace Telegram as the chat surface.** PWA shows recent history but *replying* primarily happens in the place Jo thinks of as a chat — her Telegram thread. The PWA's chat history is for context + continuity, not for sustained back-and-forth.
+- **Doesn't have voice in v0.** Voice deferred to v0.5 alongside the broader audit work.
 - **Doesn't run when offline.** No PWA caching of memory data — always fresh from server. Sovereignty depends on the server being the only place data lives.
 
-### 4.4 Visual design — minimal but distinct
+### 4.5 Visual design — minimal but distinct
 
-Same constraint as Telegram: it must look distinct from NBNE-Deek's admin panel. Three concrete decisions:
+Three concrete decisions:
 
-- **Colour scheme:** muted, calm, not the NBNE brand colours. Suggest soft sage / warm white. Signals "personal" rather than "corporate."
-- **Header:** "Jo's Pip — `jo.nbne.local`" persistent at top. Reinforces ownership + locality.
-- **No NBNE branding in the chrome.** This is HER tool, not a corporate one.
+- **Colour scheme:** muted, calm, not NBNE brand colours. Suggest soft sage / warm white background. Signals "personal" rather than "corporate."
+- **Header:** `🔒 Rex — jo.nbne.local` persistent at top. Reinforces ownership + locality.
+- **No NBNE branding in the chrome.** This is HER tool, not a corporate one. Avatar matches the Telegram bot avatar (Jo picks once, used in both places).
 
 ---
 
@@ -254,14 +266,15 @@ This output feeds v0.5 design + v1 spec v0.4.
 
 After 2 weeks of v0:
 
-- Jo replies to her morning brief at least 5 days/week
+- Jo replies to her morning brief at least 5 days/week (via either Telegram or PWA — both count)
 - She sends at least one ad-hoc memory or question per day on average
 - She's used the share-back-to-NBNE-Deek flow at least once and didn't experience it as friction
-- She has not asked Toby to install Tailscale on her phone yet — meaning Telegram alone covered her actual needs
+- Tailscale is set up on her phone and reliably reaches `jo.nbne.local` — meaning the PWA + Telegram dual-surface model holds up in real use
 - She can articulate, unprompted, that her conversations are private to her instance
 - The conversational normaliser parses her replies with > 90% intent-correctness (verified by manual review of the first ~30 replies)
+- Reply behaviour split between channels gives us a real signal about which surface she actually prefers
 
-After 2 weeks Jo is using a tool she trusts. v0.5 PWA work begins informed by what she said in the retro.
+After 2 weeks Jo is using a tool she trusts. v0.5 PWA work (audit + bulk delete + settings + activity log) begins informed by what she said in the retro.
 
 ---
 

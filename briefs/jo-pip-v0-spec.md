@@ -137,25 +137,54 @@ Order of work. Rough sizing.
 | Jo's content lost in v0→v1 migration | The migration commitment in §5 is non-negotiable. Test the migration in dev before live. |
 | Jo wants features v0 doesn't have | Documented out-of-scope list (§4) is shared with her. Anything she wants that's not in scope becomes a v1 feedback item. |
 
-## 9. Decisions
+## 9. Decisions — all locked
 
-**Locked in (Toby confirmed 2026-04-27):**
-- **Hostname:** `jo.nbne.local`
-- **No USB key for v0** — Jo accesses from work PC + phone, both via Tailscale-equivalent path
-- **Mobile interface is a first-class concern** — see `jo-pip-mobile-design.md` for the design
+Toby confirmed 2026-04-27:
 
-**Still to decide:**
+| Decision | Lock |
+|---|---|
+| Hostname | `jo.nbne.local` |
+| USB key in v0 | No (deferred to v1) |
+| Mobile interface | First-class concern — see `jo-pip-mobile-design.md` |
+| Tailscale ACL | **Jo only.** Toby retains SSH access to nbne1 for ops; admin happens at the box level, not via Tailscale-bridged Pip URL. |
+| Telegram bot name | **Rex.** Jo's name for her instance — distinct from "Pip" (the product) and "Deek" (the org), exactly the brand-vs-instance distinction from v0.3 §2. |
+| Brief migration timing | Hard cutover. No parallel run. Disable her NBNE-Deek-side brief cron the same moment we enable Rex's. |
+| Existing brief replies | Migrate to Rex with `source=migrated_from_nbne_deek` provenance. Originals stay in NBNE-Deek as audit trail. |
+| Morning brief surface | Telegram **and** PWA. See §10. |
 
-1. **Tailscale ACL** — admin access for Toby (recommended) + Jo only? Or include Ivan as a future collaborator?
-2. **Telegram bot name** — Jo creates it; suggest she pick something distinct from "Pip" so she's developing a relationship with her own thing.
-3. **Brief migration timing** — parallel-run for 1 week (verification) then cut over, or hard cutover day one?
-4. **Existing brief replies** — copy from NBNE-Deek to her Pip (with provenance tag), leave in NBNE-Deek, or both?
+## 10. PWA scope upgrade (NEW — Toby 2026-04-27)
 
-My recommendations:
-1. Toby admin + Jo user. Ivan added later when his own Pip ships.
-2. Whatever Jo wants. Suggest she names it something distinct from "Pip."
-3. Run both for 1 week as a verification period. Compare outputs. Cut over when satisfied.
-4. Copy her existing replies to her Pip (with `source=migrated_from_nbne_deek` provenance). Leave originals in NBNE-Deek for the audit trail.
+Toby flagged that the morning brief should also live inside the PWA on Jo's phone. This makes the PWA a **v0 deliverable**, not v0.5 as originally scoped. The change:
+
+**Before (v0 = Telegram-only, PWA = v0.5):**
+- Daily brief lands in Telegram only
+- PWA waits for week 3 of observation
+
+**After (v0 = Telegram + minimal PWA):**
+- Daily brief delivered via Telegram (push notification — phone buzzes, she taps and sees it)
+- Same brief also surfaces inside Rex's PWA when Jo opens it (visible at top of screen if unanswered)
+- Replies via either surface land in the same `memory_brief_responses` row — the brief is per-day, not per-channel
+- Both paths share state: reply via Telegram → PWA shows it as answered. Reply via PWA → Telegram thread shows the confirmation Pip sends back.
+
+**v0 PWA minimum feature set:**
+
+1. Today's brief at the top (if unanswered)
+2. Inline reply box for the brief
+3. Recent Telegram-thread chat history (read-only, sourced from Pip's own DB)
+4. Memory search ("what did I say about X?")
+5. Recent memory write events (chronological list, latest at top)
+6. Lock-emoji header banner: `🔒 Rex — jo.nbne.local`
+
+**v0.5 PWA features (still deferred):**
+
+- Bulk memory delete with multi-select
+- Memory audit organised by topic + role-tag
+- Settings panel (notification preferences, quiet hours, API budget visibility)
+- Share-to-NBNE-Deek activity log with full provenance
+- Mode switch UI (when v1 lands strict/adaptive)
+- PMF export button (v1)
+
+**Implementation note:** the existing `/voice` PWA codebase has the components needed (chat surface, message list, voice input). The work is configuration + theming + brief-surface integration, not a new codebase. Estimate adds **2 days** to v0 active engineering (4-5 days total instead of 2-3).
 
 ## 10. Success criteria
 
