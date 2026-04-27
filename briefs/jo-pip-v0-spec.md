@@ -137,20 +137,25 @@ Order of work. Rough sizing.
 | Jo's content lost in v0→v1 migration | The migration commitment in §5 is non-negotiable. Test the migration in dev before live. |
 | Jo wants features v0 doesn't have | Documented out-of-scope list (§4) is shared with her. Anything she wants that's not in scope becomes a v1 feedback item. |
 
-## 9. Decisions Toby needs to make before sign-off
+## 9. Decisions
 
-1. **Hostname for Jo's instance** — `jo.nbne.local`? `pip.nbne.local`? Something else? (Affects branding the staff will see.)
-2. **Tailscale ACL** — admin access for Toby (yes, recommended) + Jo only? Or include Ivan as a future collaborator?
-3. **Telegram bot name** — Jo creates it; she chooses, but worth pre-discussing what it'll be called to her (e.g. `JoNbneBot` vs something more personal).
-4. **Brief migration timing** — flip the Deek-side cron off + Pip-side cron on simultaneously? Or run both in parallel for 1 week as a verification period?
-5. **Jo's existing brief replies (the ones already accumulated in NBNE-Deek)** — leave them in NBNE-Deek as-is, copy them to her Pip, or both?
+**Locked in (Toby confirmed 2026-04-27):**
+- **Hostname:** `jo.nbne.local`
+- **No USB key for v0** — Jo accesses from work PC + phone, both via Tailscale-equivalent path
+- **Mobile interface is a first-class concern** — see `jo-pip-mobile-design.md` for the design
+
+**Still to decide:**
+
+1. **Tailscale ACL** — admin access for Toby (recommended) + Jo only? Or include Ivan as a future collaborator?
+2. **Telegram bot name** — Jo creates it; suggest she pick something distinct from "Pip" so she's developing a relationship with her own thing.
+3. **Brief migration timing** — parallel-run for 1 week (verification) then cut over, or hard cutover day one?
+4. **Existing brief replies** — copy from NBNE-Deek to her Pip (with provenance tag), leave in NBNE-Deek, or both?
 
 My recommendations:
-1. `jo.nbne.local` — boring, descriptive, hostname not branding. Branding decisions wait for v1.
-2. Toby admin + Jo user. Ivan added later when his own Pip ships.
-3. Whatever Jo wants. Suggest she names it something distinct from "Pip" so she develops her relationship with it.
-4. Run both for 1 week as a verification period. Compare outputs. Cut over when satisfied.
-5. Copy her existing replies to her Pip (with `source=migrated_from_nbne_deek` provenance). Leave originals in NBNE-Deek for the audit trail; she controls what stays/goes after the migration.
+1. Toby admin + Jo user. Ivan added later when his own Pip ships.
+2. Whatever Jo wants. Suggest she names it something distinct from "Pip."
+3. Run both for 1 week as a verification period. Compare outputs. Cut over when satisfied.
+4. Copy her existing replies to her Pip (with `source=migrated_from_nbne_deek` provenance). Leave originals in NBNE-Deek for the audit trail.
 
 ## 10. Success criteria
 
