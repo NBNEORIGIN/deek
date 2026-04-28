@@ -15,6 +15,7 @@ from core.brief.replies import (
     parse_reply_body,
     _strip_quoted,
     _classify,
+    _body_hash,
 )
 
 
@@ -376,3 +377,40 @@ Both are the same customer — canonical name is "Clayport Jewellers Ltd".
         # Signature stripped from last block
         assert 'Toby Fletcher CEng' not in a3.correction_text
         assert 'Landline' not in a3.correction_text
+
+
+# ── Idempotency hash agreement ───────────────────────────────────────
+
+class TestBodyHash:
+    """Pin the agreement between the Python _body_hash and the SQL
+    idempotency check (encode(sha256(raw_body::bytea), 'hex')).
+
+    Regression for 2026-04-28: an earlier version folded run_id into
+    the Python digest while the SQL only hashed raw_body. They never
+    matched, so already_applied() always returned False and every
+    cron tick re-applied the same reply. Jo's run was applied 49+
+    times in 24h before this was caught; an earlier run, 283 times.
+    """
+
+    def test_hash_matches_sql_form(self):
+        import hashlib
+        body = "TRUE\n\nNo, the supplier is fine."
+        run_id = "11111111-2222-3333-4444-555555555555"
+        # SQL form: encode(sha256(raw_body::bytea), 'hex')
+        sql_form = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        py_form = _body_hash(body, run_id)
+        assert py_form == sql_form, (
+            f"Python {py_form} disagrees with SQL {sql_form} — "
+            "idempotency would silently fail again"
+        )
+
+    def test_hash_independent_of_run_id(self):
+        # run_id is in the signature but must not affect the digest —
+        # scope is enforced by the SQL WHERE run_id = ... clause.
+        body = "any text"
+        a = _body_hash(body, "run-aaaa")
+        b = _body_hash(body, "run-bbbb")
+        assert a == b
+
+    def test_hash_handles_empty_body(self):
+        assert _body_hash("", "any-run") == _body_hash("", "any-run")

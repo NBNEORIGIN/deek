@@ -443,11 +443,17 @@ def _connect():
 
 
 def _body_hash(raw_body: str, run_id: str) -> str:
-    h = hashlib.sha256()
-    h.update(run_id.encode('utf-8'))
-    h.update(b'\0')
-    h.update((raw_body or '').encode('utf-8', errors='replace'))
-    return h.hexdigest()
+    """SHA-256 of the raw reply body. The run_id parameter is kept in
+    the signature but not folded into the digest — the SQL idempotency
+    check in already_applied() does ``WHERE run_id = ... AND
+    sha256(raw_body) = ...``, so the run scope is enforced by the
+    column filter, not the hash. A previous version mixed run_id into
+    the digest, which never matched the SQL hash → idempotency
+    silently False → every cron tick re-applied the same reply.
+    """
+    return hashlib.sha256(
+        (raw_body or '').encode('utf-8', errors='replace'),
+    ).hexdigest()
 
 
 def find_run_for_reply(
