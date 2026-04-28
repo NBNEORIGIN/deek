@@ -174,7 +174,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python .claude/hooks/validate_brief_hook.py",
+            "command": "python D:/claw/.claude/hooks/validate_brief_hook.py",
             "timeout": 30,
             "statusMessage": "Validating brief…"
           }
