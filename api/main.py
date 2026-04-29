@@ -370,9 +370,24 @@ async def _auto_index_if_empty(
     Check chunk count for this project.
     If zero: run full index automatically (cloning via git if needed).
     If > 0: skip — scheduled reindex handles updates.
-    Never blocks startup — logs and continues on error.
+    Logs and continues on error.
+
+    Honours ``indexing.auto_reindex: false`` in the project's config.json
+    — set this on profile-only projects (like Jo's Rex profile, where
+    codebase_path=/app would otherwise spawn a redundant index of the
+    entire deek source tree under project_id='jo' on every fresh
+    instance with that profile loaded).
     """
     try:
+        # Respect explicit opt-out before doing anything else.
+        config = getattr(agent, 'config', None)
+        idx_cfg = getattr(config, 'indexing', None) if config is not None else None
+        if idx_cfg is not None:
+            auto_reindex = getattr(idx_cfg, 'auto_reindex', True)
+            if auto_reindex is False:
+                print(f'[Deek] Project {project_id} — auto_reindex=false in config, skipping auto-index')
+                return
+
         count = await _project_index_count(project_id)
         if count is None:
             print(f'[Deek] Project {project_id} — DB unavailable, skipping auto-index')
