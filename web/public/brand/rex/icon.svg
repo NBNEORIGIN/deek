@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <circle cx="512" cy="512" r="512" fill="rgb(4,120,87)"/>
+  <text x="512" y="540" text-anchor="middle"
+        font-family="Georgia, 'Times New Roman', serif"
+        font-size="640" font-weight="bold" fill="white"
+        dominant-baseline="middle">R</text>
+</svg>

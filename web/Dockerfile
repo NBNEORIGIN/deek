@@ -45,6 +45,20 @@ ENV CLAW_API_KEY=${DEEK_API_KEY}
 ARG NEXT_PUBLIC_DEEK_BRAND_NAME=Deek
 ENV NEXT_PUBLIC_DEEK_BRAND_NAME=${NEXT_PUBLIC_DEEK_BRAND_NAME}
 
+# Brand overlay — when a brand-specific public/brand/<lowercase>/
+# directory exists, copy its files OVER the defaults in /app/public/
+# before next build. This lets Rex (and any future brand) ship its
+# own icons + manifest without conditional logic in layout.tsx.
+# When the brand is Deek (default) or has no brand subdir, this is
+# a no-op.
+RUN brand_lower=$(echo "$NEXT_PUBLIC_DEEK_BRAND_NAME" | tr '[:upper:]' '[:lower:]') && \
+    if [ -d "/app/public/brand/$brand_lower" ] && [ "$brand_lower" != "deek" ]; then \
+      echo "[brand-overlay] applying $brand_lower" && \
+      cp -fv /app/public/brand/$brand_lower/* /app/public/ ; \
+    else \
+      echo "[brand-overlay] no overlay (brand=$brand_lower)" ; \
+    fi
+
 RUN npm run build
 
 # ── Runner stage ──────────────────────────────────────────────────────

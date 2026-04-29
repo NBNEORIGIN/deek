@@ -1,16 +1,14 @@
 'use client'
 
 /**
- * /voice — clean ChatGPT-shaped chat surface.
+ * /voice — clean ChatGPT-shaped chat surface with chat-history sidebar.
  *
- * Single column. Scrollable thread. Text input at the bottom. Send.
- * Anyone who has used ChatGPT or Claude.ai can sit down here and be
- * productive in zero extra effort.
+ * Left rail: "New chat" button + list of past sessions for this user
+ *   (most recent first). Mobile: hidden behind a hamburger toggle.
+ * Main: scrollable thread + composer at the bottom.
  *
- * Today's brief, if there's an unanswered one, surfaces as a small
- * banner at the top with a link to /voice/brief. Outside of that, no
- * mode toggles, no location picker, no Eye/Net/Face/Data — that earlier
- * power-user mode UI was paring noise for users like Jo.
+ * Today's brief, when unanswered, surfaces as a banner across the top
+ * with a link to /voice/brief. Otherwise the surface is just chat.
  *
  * Auth: 401 → /voice/login.
  */
@@ -23,7 +21,7 @@ import {
   type KeyboardEvent,
 } from 'react'
 import Link from 'next/link'
-import { Send, LogOut, FileText } from 'lucide-react'
+import { Send, LogOut, FileText, Plus, Menu, X } from 'lucide-react'
 import { BRAND } from '@/lib/brand'
 
 interface Turn {
@@ -43,6 +41,13 @@ interface BriefStatus {
   answered: boolean
 }
 
+interface SessionSummary {
+  session_id: string
+  title: string
+  last_at: string
+  turn_count: number
+}
+
 export default function VoicePage() {
   const [me, setMe] = useState<Me | null>(null)
   const [transcript, setTranscript] = useState<Turn[]>([])
@@ -52,12 +57,14 @@ export default function VoicePage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [brief, setBrief] = useState<BriefStatus | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [history, setHistory] = useState<SessionSummary[]>([])
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const abortRef = useRef<AbortController | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // ── Boot: auth + brief peek ─────────────────────────────────────────
+  // ── Boot: auth + brief peek + history ─────────────────────────────
   useEffect(() => {
     let alive = true
     ;(async () => {
@@ -73,7 +80,7 @@ export default function VoicePage() {
         // network — fall through
       }
 
-      // Peek today's brief — silent if 404
+      // Today's brief (silent if 404)
       try {
         const briefRes = await fetch('/api/deek/brief/today', { cache: 'no-store' })
         if (briefRes.ok) {
@@ -95,10 +102,73 @@ export default function VoicePage() {
     }
   }, [])
 
+  // ── Load chat history when we know who we are ────────────────────
+  const loadHistory = useCallback(async () => {
+    try {
+      const res = await fetch('/api/voice/sessions/list?limit=30', {
+        cache: 'no-store',
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setHistory(data.sessions || [])
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  useEffect(() => {
+    if (me?.authenticated) {
+      loadHistory()
+    }
+  }, [me, loadHistory])
+
   // ── Auto-scroll to bottom on new messages ──────────────────────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [transcript.length, partial])
+
+  // ── Open a past session ────────────────────────────────────────────
+  const openSession = useCallback(async (sid: string) => {
+    setSidebarOpen(false)
+    setErrorMsg(null)
+    setBusy(false)
+    setPartial('')
+    setSessionId(sid)
+    try {
+      const res = await fetch(
+        `/api/voice/sessions?session_id=${encodeURIComponent(sid)}&limit=100`,
+        { cache: 'no-store' },
+      )
+      if (res.ok) {
+        const data = await res.json()
+        // Backend returns role='user' | 'deek'; UI uses 'user' | 'assistant'
+        const turns: Turn[] = (data.turns || []).map((t: any) => ({
+          role: t.role === 'user' ? 'user' : 'assistant',
+          text: t.text || '',
+          at:
+            typeof t.at === 'number'
+              ? t.at
+              : new Date(t.at).getTime() || Date.now(),
+        }))
+        setTranscript(turns)
+      }
+    } catch {
+      setErrorMsg("Couldn't load that conversation.")
+    }
+  }, [])
+
+  // ── New chat ───────────────────────────────────────────────────────
+  const newChat = useCallback(() => {
+    setSidebarOpen(false)
+    abortRef.current?.abort()
+    setSessionId(null)
+    setTranscript([])
+    setPartial('')
+    setErrorMsg(null)
+    setInput('')
+    textareaRef.current?.focus()
+  }, [])
 
   // ── Submit ─────────────────────────────────────────────────────────
   const submit = useCallback(
@@ -144,6 +214,7 @@ export default function VoicePage() {
         const decoder = new TextDecoder()
         let buf = ''
         let full = ''
+        let newSid: string | null = null
 
         while (true) {
           const { value, done } = await reader.read()
@@ -169,7 +240,10 @@ export default function VoicePage() {
               full += data.text || ''
               setPartial(full)
             } else if (eventType === 'done') {
-              if (data.session_id) setSessionId(data.session_id)
+              if (data.session_id) {
+                newSid = data.session_id
+                setSessionId(data.session_id)
+              }
               setTranscript(t => [
                 ...t,
                 { role: 'assistant', text: full.trim(), at: Date.now() },
@@ -180,6 +254,12 @@ export default function VoicePage() {
             }
           }
         }
+
+        // If this was a new chat that just got a session_id, refresh
+        // history so the sidebar gains the new entry without a full reload.
+        if (newSid) {
+          loadHistory()
+        }
       } catch (err: any) {
         if (err?.name !== 'AbortError') {
           setErrorMsg(err?.message || String(err))
@@ -189,7 +269,7 @@ export default function VoicePage() {
         textareaRef.current?.focus()
       }
     },
-    [busy, sessionId],
+    [busy, loadHistory, sessionId],
   )
 
   const handleSubmit = (e: FormEvent) => {
@@ -223,96 +303,172 @@ export default function VoicePage() {
   const displayName = me.user?.name || BRAND
 
   return (
-    <div className="flex h-[100dvh] flex-col bg-white text-gray-900">
-      {/* ── Top strip — brand on left, sign out on right ──────────── */}
-      <header className="flex flex-shrink-0 items-center justify-between border-b border-gray-200 px-4 py-2">
-        <div className="text-sm font-semibold tracking-tight">{BRAND}</div>
-        <button
-          onClick={handleSignOut}
-          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-900"
-          title="Sign out"
-        >
-          <LogOut size={12} />
-          <span className="hidden sm:inline">Sign out</span>
-        </button>
-      </header>
+    <div className="flex h-[100dvh] bg-white text-gray-900">
+      {/* ── Left sidebar — chat history ────────────────────────────── */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-30 flex w-64 flex-col border-r border-gray-200 bg-gray-50 transition-transform md:static md:translate-x-0 ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        }`}
+      >
+        <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-gray-200 px-3 py-2">
+          <button
+            onClick={newChat}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-900 hover:bg-gray-100"
+          >
+            <Plus size={14} />
+            New chat
+          </button>
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="rounded-md p-1 text-gray-500 hover:bg-gray-200 md:hidden"
+            title="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
 
-      {/* ── Brief banner (when there's an unanswered brief) ─────────── */}
-      {brief && (
-        <Link
-          href="/voice/brief"
-          className="flex items-center justify-between gap-3 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800 hover:bg-emerald-100"
-        >
-          <span className="flex items-center gap-2">
-            <FileText size={14} />
-            Today&apos;s brief — {brief.questions_count} question
-            {brief.questions_count === 1 ? '' : 's'} waiting
-          </span>
-          <span className="text-xs text-emerald-700">Open →</span>
-        </Link>
+        <div className="flex-1 overflow-y-auto px-2 py-2">
+          {history.length === 0 && (
+            <div className="px-2 py-4 text-xs text-gray-400">
+              No past chats yet.
+            </div>
+          )}
+          <ul className="space-y-0.5">
+            {history.map(s => {
+              const active = s.session_id === sessionId
+              return (
+                <li key={s.session_id}>
+                  <button
+                    onClick={() => openSession(s.session_id)}
+                    className={`block w-full truncate rounded-md px-2 py-1.5 text-left text-xs ${
+                      active
+                        ? 'bg-gray-200 text-gray-900'
+                        : 'text-gray-700 hover:bg-gray-100'
+                    }`}
+                    title={s.title}
+                  >
+                    {s.title}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+
+        <div className="flex-shrink-0 border-t border-gray-200 px-3 py-2 text-xs text-gray-500">
+          Signed in as {me.user?.email || 'unknown'}
+        </div>
+      </aside>
+
+      {/* ── Sidebar backdrop on mobile when open ──────────────────── */}
+      {sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-20 bg-black/30 md:hidden"
+        />
       )}
 
-      {/* ── Thread ────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-2xl space-y-4 px-4 py-6">
-          {transcript.length === 0 && !partial && (
-            <div className="py-16 text-center">
-              <div className="text-2xl font-semibold text-gray-900">
-                Hi {displayName}.
+      {/* ── Main column ───────────────────────────────────────────── */}
+      <div className="flex h-full min-w-0 flex-1 flex-col">
+        {/* Top strip */}
+        <header className="flex flex-shrink-0 items-center justify-between border-b border-gray-200 px-4 py-2">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 md:hidden"
+              title="Show chat history"
+            >
+              <Menu size={16} />
+            </button>
+            <div className="text-sm font-semibold tracking-tight">{BRAND}</div>
+          </div>
+          <button
+            onClick={handleSignOut}
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+            title="Sign out"
+          >
+            <LogOut size={12} />
+            <span className="hidden sm:inline">Sign out</span>
+          </button>
+        </header>
+
+        {/* Brief banner */}
+        {brief && (
+          <Link
+            href="/voice/brief"
+            className="flex items-center justify-between gap-3 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800 hover:bg-emerald-100"
+          >
+            <span className="flex items-center gap-2">
+              <FileText size={14} />
+              Today&apos;s brief — {brief.questions_count} question
+              {brief.questions_count === 1 ? '' : 's'} waiting
+            </span>
+            <span className="text-xs text-emerald-700">Open →</span>
+          </Link>
+        )}
+
+        {/* Thread */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-2xl space-y-4 px-4 py-6">
+            {transcript.length === 0 && !partial && (
+              <div className="py-16 text-center">
+                <div className="text-2xl font-semibold text-gray-900">
+                  Hi {displayName}.
+                </div>
+                <div className="mt-2 text-sm text-gray-500">
+                  Ask {BRAND} anything — type below.
+                </div>
               </div>
-              <div className="mt-2 text-sm text-gray-500">
-                Ask {BRAND} anything — type below.
+            )}
+
+            {transcript.map((t, i) => (
+              <Bubble key={i} turn={t} />
+            ))}
+
+            {partial && (
+              <Bubble
+                turn={{ role: 'assistant', text: partial, at: Date.now() }}
+                streaming
+              />
+            )}
+
+            {errorMsg && (
+              <div className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-200">
+                {errorMsg}
               </div>
-            </div>
-          )}
+            )}
 
-          {transcript.map((t, i) => (
-            <Bubble key={i} turn={t} />
-          ))}
-
-          {partial && (
-            <Bubble
-              turn={{ role: 'assistant', text: partial, at: Date.now() }}
-              streaming
-            />
-          )}
-
-          {errorMsg && (
-            <div className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-200">
-              {errorMsg}
-            </div>
-          )}
-
-          <div ref={bottomRef} />
+            <div ref={bottomRef} />
+          </div>
         </div>
-      </div>
 
-      {/* ── Composer ──────────────────────────────────────────────── */}
-      <form
-        onSubmit={handleSubmit}
-        className="flex flex-shrink-0 items-end gap-2 border-t border-gray-200 px-3 py-3"
-      >
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={handleKey}
-          rows={1}
-          autoFocus
-          disabled={busy}
-          placeholder={`Message ${BRAND}…`}
-          className="flex-1 resize-none rounded-2xl border border-gray-300 bg-white px-4 py-3 text-base text-gray-900 placeholder-gray-400 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400 disabled:opacity-50"
-          style={{ maxHeight: '10rem' }}
-        />
-        <button
-          type="submit"
-          disabled={busy || !input.trim()}
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-gray-900 text-white transition hover:bg-gray-800 disabled:opacity-30"
-          title="Send"
+        {/* Composer */}
+        <form
+          onSubmit={handleSubmit}
+          className="flex flex-shrink-0 items-end gap-2 border-t border-gray-200 px-3 py-3"
         >
-          <Send size={18} />
-        </button>
-      </form>
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKey}
+            rows={1}
+            autoFocus
+            disabled={busy}
+            placeholder={`Message ${BRAND}…`}
+            className="flex-1 resize-none rounded-2xl border border-gray-300 bg-white px-4 py-3 text-base text-gray-900 placeholder-gray-400 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400 disabled:opacity-50"
+            style={{ maxHeight: '10rem' }}
+          />
+          <button
+            type="submit"
+            disabled={busy || !input.trim()}
+            className="flex h-12 w-12 items-center justify-center rounded-full bg-gray-900 text-white transition hover:bg-gray-800 disabled:opacity-30"
+            title="Send"
+          >
+            <Send size={18} />
+          </button>
+        </form>
+      </div>
     </div>
   )
 }

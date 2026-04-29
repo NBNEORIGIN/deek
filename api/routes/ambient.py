@@ -1525,6 +1525,80 @@ async def voice_sessions(
     return VoiceSessionsResponse(turns=turns)
 
 
+# ── Voice sessions LIST — chat-history sidebar ─────────────────────────────
+
+
+class VoiceSessionSummary(BaseModel):
+    session_id: str
+    title: str
+    last_at: datetime
+    turn_count: int
+
+
+class VoiceSessionsListResponse(BaseModel):
+    sessions: list[VoiceSessionSummary]
+
+
+@router.get("/voice/sessions/list", response_model=VoiceSessionsListResponse)
+async def voice_sessions_list(
+    user: str = Query(..., min_length=3, description="user_label / email"),
+    limit: int = Query(30, ge=1, le=100),
+    _: bool = Depends(verify_api_key),
+):
+    """Return distinct sessions for `user`, ordered most-recent-first.
+
+    For the ChatGPT-style left sidebar — one row per past conversation,
+    titled by the first user message in that session (truncated). Excludes
+    sessions older than 60 days so the list stays manageable.
+    """
+    _ensure_voice_telemetry_schema()
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH ranked AS (
+                    SELECT
+                        session_id,
+                        question,
+                        created_at,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY session_id
+                            ORDER BY created_at ASC
+                        ) AS rn,
+                        COUNT(*) OVER (PARTITION BY session_id) AS turn_count,
+                        MAX(created_at) OVER (PARTITION BY session_id) AS last_at
+                    FROM deek_voice_sessions
+                    WHERE user_label = %s
+                      AND created_at >= NOW() - INTERVAL '60 days'
+                )
+                SELECT session_id, question AS title, last_at, turn_count
+                FROM ranked
+                WHERE rn = 1
+                ORDER BY last_at DESC
+                LIMIT %s
+                """,
+                (user, limit),
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    sessions: list[VoiceSessionSummary] = []
+    for session_id, title, last_at, turn_count in rows:
+        # Truncate the title to a manageable sidebar width
+        clean = (title or '').strip().replace('\n', ' ')
+        if len(clean) > 60:
+            clean = clean[:57] + '…'
+        sessions.append(VoiceSessionSummary(
+            session_id=session_id,
+            title=clean or '(untitled)',
+            last_at=last_at,
+            turn_count=int(turn_count),
+        ))
+    return VoiceSessionsListResponse(sessions=sessions)
+
+
 # ── Voice metrics (telemetry dashboard) ────────────────────────────────────
 
 
