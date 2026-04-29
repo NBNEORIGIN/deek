@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useRef, useState, FormEvent, KeyboardEvent } from 'react'
 import type { VoiceLoopTurn } from '@/hooks/useVoiceLoop'
 import type { Location } from './types'
+import { BRAND } from '@/lib/brand'
 
 export function ChatView({
   location,
@@ -149,7 +150,7 @@ export function ChatView({
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {transcript.length === 0 && !partial && (
           <div className="py-12 text-center text-slate-600">
-            Ask Deek anything. Responses stream in real time.
+            Ask {BRAND} anything. Responses stream in real time.
           </div>
         )}
         {transcript.map((m, i) => (
@@ -181,7 +182,7 @@ export function ChatView({
           onKeyDown={handleKey}
           rows={1}
           disabled={busy}
-          placeholder="Message Deek…"
+          placeholder={`Message ${BRAND}…`}
           className="flex-1 resize-none rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-base placeholder-slate-500 focus:border-emerald-500 focus:outline-none disabled:opacity-50"
           style={{ maxHeight: '8rem' }}
         />

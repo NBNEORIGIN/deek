@@ -3,18 +3,20 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { MessageSquare, Share2, Activity, Mic } from 'lucide-react'
+import { BRAND } from '@/lib/brand'
 
 /**
- * `/voice` is the primary mobile entry point — labelled simply "Deek".
- * The legacy `/` (ChatWindow + sidebar) is the desktop power-user console,
- * labelled "Console". Mobile users are redirected from / to /voice by
- * middleware, so on phones they'll almost never see the Console tab highlighted.
+ * `/voice` is the primary mobile entry point — labelled with the brand
+ * name. The legacy `/` (ChatWindow + sidebar) is the desktop power-user
+ * console, labelled "Console". Mobile users are redirected from / to
+ * /voice by middleware, so on phones they'll almost never see the
+ * Console tab highlighted.
  *
  * Social and Status are secondary — hidden behind a small collapse on mobile
  * so the primary two tabs get the space.
  */
 const PRIMARY_ITEMS = [
-  { href: '/voice', label: 'Deek', icon: Mic },
+  { href: '/voice', label: BRAND, icon: Mic },
   { href: '/', label: 'Console', icon: MessageSquare, desktopOnly: true },
 ]
 

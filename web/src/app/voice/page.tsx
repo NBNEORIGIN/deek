@@ -16,6 +16,7 @@ import { BriefingView } from '@/components/voice/BriefingView'
 import { TopMenu } from '@/components/voice/TopMenu'
 import type { Location, Mode, MeResponse } from '@/components/voice/types'
 import type { VoiceLoopTurn } from '@/hooks/useVoiceLoop'
+import { BRAND } from '@/lib/brand'
 
 const MODE_KEY = 'deek.mode'
 const LOCATION_KEY = 'deek.location'
@@ -157,7 +158,7 @@ export default function VoicePage() {
   if (!me) {
     return (
       <div className="flex min-h-[100dvh] items-center justify-center bg-slate-950 text-slate-500">
-        Loading Deek…
+        Loading {BRAND}…
       </div>
     )
   }
@@ -169,7 +170,7 @@ export default function VoicePage() {
         <div className="text-lg font-semibold">Access restricted</div>
         <div className="max-w-sm text-sm text-slate-500">
           Your role ({me.user?.role || 'unknown'}) does not have access to any
-          Deek voice location. Talk to Toby to adjust your permissions.
+          {BRAND} voice location. Talk to Toby to adjust your permissions.
         </div>
       </div>
     )
@@ -278,7 +279,7 @@ function LocationPicker({
       <div className="text-center">
         <div className="mb-2 text-2xl font-semibold">Where are you?</div>
         <div className="text-sm text-slate-400">
-          Deek prioritises information for this location.
+          {BRAND} prioritises information for this location.
         </div>
       </div>
       <div className="flex w-full max-w-sm flex-col gap-3">

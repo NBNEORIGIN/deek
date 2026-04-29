@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { VoiceLoopTurn } from '@/hooks/useVoiceLoop'
 import { listHalCandidates, halTuningFor } from '@/lib/speechQueue'
+import { BRAND } from '@/lib/brand'
 
 const VOICE_PREF_KEY = 'deek.voice.preferred'
 
@@ -55,7 +56,7 @@ export function TopMenu({
     // Speak a sample with the new voice
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel()
-      const u = new SpeechSynthesisUtterance('I am Deek, your sovereign business brain.')
+      const u = new SpeechSynthesisUtterance(`I am ${BRAND}, your sovereign business brain.`)
       const v = voices.find(x => x.name === name)
       if (v) u.voice = v
       const tuned = halTuningFor(v?.name)
@@ -90,12 +91,12 @@ export function TopMenu({
     const now = new Date()
     const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`
     const lines: string[] = []
-    lines.push(`# Deek transcript — ${stamp}`)
+    lines.push(`# ${BRAND} transcript — ${stamp}`)
     if (sessionId) lines.push(`\nSession: \`${sessionId}\``)
     if (userEmail) lines.push(`User: ${userEmail}`)
     lines.push('')
     for (const t of transcript) {
-      const who = t.role === 'user' ? 'User' : 'Deek'
+      const who = t.role === 'user' ? 'User' : BRAND
       lines.push(`**${who}:** ${t.text}`)
       lines.push('')
     }
@@ -176,7 +177,7 @@ export function TopMenu({
             >
               ← Back
             </button>
-            <span>Deek voice</span>
+            <span>{BRAND} voice</span>
           </div>
           <button
             onClick={() => pickVoice('')}

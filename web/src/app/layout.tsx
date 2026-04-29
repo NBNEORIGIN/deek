@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { Inter, JetBrains_Mono } from 'next/font/google'
 import Script from 'next/script'
 import { NavBar } from '@/components/NavBar'
+import { BRAND } from '@/lib/brand'
 import './globals.css'
 
 // ── Typography ─────────────────────────────────────────────────────────
@@ -24,15 +25,15 @@ const jetbrains = JetBrains_Mono({
 // ── Metadata ───────────────────────────────────────────────────────────
 
 export const metadata: Metadata = {
-  title: 'Deek — Sovereign AI Agent',
+  title: `${BRAND} — Sovereign AI Agent`,
   description:
-    'Counterfactual memory, email triage, principal-developer-grade code assistance for NBNE.',
-  applicationName: 'Deek',
+    'Counterfactual memory, email triage, principal-developer-grade code assistance.',
+  applicationName: BRAND,
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'Deek',
+    title: BRAND,
   },
   icons: {
     icon: [

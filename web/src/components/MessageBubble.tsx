@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react'
 import { AlertTriangle, CheckCircle2, Clock, TerminalSquare } from 'lucide-react'
 import { ToolApproval, PendingToolCall } from './ToolApproval'
+import { BRAND } from '@/lib/brand'
 
 export interface ToolCallRecord {
   tool_name: string
@@ -297,7 +298,7 @@ function ValidationBanner({ metadata }: { metadata?: MessageMetadata }) {
     return (
       <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
         <Clock size={14} className="mt-0.5 shrink-0" />
-        <span>Generation stopped before Deek finished the response.</span>
+        <span>Generation stopped before {BRAND} finished the response.</span>
       </div>
     )
   }
@@ -305,7 +306,7 @@ function ValidationBanner({ metadata }: { metadata?: MessageMetadata }) {
     return (
       <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
         <Clock size={14} className="mt-0.5 shrink-0" />
-        <span>Deek hit the request deadline and returned early.</span>
+        <span>{BRAND} hit the request deadline and returned early.</span>
       </div>
     )
   }
@@ -361,7 +362,7 @@ export function MessageBubble({ message, onApprove, onReject }: MessageBubblePro
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-subtle">
         <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50 px-3.5 py-2">
           <span className="inline-flex items-center gap-1.5 rounded-sm border border-slate-200 bg-white px-1.5 py-0.5 text-2xs font-medium uppercase tracking-wide text-slate-700">
-            {message.modelUsed ? modelLabel(message.modelUsed) : 'Deek'}
+            {message.modelUsed ? modelLabel(message.modelUsed) : BRAND}
           </span>
           {message.modelUsed && (
             <span className="font-mono text-2xs text-slate-500">{message.modelUsed}</span>

@@ -15,6 +15,7 @@ import { HalEye, EyeState } from './HalEye'
 import { DeekConstellation } from './DeekConstellation'
 import { useVoiceLoop, VoiceLoopTurn } from '@/hooks/useVoiceLoop'
 import type { Location } from './types'
+import { BRAND } from '@/lib/brand'
 
 const FACE_KEY = 'deek.face'
 type FaceChoice = 'eye' | 'net'
@@ -215,7 +216,7 @@ export function VoiceView({
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2 text-sm">
           {transcript.length === 0 && !partialResponse && (
             <div className="py-8 text-center text-slate-600">
-              Press the eye to start talking to Deek.
+              Press the eye to start talking to {BRAND}.
             </div>
           )}
           {transcript.map((m, i) => (
@@ -290,7 +291,7 @@ function TurnBubble({
       className={`rounded-lg px-3 py-2 ${color} ${streaming ? 'animate-pulse' : ''}`}
     >
       <div className="mb-0.5 text-[10px] uppercase tracking-wider text-slate-500">
-        {isUser ? 'You' : 'Deek'}
+        {isUser ? 'You' : BRAND}
       </div>
       {turn.text || (streaming ? '…' : '')}
     </div>
