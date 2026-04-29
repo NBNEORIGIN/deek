@@ -1533,28 +1533,92 @@ class VoiceSessionSummary(BaseModel):
     title: str
     last_at: datetime
     turn_count: int
+    project_id: Optional[int] = None
+    project_name: Optional[str] = None
+    archived: bool = False
+
+
+class VoiceProject(BaseModel):
+    id: int
+    name: str
+    created_at: datetime
 
 
 class VoiceSessionsListResponse(BaseModel):
     sessions: list[VoiceSessionSummary]
+    projects: list[VoiceProject]
+
+
+def _ensure_voice_meta_schema() -> None:
+    """Create the per-session metadata + projects tables on demand.
+    Mirrors _ensure_voice_telemetry_schema() — safe to call repeatedly."""
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS deek_voice_projects (
+                    id SERIAL PRIMARY KEY,
+                    user_label VARCHAR(100) NOT NULL,
+                    name VARCHAR(100) NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (user_label, name)
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_deek_voice_projects_user "
+                "ON deek_voice_projects (user_label, name)"
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS deek_voice_session_meta (
+                    session_id VARCHAR(100) PRIMARY KEY,
+                    user_label VARCHAR(100) NOT NULL,
+                    title VARCHAR(200),
+                    project_id INTEGER REFERENCES deek_voice_projects(id) ON DELETE SET NULL,
+                    archived_at TIMESTAMPTZ,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_deek_voice_session_meta_user "
+                "ON deek_voice_session_meta (user_label, archived_at NULLS FIRST)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_deek_voice_session_meta_project "
+                "ON deek_voice_session_meta (project_id) WHERE project_id IS NOT NULL"
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 @router.get("/voice/sessions/list", response_model=VoiceSessionsListResponse)
 async def voice_sessions_list(
     user: str = Query(..., min_length=3, description="user_label / email"),
-    limit: int = Query(30, ge=1, le=100),
+    limit: int = Query(60, ge=1, le=200),
+    include_archived: bool = Query(False),
     _: bool = Depends(verify_api_key),
 ):
-    """Return distinct sessions for `user`, ordered most-recent-first.
+    """Return sessions + projects for the chat-history sidebar.
 
-    For the ChatGPT-style left sidebar — one row per past conversation,
-    titled by the first user message in that session (truncated). Excludes
-    sessions older than 60 days so the list stays manageable.
+    Joins deek_voice_sessions (per-turn telemetry) with
+    deek_voice_session_meta (per-session overrides) and
+    deek_voice_projects (named buckets) so the client gets one
+    consolidated payload to render Projects → Recent → Archived.
+
+    Excludes sessions older than 60 days. ``include_archived=true``
+    overrides the archive filter so archived chats appear too —
+    the client uses this for the Archived view.
     """
     _ensure_voice_telemetry_schema()
+    _ensure_voice_meta_schema()
     conn = _get_conn()
     try:
         with conn.cursor() as cur:
+            # Sessions joined with their meta + project
             cur.execute(
                 """
                 WITH ranked AS (
@@ -1572,31 +1636,193 @@ async def voice_sessions_list(
                     WHERE user_label = %s
                       AND created_at >= NOW() - INTERVAL '60 days'
                 )
-                SELECT session_id, question AS title, last_at, turn_count
-                FROM ranked
-                WHERE rn = 1
-                ORDER BY last_at DESC
+                SELECT
+                    r.session_id,
+                    COALESCE(m.title, r.question) AS title,
+                    r.last_at,
+                    r.turn_count,
+                    m.project_id,
+                    p.name AS project_name,
+                    m.archived_at IS NOT NULL AS archived
+                FROM ranked r
+                LEFT JOIN deek_voice_session_meta m
+                    ON r.session_id = m.session_id
+                LEFT JOIN deek_voice_projects p
+                    ON m.project_id = p.id
+                WHERE r.rn = 1
+                  AND (%s OR m.archived_at IS NULL)
+                ORDER BY r.last_at DESC
                 LIMIT %s
                 """,
-                (user, limit),
+                (user, include_archived, limit),
             )
-            rows = cur.fetchall()
+            session_rows = cur.fetchall()
+
+            cur.execute(
+                "SELECT id, name, created_at FROM deek_voice_projects "
+                "WHERE user_label = %s ORDER BY lower(name)",
+                (user,),
+            )
+            project_rows = cur.fetchall()
     finally:
         conn.close()
 
     sessions: list[VoiceSessionSummary] = []
-    for session_id, title, last_at, turn_count in rows:
-        # Truncate the title to a manageable sidebar width
+    for sid, title, last_at, turn_count, pid, pname, archived in session_rows:
         clean = (title or '').strip().replace('\n', ' ')
         if len(clean) > 60:
             clean = clean[:57] + '…'
         sessions.append(VoiceSessionSummary(
-            session_id=session_id,
+            session_id=sid,
             title=clean or '(untitled)',
             last_at=last_at,
             turn_count=int(turn_count),
+            project_id=int(pid) if pid is not None else None,
+            project_name=pname,
+            archived=bool(archived),
         ))
-    return VoiceSessionsListResponse(sessions=sessions)
+
+    projects = [
+        VoiceProject(id=int(pid), name=pname, created_at=created_at)
+        for pid, pname, created_at in project_rows
+    ]
+    return VoiceSessionsListResponse(sessions=sessions, projects=projects)
+
+
+# ── Voice projects + session meta (rename / move / archive) ────────────
+
+
+class CreateProjectRequest(BaseModel):
+    user: str
+    name: str
+
+
+class UpdateSessionRequest(BaseModel):
+    user: str
+    title: Optional[str] = None
+    project_id: Optional[int] = None      # null = ungrouped, omit = leave unchanged
+    archived: Optional[bool] = None       # true = archive, false = unarchive
+
+
+@router.post("/voice/projects")
+async def voice_create_project(
+    body: CreateProjectRequest,
+    _: bool = Depends(verify_api_key),
+) -> dict:
+    name = (body.name or '').strip()
+    if not name or len(name) > 100:
+        raise HTTPException(status_code=400, detail='name must be 1-100 chars')
+    _ensure_voice_meta_schema()
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO deek_voice_projects (user_label, name) "
+                "VALUES (%s, %s) "
+                "ON CONFLICT (user_label, name) DO UPDATE SET name = EXCLUDED.name "
+                "RETURNING id, name, created_at",
+                (body.user, name),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    finally:
+        conn.close()
+    return {
+        'id': int(row[0]),
+        'name': row[1],
+        'created_at': row[2].isoformat(),
+    }
+
+
+@router.delete("/voice/projects/{project_id}")
+async def voice_delete_project(
+    project_id: int,
+    user: str = Query(...),
+    _: bool = Depends(verify_api_key),
+) -> dict:
+    """Delete a project. Sessions in it lose their project assignment
+    (set to NULL via FK ON DELETE SET NULL) — chats themselves are
+    untouched."""
+    _ensure_voice_meta_schema()
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM deek_voice_projects "
+                "WHERE id = %s AND user_label = %s",
+                (project_id, user),
+            )
+            deleted = cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    if not deleted:
+        raise HTTPException(status_code=404, detail='project not found')
+    return {'ok': True, 'deleted': int(deleted)}
+
+
+@router.patch("/voice/sessions/{session_id}")
+async def voice_update_session(
+    session_id: str,
+    body: UpdateSessionRequest,
+    _: bool = Depends(verify_api_key),
+) -> dict:
+    """Upsert per-session metadata.
+
+    All three fields are optional. Pass only what you want to change.
+    Pass ``project_id: null`` explicitly (in JSON) to ungroup a session
+    without giving it a new project. Pass ``archived: true`` to archive,
+    ``false`` to unarchive.
+    """
+    _ensure_voice_meta_schema()
+
+    # Detect which keys the client actually sent (Pydantic discards
+    # missing keys; FastAPI uses None for both "set to null" and
+    # "unset". We use field defaults + an explicit body-mode parse).
+    payload = body.dict(exclude_unset=True)
+
+    sets: list[str] = []
+    params: list = []
+    if 'title' in payload:
+        title = (payload['title'] or '').strip() or None
+        if title and len(title) > 200:
+            title = title[:200]
+        sets.append('title = %s')
+        params.append(title)
+    if 'project_id' in payload:
+        sets.append('project_id = %s')
+        params.append(payload['project_id'])
+    if 'archived' in payload:
+        sets.append(
+            'archived_at = ' + ('NOW()' if payload['archived'] else 'NULL')
+        )
+    if not sets:
+        return {'ok': True, 'no_changes': True}
+
+    # Two-step upsert: ensure the row exists, then UPDATE the requested
+    # fields. Cleaner than building a dynamic ON CONFLICT DO UPDATE
+    # clause that has to know which column came from which placeholder.
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO deek_voice_session_meta (session_id, user_label) "
+                "VALUES (%s, %s) "
+                "ON CONFLICT (session_id) DO NOTHING",
+                (session_id, body.user),
+            )
+            cur.execute(
+                f"UPDATE deek_voice_session_meta "
+                f"SET {', '.join(sets)}, updated_at = NOW() "
+                f"WHERE session_id = %s AND user_label = %s",
+                (*params, session_id, body.user),
+            )
+            updated = cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {'ok': True, 'updated': int(updated)}
 
 
 # ── Voice session log (for chat-history sidebar) ───────────────────────────

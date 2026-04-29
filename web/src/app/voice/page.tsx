@@ -23,7 +23,8 @@ import {
 import Link from 'next/link'
 import {
   Send, LogOut, FileText, Plus, Menu, X, Loader2, Check,
-  Paperclip, FileCheck, AlertCircle,
+  Paperclip, FileCheck, AlertCircle, MoreHorizontal, Folder,
+  Archive, Pencil, ChevronDown, ChevronRight, FolderPlus,
 } from 'lucide-react'
 import { BRAND } from '@/lib/brand'
 
@@ -89,6 +90,15 @@ interface SessionSummary {
   title: string
   last_at: string
   turn_count: number
+  project_id?: number | null
+  project_name?: string | null
+  archived?: boolean
+}
+
+interface Project {
+  id: number
+  name: string
+  created_at: string
 }
 
 export default function VoicePage() {
@@ -101,6 +111,10 @@ export default function VoicePage() {
   const [brief, setBrief] = useState<BriefStatus | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [history, setHistory] = useState<SessionSummary[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
+  const [showArchived, setShowArchived] = useState(false)
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<number>>(new Set())
+  const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [tools, setTools] = useState<ToolEvent[]>([])
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([])
@@ -152,16 +166,101 @@ export default function VoicePage() {
   // ── Load chat history when we know who we are ────────────────────
   const loadHistory = useCallback(async () => {
     try {
-      const res = await fetch('/api/voice/sessions/list?limit=30', {
-        cache: 'no-store',
-      })
+      const res = await fetch(
+        `/api/voice/sessions/list?limit=100&include_archived=${showArchived}`,
+        { cache: 'no-store' },
+      )
       if (res.ok) {
         const data = await res.json()
         setHistory(data.sessions || [])
+        setProjects(data.projects || [])
       }
     } catch {
       // ignore
     }
+  }, [showArchived])
+
+  // ── Per-session metadata mutations ───────────────────────────────
+  const patchSession = useCallback(
+    async (sid: string, patch: { title?: string; project_id?: number | null; archived?: boolean }) => {
+      try {
+        await fetch(`/api/voice/sessions/${encodeURIComponent(sid)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        })
+      } catch {
+        /* ignore */
+      }
+      loadHistory()
+    },
+    [loadHistory],
+  )
+
+  const renameSession = useCallback(
+    (sid: string, currentTitle: string) => {
+      const next = window.prompt('Rename chat', currentTitle)
+      if (next === null) return
+      const trimmed = next.trim()
+      if (!trimmed || trimmed === currentTitle) return
+      patchSession(sid, { title: trimmed })
+    },
+    [patchSession],
+  )
+
+  const archiveSession = useCallback(
+    (sid: string, archived: boolean) => patchSession(sid, { archived }),
+    [patchSession],
+  )
+
+  const moveSession = useCallback(
+    (sid: string, project_id: number | null) => patchSession(sid, { project_id }),
+    [patchSession],
+  )
+
+  const createProject = useCallback(
+    async (defaultName?: string): Promise<number | null> => {
+      const name = window.prompt('New project name', defaultName || '')
+      if (!name) return null
+      const trimmed = name.trim()
+      if (!trimmed) return null
+      try {
+        const res = await fetch('/api/voice/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: trimmed }),
+        })
+        if (!res.ok) return null
+        const data = await res.json()
+        await loadHistory()
+        return data?.id ?? null
+      } catch {
+        return null
+      }
+    },
+    [loadHistory],
+  )
+
+  const deleteProject = useCallback(
+    async (id: number, name: string) => {
+      if (!window.confirm(`Delete project "${name}"? Chats inside will move back to Recent.`)) return
+      try {
+        await fetch(`/api/voice/projects?id=${id}`, { method: 'DELETE' })
+      } catch {
+        /* ignore */
+      }
+      loadHistory()
+    },
+    [loadHistory],
+  )
+
+  const toggleProjectCollapsed = useCallback((id: number) => {
+    setCollapsedProjects(s => {
+      const next = new Set(s)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }, [])
 
   useEffect(() => {
@@ -256,29 +355,46 @@ export default function VoicePage() {
     [stageFiles],
   )
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragActive(true)
-  }, [])
+  // Window-level drag/drop listeners — catches files dropped anywhere in
+  // the page, including over the textarea/composer (HTML inputs natively
+  // handle file drops and would otherwise swallow the event before the
+  // wrapper's onDrop sees it).
+  useEffect(() => {
+    const hasFiles = (dt?: DataTransfer | null): boolean => {
+      if (!dt) return false
+      // types is a DOMStringList — convert to array safely
+      const types = Array.from(dt.types || [])
+      return types.includes('Files')
+    }
 
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    // Only clear when leaving the outer drop zone
-    if (e.currentTarget === e.target) setDragActive(false)
-  }, [])
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e.dataTransfer)) return
+      e.preventDefault()
+      setDragActive(true)
+    }
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e.dataTransfer)) return
       e.preventDefault()
       e.stopPropagation()
       setDragActive(false)
-      const list = Array.from(e.dataTransfer.files || [])
-      if (list.length > 0) stageFiles(list)
-    },
-    [stageFiles],
-  )
+      const files = Array.from(e.dataTransfer?.files || [])
+      if (files.length > 0) stageFiles(files)
+    }
+    const onDragLeave = (e: DragEvent) => {
+      // Only clear when the cursor leaves the window entirely
+      // (relatedTarget is null when crossing the window boundary).
+      if ((e as any).relatedTarget == null) setDragActive(false)
+    }
+
+    window.addEventListener('dragover', onDragOver)
+    window.addEventListener('drop', onDrop)
+    window.addEventListener('dragleave', onDragLeave)
+    return () => {
+      window.removeEventListener('dragover', onDragOver)
+      window.removeEventListener('drop', onDrop)
+      window.removeEventListener('dragleave', onDragLeave)
+    }
+  }, [stageFiles])
 
   const uploadStaged = useCallback(async (): Promise<string> => {
     const toUpload = stagedFiles.filter(f => f.status === 'pending')
@@ -550,49 +666,53 @@ export default function VoicePage() {
           sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
-        <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-gray-200 px-3 py-2">
+        <div className="flex flex-shrink-0 flex-col gap-1.5 border-b border-gray-200 px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <button
+              onClick={newChat}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-900 hover:bg-gray-100"
+            >
+              <Plus size={14} />
+              New chat
+            </button>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="rounded-md p-1 text-gray-500 hover:bg-gray-200 md:hidden"
+              title="Close"
+            >
+              <X size={16} />
+            </button>
+          </div>
           <button
-            onClick={newChat}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-900 hover:bg-gray-100"
+            onClick={() => createProject()}
+            className="flex w-full items-center justify-center gap-1.5 rounded-md px-3 py-1 text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900"
           >
-            <Plus size={14} />
-            New chat
-          </button>
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="rounded-md p-1 text-gray-500 hover:bg-gray-200 md:hidden"
-            title="Close"
-          >
-            <X size={16} />
+            <FolderPlus size={12} />
+            New project
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-2 py-2">
-          {history.length === 0 && (
-            <div className="px-2 py-4 text-xs text-gray-400">
-              No past chats yet.
-            </div>
-          )}
-          <ul className="space-y-0.5">
-            {history.map(s => {
-              const active = s.session_id === sessionId
-              return (
-                <li key={s.session_id}>
-                  <button
-                    onClick={() => openSession(s.session_id)}
-                    className={`block w-full truncate rounded-md px-2 py-1.5 text-left text-xs ${
-                      active
-                        ? 'bg-gray-200 text-gray-900'
-                        : 'text-gray-700 hover:bg-gray-100'
-                    }`}
-                    title={s.title}
-                  >
-                    {s.title}
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
+        <div
+          className="flex-1 overflow-y-auto px-2 py-2"
+          onClick={() => setMenuOpenFor(null)}
+        >
+          <SidebarBody
+            history={history}
+            projects={projects}
+            sessionId={sessionId}
+            collapsedProjects={collapsedProjects}
+            showArchived={showArchived}
+            menuOpenFor={menuOpenFor}
+            setMenuOpenFor={setMenuOpenFor}
+            onOpenSession={openSession}
+            onToggleProject={toggleProjectCollapsed}
+            onRename={renameSession}
+            onArchive={archiveSession}
+            onMove={moveSession}
+            onCreateProject={createProject}
+            onDeleteProject={deleteProject}
+            onToggleArchived={() => setShowArchived(v => !v)}
+          />
         </div>
 
         <div className="flex-shrink-0 border-t border-gray-200 px-3 py-2 text-xs text-gray-500">
@@ -609,12 +729,7 @@ export default function VoicePage() {
       )}
 
       {/* ── Main column ───────────────────────────────────────────── */}
-      <div
-        className="relative flex h-full min-w-0 flex-1 flex-col"
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
+      <div className="relative flex h-full min-w-0 flex-1 flex-col">
         {dragActive && (
           <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-emerald-50/80 backdrop-blur-sm">
             <div className="rounded-2xl border-2 border-dashed border-emerald-500 bg-white px-8 py-6 text-center text-emerald-700">
@@ -817,6 +932,357 @@ function Bubble({
         {turn.text || (streaming ? '…' : '')}
       </div>
     </div>
+  )
+}
+
+// ── Sidebar body ──────────────────────────────────────────────────────
+
+interface SidebarBodyProps {
+  history: SessionSummary[]
+  projects: Project[]
+  sessionId: string | null
+  collapsedProjects: Set<number>
+  showArchived: boolean
+  menuOpenFor: string | null
+  setMenuOpenFor: (sid: string | null) => void
+  onOpenSession: (sid: string) => void
+  onToggleProject: (id: number) => void
+  onRename: (sid: string, title: string) => void
+  onArchive: (sid: string, archived: boolean) => void
+  onMove: (sid: string, project_id: number | null) => void
+  onCreateProject: (defaultName?: string) => Promise<number | null>
+  onDeleteProject: (id: number, name: string) => void
+  onToggleArchived: () => void
+}
+
+function SidebarBody({
+  history,
+  projects,
+  sessionId,
+  collapsedProjects,
+  showArchived,
+  menuOpenFor,
+  setMenuOpenFor,
+  onOpenSession,
+  onToggleProject,
+  onRename,
+  onArchive,
+  onMove,
+  onCreateProject,
+  onDeleteProject,
+  onToggleArchived,
+}: SidebarBodyProps) {
+  // Partition: active vs archived; within active, by project
+  const active = history.filter(s => !s.archived)
+  const archived = history.filter(s => s.archived)
+  const byProject = new Map<number, SessionSummary[]>()
+  const ungrouped: SessionSummary[] = []
+  for (const s of active) {
+    if (s.project_id) {
+      if (!byProject.has(s.project_id)) byProject.set(s.project_id, [])
+      byProject.get(s.project_id)!.push(s)
+    } else {
+      ungrouped.push(s)
+    }
+  }
+
+  if (history.length === 0 && projects.length === 0) {
+    return (
+      <div className="px-2 py-4 text-xs text-gray-400">
+        No past chats yet.
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Projects */}
+      {projects.map(p => {
+        const collapsed = collapsedProjects.has(p.id)
+        const sessions = byProject.get(p.id) || []
+        return (
+          <div key={p.id}>
+            <div className="flex items-center gap-1 px-1 py-1 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+              <button
+                onClick={() => onToggleProject(p.id)}
+                className="flex flex-1 items-center gap-1 rounded px-1 py-0.5 hover:bg-gray-100 hover:text-gray-900"
+              >
+                {collapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
+                <Folder size={11} />
+                <span className="truncate normal-case">{p.name}</span>
+                <span className="ml-auto text-gray-400">{sessions.length}</span>
+              </button>
+              <button
+                onClick={() => onDeleteProject(p.id, p.name)}
+                className="rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-rose-600"
+                title="Delete project"
+              >
+                <X size={11} />
+              </button>
+            </div>
+            {!collapsed && (
+              <ul className="space-y-0.5">
+                {sessions.map(s => (
+                  <SessionRow
+                    key={s.session_id}
+                    session={s}
+                    active={s.session_id === sessionId}
+                    projects={projects}
+                    menuOpen={menuOpenFor === s.session_id}
+                    onOpen={() => onOpenSession(s.session_id)}
+                    onMenuToggle={() =>
+                      setMenuOpenFor(menuOpenFor === s.session_id ? null : s.session_id)
+                    }
+                    onRename={() => {
+                      onRename(s.session_id, s.title)
+                      setMenuOpenFor(null)
+                    }}
+                    onArchive={() => {
+                      onArchive(s.session_id, true)
+                      setMenuOpenFor(null)
+                    }}
+                    onUnarchive={() => {
+                      onArchive(s.session_id, false)
+                      setMenuOpenFor(null)
+                    }}
+                    onMove={pid => {
+                      onMove(s.session_id, pid)
+                      setMenuOpenFor(null)
+                    }}
+                    onMoveToNew={async () => {
+                      const pid = await onCreateProject()
+                      if (pid !== null) onMove(s.session_id, pid)
+                      setMenuOpenFor(null)
+                    }}
+                  />
+                ))}
+                {sessions.length === 0 && (
+                  <li className="px-2 py-1 text-[11px] text-gray-400">
+                    Empty — drop a chat here from its menu.
+                  </li>
+                )}
+              </ul>
+            )}
+          </div>
+        )
+      })}
+
+      {/* Recent (ungrouped) */}
+      {(ungrouped.length > 0 || projects.length > 0) && (
+        <div>
+          <div className="px-1 py-1 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+            Recent
+          </div>
+          <ul className="space-y-0.5">
+            {ungrouped.map(s => (
+              <SessionRow
+                key={s.session_id}
+                session={s}
+                active={s.session_id === sessionId}
+                projects={projects}
+                menuOpen={menuOpenFor === s.session_id}
+                onOpen={() => onOpenSession(s.session_id)}
+                onMenuToggle={() =>
+                  setMenuOpenFor(menuOpenFor === s.session_id ? null : s.session_id)
+                }
+                onRename={() => {
+                  onRename(s.session_id, s.title)
+                  setMenuOpenFor(null)
+                }}
+                onArchive={() => {
+                  onArchive(s.session_id, true)
+                  setMenuOpenFor(null)
+                }}
+                onUnarchive={() => {
+                  onArchive(s.session_id, false)
+                  setMenuOpenFor(null)
+                }}
+                onMove={pid => {
+                  onMove(s.session_id, pid)
+                  setMenuOpenFor(null)
+                }}
+                onMoveToNew={async () => {
+                  const pid = await onCreateProject()
+                  if (pid !== null) onMove(s.session_id, pid)
+                  setMenuOpenFor(null)
+                }}
+              />
+            ))}
+            {ungrouped.length === 0 && (
+              <li className="px-2 py-1 text-[11px] text-gray-400">No ungrouped chats.</li>
+            )}
+          </ul>
+        </div>
+      )}
+
+      {/* Archived toggle / list */}
+      <div>
+        <button
+          onClick={onToggleArchived}
+          className="flex w-full items-center gap-1 rounded px-1 py-1 text-[11px] font-semibold uppercase tracking-wider text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+        >
+          <Archive size={11} />
+          Archived
+          {showArchived ? (
+            <span className="ml-auto text-gray-400 normal-case">{archived.length}</span>
+          ) : (
+            <span className="ml-auto text-gray-400 normal-case">show</span>
+          )}
+        </button>
+        {showArchived && archived.length > 0 && (
+          <ul className="space-y-0.5">
+            {archived.map(s => (
+              <SessionRow
+                key={s.session_id}
+                session={s}
+                active={s.session_id === sessionId}
+                projects={projects}
+                menuOpen={menuOpenFor === s.session_id}
+                onOpen={() => onOpenSession(s.session_id)}
+                onMenuToggle={() =>
+                  setMenuOpenFor(menuOpenFor === s.session_id ? null : s.session_id)
+                }
+                onRename={() => {
+                  onRename(s.session_id, s.title)
+                  setMenuOpenFor(null)
+                }}
+                onArchive={() => {}}
+                onUnarchive={() => {
+                  onArchive(s.session_id, false)
+                  setMenuOpenFor(null)
+                }}
+                onMove={pid => {
+                  onMove(s.session_id, pid)
+                  setMenuOpenFor(null)
+                }}
+                onMoveToNew={async () => {
+                  const pid = await onCreateProject()
+                  if (pid !== null) onMove(s.session_id, pid)
+                  setMenuOpenFor(null)
+                }}
+              />
+            ))}
+          </ul>
+        )}
+        {showArchived && archived.length === 0 && (
+          <div className="px-2 py-1 text-[11px] text-gray-400">No archived chats.</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SessionRow({
+  session,
+  active,
+  projects,
+  menuOpen,
+  onOpen,
+  onMenuToggle,
+  onRename,
+  onArchive,
+  onUnarchive,
+  onMove,
+  onMoveToNew,
+}: {
+  session: SessionSummary
+  active: boolean
+  projects: Project[]
+  menuOpen: boolean
+  onOpen: () => void
+  onMenuToggle: () => void
+  onRename: () => void
+  onArchive: () => void
+  onUnarchive: () => void
+  onMove: (pid: number | null) => void
+  onMoveToNew: () => void
+}) {
+  return (
+    <li
+      className="group relative flex items-center"
+      onClick={e => {
+        // Stop clicks on the row from bubbling to the body's
+        // outside-click handler that closes the menu.
+        e.stopPropagation()
+      }}
+    >
+      <button
+        onClick={onOpen}
+        className={`flex-1 truncate rounded-md py-1.5 pl-2 pr-7 text-left text-xs ${
+          active
+            ? 'bg-gray-200 text-gray-900'
+            : 'text-gray-700 hover:bg-gray-100'
+        } ${session.archived ? 'opacity-60' : ''}`}
+        title={session.title}
+      >
+        {session.title}
+      </button>
+      <button
+        onClick={onMenuToggle}
+        className="absolute right-1 rounded p-0.5 text-gray-400 opacity-0 hover:bg-gray-200 hover:text-gray-900 group-hover:opacity-100"
+        aria-label="Chat options"
+      >
+        <MoreHorizontal size={13} />
+      </button>
+      {menuOpen && (
+        <div className="absolute right-1 top-full z-40 mt-1 w-48 rounded-md border border-gray-200 bg-white py-1 text-xs shadow-lg">
+          <button
+            onClick={onRename}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50"
+          >
+            <Pencil size={11} /> Rename
+          </button>
+
+          <div className="my-1 border-t border-gray-100" />
+
+          <div className="px-3 py-0.5 text-[10px] uppercase tracking-wider text-gray-400">
+            Move to
+          </div>
+          {projects.map(p => (
+            <button
+              key={p.id}
+              onClick={() => onMove(p.id)}
+              disabled={p.id === session.project_id}
+              className="flex w-full items-center gap-2 px-3 py-1 text-left text-gray-700 hover:bg-gray-50 disabled:cursor-default disabled:bg-gray-100 disabled:text-gray-400"
+            >
+              <Folder size={11} /> {p.name}
+            </button>
+          ))}
+          {session.project_id && (
+            <button
+              onClick={() => onMove(null)}
+              className="flex w-full items-center gap-2 px-3 py-1 text-left text-gray-700 hover:bg-gray-50"
+            >
+              <X size={11} /> Ungroup
+            </button>
+          )}
+          <button
+            onClick={onMoveToNew}
+            className="flex w-full items-center gap-2 px-3 py-1 text-left text-gray-700 hover:bg-gray-50"
+          >
+            <FolderPlus size={11} /> New project…
+          </button>
+
+          <div className="my-1 border-t border-gray-100" />
+
+          {session.archived ? (
+            <button
+              onClick={onUnarchive}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50"
+            >
+              <Archive size={11} /> Unarchive
+            </button>
+          ) : (
+            <button
+              onClick={onArchive}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-gray-700 hover:bg-gray-50"
+            >
+              <Archive size={11} /> Archive
+            </button>
+          )}
+        </div>
+      )}
+    </li>
   )
 }
 
