@@ -51,9 +51,16 @@ export async function POST(req: Request) {
     callbackUrl = '/voice'
   }
 
+  // Build redirect URLs from the *external* Host (preserved by nginx),
+  // not from req.url which resolves to the internal container URL like
+  // http://0.0.0.0:3000 — that's never reachable from Jo's phone.
+  const proto = req.headers.get('x-forwarded-proto') || 'http'
+  const host = req.headers.get('host') || 'localhost'
+  const externalBase = `${proto}://${host}`
+
   const fail = (status: number, message: string) => {
     if (isForm) {
-      const url = new URL('/voice/login', req.url)
+      const url = new URL('/voice/login', externalBase)
       url.searchParams.set('error', message)
       url.searchParams.set('callbackUrl', callbackUrl)
       return NextResponse.redirect(url, { status: 303 })
@@ -75,7 +82,7 @@ export async function POST(req: Request) {
 
   let res: NextResponse
   if (isForm) {
-    const target = new URL(callbackUrl, req.url)
+    const target = new URL(callbackUrl, externalBase)
     res = NextResponse.redirect(target, { status: 303 })
   } else {
     res = NextResponse.json({
