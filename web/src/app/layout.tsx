@@ -74,16 +74,27 @@ export default function RootLayout({
       <body className="flex h-full flex-col font-sans antialiased">
         <NavBar />
         <div className="flex min-h-0 flex-1 flex-col">{children}</div>
-        {/* Service worker registration — runs after hydration, strategy
-            "afterInteractive" so it never blocks the first paint. */}
-        <Script id="deek-sw-register" strategy="afterInteractive">
+        {/* Service worker — temporarily disabled (2026-04-29).
+            iOS Safari was silently dropping session cookies on the
+            redirect-after-login path when an SW was caching navigation
+            responses. Login bouncing was the symptom. We unregister
+            any pre-existing SW (clients who already installed it on
+            an earlier visit) and DO NOT register a new one. The PWA
+            install flow keeps working because Add-to-Home-Screen
+            doesn't require an SW — only the manifest.webmanifest
+            does, and that's still served. Re-enable once the auth
+            path is confirmed stable on every target device. */}
+        <Script id="deek-sw-unregister" strategy="afterInteractive">
           {`
             if ('serviceWorker' in navigator) {
-              window.addEventListener('load', function() {
-                navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function(err) {
-                  console.warn('Deek SW registration failed:', err);
-                });
-              });
+              navigator.serviceWorker.getRegistrations().then(function(rs) {
+                rs.forEach(function(r) { r.unregister(); });
+              }).catch(function() {});
+              if (window.caches && caches.keys) {
+                caches.keys().then(function(keys) {
+                  keys.forEach(function(k) { caches.delete(k); });
+                }).catch(function() {});
+              }
             }
           `}
         </Script>
