@@ -21,7 +21,10 @@ import {
   type KeyboardEvent,
 } from 'react'
 import Link from 'next/link'
-import { Send, LogOut, FileText, Plus, Menu, X, Loader2, Check } from 'lucide-react'
+import {
+  Send, LogOut, FileText, Plus, Menu, X, Loader2, Check,
+  Paperclip, FileCheck, AlertCircle,
+} from 'lucide-react'
 import { BRAND } from '@/lib/brand'
 
 interface Turn {
@@ -34,6 +37,40 @@ interface ToolEvent {
   tool: string
   startedAt: number
   durationMs?: number
+}
+
+interface StagedFile {
+  id: string                  // local-only identifier (uuid)
+  file: File
+  status: 'pending' | 'uploading' | 'ready' | 'error'
+  text?: string               // extracted text once uploaded
+  error?: string
+  truncated?: boolean
+  supported?: boolean
+}
+
+const MAX_FILES = 5
+const MAX_FILE_BYTES = 10 * 1024 * 1024
+const ACCEPT = '.pdf,.docx,.csv,.tsv,.xlsx,.xlsm,.txt,.md,.log,.json,.png,.jpg,.jpeg,.heic,.gif,.webp,.bmp'
+
+function _newFileId(): string {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36)
+}
+
+function _humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function _buildAttachmentText(files: StagedFile[]): string {
+  const ready = files.filter(f => f.status === 'ready' && f.text)
+  if (ready.length === 0) return ''
+  const blocks = ready.map(f => {
+    const trunc = f.truncated ? ' (truncated)' : ''
+    return `[Attached: ${f.file.name}${trunc}]\n${f.text}\n[/Attached]`
+  })
+  return blocks.join('\n\n')
 }
 
 interface Me {
@@ -66,6 +103,9 @@ export default function VoicePage() {
   const [history, setHistory] = useState<SessionSummary[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [tools, setTools] = useState<ToolEvent[]>([])
+  const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([])
+  const [dragActive, setDragActive] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -174,23 +214,199 @@ export default function VoicePage() {
     setPartial('')
     setErrorMsg(null)
     setInput('')
+    setStagedFiles([])
     textareaRef.current?.focus()
   }, [])
+
+  // ── File staging ───────────────────────────────────────────────────
+  const stageFiles = useCallback((newFiles: File[]) => {
+    setStagedFiles(current => {
+      const remaining = MAX_FILES - current.length
+      if (remaining <= 0) return current
+      const accepted: StagedFile[] = []
+      for (const f of newFiles.slice(0, remaining)) {
+        if (f.size > MAX_FILE_BYTES) {
+          accepted.push({
+            id: _newFileId(),
+            file: f,
+            status: 'error',
+            error: `${f.name} exceeds 10MB limit`,
+          })
+        } else {
+          accepted.push({ id: _newFileId(), file: f, status: 'pending' })
+        }
+      }
+      return [...current, ...accepted]
+    })
+  }, [])
+
+  const removeFile = useCallback((id: string) => {
+    setStagedFiles(current => current.filter(f => f.id !== id))
+  }, [])
+
+  const clearStagedFiles = useCallback(() => setStagedFiles([]), [])
+
+  const handleFileInput = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const list = Array.from(e.target.files || [])
+      if (list.length > 0) stageFiles(list)
+      // Reset so the same file can be re-selected if removed
+      if (e.target) e.target.value = ''
+    },
+    [stageFiles],
+  )
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(true)
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    // Only clear when leaving the outer drop zone
+    if (e.currentTarget === e.target) setDragActive(false)
+  }, [])
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setDragActive(false)
+      const list = Array.from(e.dataTransfer.files || [])
+      if (list.length > 0) stageFiles(list)
+    },
+    [stageFiles],
+  )
+
+  const uploadStaged = useCallback(async (): Promise<string> => {
+    const toUpload = stagedFiles.filter(f => f.status === 'pending')
+    if (toUpload.length === 0) {
+      // Build context text from already-ready files (re-send case)
+      return _buildAttachmentText(stagedFiles)
+    }
+
+    setStagedFiles(cur =>
+      cur.map(f => (f.status === 'pending' ? { ...f, status: 'uploading' } : f)),
+    )
+
+    const fd = new FormData()
+    for (const sf of toUpload) {
+      fd.append('files', sf.file, sf.file.name)
+    }
+
+    try {
+      const res = await fetch('/api/voice/upload', { method: 'POST', body: fd })
+      if (res.status === 401) {
+        window.location.href = '/voice/login?callbackUrl=/voice'
+        return ''
+      }
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const msg = data?.detail || data?.error || `upload HTTP ${res.status}`
+        setStagedFiles(cur =>
+          cur.map(f =>
+            toUpload.some(u => u.id === f.id)
+              ? { ...f, status: 'error', error: msg }
+              : f,
+          ),
+        )
+        return ''
+      }
+      const out: any[] = data.files || []
+      // Match returned items to staged files in order (one-to-one)
+      setStagedFiles(cur => {
+        const next = [...cur]
+        for (let i = 0; i < toUpload.length; i++) {
+          const sf = toUpload[i]
+          const r = out[i]
+          const idx = next.findIndex(x => x.id === sf.id)
+          if (idx === -1) continue
+          if (r?.error || !r?.supported) {
+            next[idx] = {
+              ...next[idx],
+              status: 'error',
+              error: r?.error || 'unsupported',
+              supported: !!r?.supported,
+            }
+          } else {
+            next[idx] = {
+              ...next[idx],
+              status: 'ready',
+              text: r.text || '',
+              truncated: !!r.truncated,
+              supported: true,
+            }
+          }
+        }
+        return next
+      })
+
+      // Re-read state synchronously by combining the returned data
+      const combined: StagedFile[] = stagedFiles.map(sf => {
+        const i = toUpload.findIndex(u => u.id === sf.id)
+        if (i === -1) return sf
+        const r = out[i]
+        if (r?.error || !r?.supported) {
+          return { ...sf, status: 'error', error: r?.error || 'unsupported', supported: !!r?.supported }
+        }
+        return { ...sf, status: 'ready', text: r.text || '', truncated: !!r.truncated, supported: true }
+      })
+      return _buildAttachmentText(combined)
+    } catch (err: any) {
+      setStagedFiles(cur =>
+        cur.map(f =>
+          toUpload.some(u => u.id === f.id)
+            ? { ...f, status: 'error', error: err?.message || 'upload error' }
+            : f,
+        ),
+      )
+      return ''
+    }
+  }, [stagedFiles])
 
   // ── Submit ─────────────────────────────────────────────────────────
   const submit = useCallback(
     async (text: string) => {
       const trimmed = text.trim()
-      if (!trimmed || busy) return
-      setTranscript(t => [
-        ...t,
-        { role: 'user', text: trimmed, at: Date.now() },
-      ])
-      setInput('')
+      const hasFiles = stagedFiles.length > 0
+      if (!trimmed && !hasFiles) return
+      if (busy) return
+
       setBusy(true)
       setPartial('')
       setErrorMsg(null)
       setTools([])
+
+      // 1) If there are staged files, upload + extract first.
+      let attachmentText = ''
+      if (hasFiles) {
+        attachmentText = await uploadStaged()
+        // If every file errored, abort the send.
+        const allErrored = stagedFiles.every(f => f.status === 'error')
+        if (!attachmentText && allErrored) {
+          setBusy(false)
+          setErrorMsg('Couldn\'t process any of the attached files.')
+          return
+        }
+      }
+
+      // 2) Build the user-visible message + the agent payload.
+      const userVisible = trimmed || (hasFiles
+        ? 'Analyse the attached file(s) and summarise the key findings.'
+        : '')
+      const payload = attachmentText
+        ? `${attachmentText}\n\n${userVisible}`
+        : userVisible
+
+      setTranscript(t => [
+        ...t,
+        { role: 'user', text: userVisible, at: Date.now() },
+      ])
+      setInput('')
+      // Files are now consumed — clear the chips so they don't re-attach.
+      setStagedFiles([])
 
       abortRef.current?.abort()
       abortRef.current = new AbortController()
@@ -200,7 +416,7 @@ export default function VoicePage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            content: trimmed,
+            content: payload,
             location: 'office',
             session_id: sessionId,
             project: 'deek',
@@ -293,7 +509,7 @@ export default function VoicePage() {
         textareaRef.current?.focus()
       }
     },
-    [busy, loadHistory, sessionId],
+    [busy, loadHistory, sessionId, stagedFiles, uploadStaged],
   )
 
   const handleSubmit = (e: FormEvent) => {
@@ -393,7 +609,24 @@ export default function VoicePage() {
       )}
 
       {/* ── Main column ───────────────────────────────────────────── */}
-      <div className="flex h-full min-w-0 flex-1 flex-col">
+      <div
+        className="relative flex h-full min-w-0 flex-1 flex-col"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {dragActive && (
+          <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-emerald-50/80 backdrop-blur-sm">
+            <div className="rounded-2xl border-2 border-dashed border-emerald-500 bg-white px-8 py-6 text-center text-emerald-700">
+              <Paperclip size={28} className="mx-auto mb-2" />
+              <div className="text-sm font-medium">Drop files to attach</div>
+              <div className="mt-1 text-xs text-emerald-600">
+                PDF · DOCX · CSV · XLSX · TXT · MD · JSON
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Top strip */}
         <header className="flex flex-shrink-0 items-center justify-between border-b border-gray-200 px-4 py-2">
           <div className="flex items-center gap-2">
@@ -486,28 +719,76 @@ export default function VoicePage() {
         {/* Composer */}
         <form
           onSubmit={handleSubmit}
-          className="flex flex-shrink-0 items-end gap-2 border-t border-gray-200 px-3 py-3"
+          className="flex flex-shrink-0 flex-col gap-2 border-t border-gray-200 px-3 py-3"
         >
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKey}
-            rows={1}
-            autoFocus
-            disabled={busy}
-            placeholder={`Message ${BRAND}…`}
-            className="flex-1 resize-none rounded-2xl border border-gray-300 bg-white px-4 py-3 text-base text-gray-900 placeholder-gray-400 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400 disabled:opacity-50"
-            style={{ maxHeight: '10rem' }}
+          {/* Staged file chips */}
+          {stagedFiles.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {stagedFiles.map(sf => (
+                <FileChip key={sf.id} file={sf} onRemove={() => removeFile(sf.id)} />
+              ))}
+              {stagedFiles.length > 1 && (
+                <button
+                  type="button"
+                  onClick={clearStagedFiles}
+                  className="text-xs text-gray-500 hover:text-gray-900"
+                >
+                  Remove all
+                </button>
+              )}
+            </div>
+          )}
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={ACCEPT}
+            className="hidden"
+            onChange={handleFileInput}
           />
-          <button
-            type="submit"
-            disabled={busy || !input.trim()}
-            className="flex h-12 w-12 items-center justify-center rounded-full bg-gray-900 text-white transition hover:bg-gray-800 disabled:opacity-30"
-            title="Send"
-          >
-            <Send size={18} />
-          </button>
+
+          <div className="flex items-end gap-2">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={busy || stagedFiles.length >= MAX_FILES}
+              className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full border border-gray-300 text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-30"
+              title={
+                stagedFiles.length >= MAX_FILES
+                  ? `Max ${MAX_FILES} files per message`
+                  : 'Attach file'
+              }
+            >
+              <Paperclip size={18} />
+            </button>
+
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKey}
+              rows={1}
+              autoFocus
+              disabled={busy}
+              placeholder={
+                stagedFiles.length > 0
+                  ? `Ask about ${stagedFiles.length === 1 ? 'this file' : 'these files'}…`
+                  : `Message ${BRAND}…`
+              }
+              className="flex-1 resize-none rounded-2xl border border-gray-300 bg-white px-4 py-3 text-base text-gray-900 placeholder-gray-400 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400 disabled:opacity-50"
+              style={{ maxHeight: '10rem' }}
+            />
+
+            <button
+              type="submit"
+              disabled={busy || (!input.trim() && stagedFiles.length === 0)}
+              className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-gray-900 text-white transition hover:bg-gray-800 disabled:opacity-30"
+              title="Send"
+            >
+              <Send size={18} />
+            </button>
+          </div>
         </form>
       </div>
     </div>
@@ -535,6 +816,58 @@ function Bubble({
       >
         {turn.text || (streaming ? '…' : '')}
       </div>
+    </div>
+  )
+}
+
+// ── File chip ─────────────────────────────────────────────────────────
+
+function FileChip({
+  file,
+  onRemove,
+}: {
+  file: StagedFile
+  onRemove: () => void
+}) {
+  const isError = file.status === 'error'
+  const isReady = file.status === 'ready'
+  const isUploading = file.status === 'uploading'
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs ${
+        isError
+          ? 'border-rose-300 bg-rose-50 text-rose-700'
+          : isReady
+            ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+            : 'border-gray-300 bg-gray-50 text-gray-700'
+      }`}
+      title={file.error || file.file.name}
+    >
+      {isUploading ? (
+        <Loader2 size={12} className="animate-spin" />
+      ) : isReady ? (
+        <FileCheck size={12} />
+      ) : isError ? (
+        <AlertCircle size={12} />
+      ) : (
+        <FileText size={12} />
+      )}
+      <span className="max-w-[14rem] truncate font-medium">{file.file.name}</span>
+      <span className="text-gray-500">{_humanSize(file.file.size)}</span>
+      {file.truncated && (
+        <span className="text-amber-600">truncated</span>
+      )}
+      {isError && (
+        <span className="text-rose-600">{file.error || 'error'}</span>
+      )}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="ml-1 rounded-full p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-900"
+        title="Remove"
+      >
+        <X size={12} />
+      </button>
     </div>
   )
 }

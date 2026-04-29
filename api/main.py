@@ -3417,6 +3417,12 @@ app.include_router(quotes_router, prefix='/api/cairn')  # legacy alias
 from api.routes.brief_pwa import router as brief_pwa_router
 app.include_router(brief_pwa_router, prefix='/api/deek')
 
+# Register Voice file-upload route — POST /api/deek/voice/upload
+# Receives multipart files, extracts text, returns per-file content
+# so the /voice chat surface can prepend it to the user's prompt.
+from api.routes.voice_upload import router as voice_upload_router
+app.include_router(voice_upload_router, prefix='/api/deek')
+
 # Register Telegram webhook — inbound-only public endpoint,
 # secret-token-guarded (see core.channels.nudge + docs).
 from api.routes.telegram import router as telegram_router
