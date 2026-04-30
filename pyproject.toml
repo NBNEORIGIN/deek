@@ -43,6 +43,13 @@ dependencies = [
     "pypdf>=4.0.0",
     "python-docx>=1.1.0",
     "bcrypt>=4.1.0",
+    # Web doc scraping for the manuals pipeline. trafilatura strips
+    # nav/footer/sidebar from HTML pages and returns the main content
+    # body — used by scripts/scrape_docs.py to ingest LightBurn /
+    # Thunder Laser support / similar machine-vendor doc sites that
+    # have no PDF equivalents. Tested on Zoho Desk (server-rendered)
+    # and MkDocs Material; static HTML, no headless-browser needed.
+    "trafilatura>=2.0.0",
 ]
 
 [project.optional-dependencies]
