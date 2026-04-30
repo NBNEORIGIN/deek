@@ -10,7 +10,11 @@
  * over HTTP-bare-IP (the tailnet Rex deployment, 2026-04-29). Form POST +
  * server redirect bypasses the Intelligent Tracking Prevention path
  * cleanly.
+ *
+ * The password field uses a small client component (PasswordField.tsx)
+ * for the show/hide eye toggle — that's the only JS on this page.
  */
+import { PasswordField } from './PasswordField'
 
 interface SearchParams {
   callbackUrl?: string
@@ -65,14 +69,7 @@ export default function LoginPage({
             >
               Password
             </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-base text-gray-900 placeholder-gray-400 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-400"
-            />
+            <PasswordField />
           </div>
 
           {error && (
