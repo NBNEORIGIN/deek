@@ -2,6 +2,7 @@ import json
 import os
 from typing import Optional
 
+from .dsml import has_dsml_markup, parse_dsml_tool_call
 from .message_normaliser import MessageNormaliser
 
 _normaliser = MessageNormaliser()
@@ -12,6 +13,11 @@ class OpenAIClient:
     OpenAI wrapper with the same chat() interface as ClaudeClient.
     Drop-in replacement — used when ANTHROPIC_API_KEY is rate-limited,
     or when API_PROVIDER=openai is set explicitly.
+
+    Also used as the OpenRouter client (base_url=https://openrouter.ai/api/v1).
+    OpenRouter routes DeepSeek under the hood, which means the same DSML
+    plain-text-tool-call leak we see on the direct DeepSeek path can hit
+    here too — see core.models.dsml for the fallback parser.
 
     Tool format translation:
         Anthropic: {name, description, input_schema}
@@ -89,6 +95,13 @@ class OpenAIClient:
                 'input': json.loads(tc.function.arguments),
                 'tool_use_id': tc.id,
             }
+        elif has_dsml_markup(response_text):
+            # OpenRouter routing DeepSeek occasionally returns the function
+            # call as plain DSML text instead of structured tool_calls.
+            # Parse it so the agent loop runs the tool rather than showing
+            # the user raw <｜DSML｜…> tokens. (Same bug, same fix as the
+            # direct DeepSeek path — see DeepSeekClient.chat.)
+            response_text, tool_call = parse_dsml_tool_call(response_text)
 
         usage = {
             'input_tokens': response.usage.prompt_tokens,

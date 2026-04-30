@@ -1,11 +1,12 @@
 """
 DeepSeek API client — OpenAI-compatible, identical interface to OpenAIClient.
 
-Note on DSML fallback: DeepSeek V3 occasionally outputs function calls as
-plain text using its native DSML format (<｜DSML｜function_calls>…) instead
-of returning structured tool_calls via the OpenAI-compatible API. The
-_parse_dsml_tool_call() helper detects and parses this so the agent can still
-execute the tool rather than showing garbage markup to the user.
+Note on DSML fallback: DeepSeek occasionally outputs function calls as plain
+text using its native DSML format (<｜DSML｜function_calls> or the newer
+<｜｜DSML｜｜tool_calls> variant) instead of returning structured tool_calls
+via the OpenAI-compatible API. The shared parser in core.models.dsml detects
+and parses both variants so the agent can still execute the tool rather than
+showing garbage markup to the user.
 
 DeepSeek V3 (deepseek-chat) sits between local Ollama and Claude:
   - ~10x cheaper than Claude Sonnet
@@ -18,63 +19,20 @@ Pricing (as of March 2026):
 """
 import json
 import os
-import re
-import uuid
 from typing import Optional
 
+from .dsml import has_dsml_markup, parse_dsml_tool_call
 from .message_normaliser import MessageNormaliser
 
 _normaliser = MessageNormaliser()
 
-# Full-width pipe used by DeepSeek's DSML format
-_DSML_PIPE = '\uff5c'
-_DSML_START = f'<{_DSML_PIPE}DSML{_DSML_PIPE}function_calls>'
-_DSML_END   = f'</{_DSML_PIPE}DSML{_DSML_PIPE}function_calls>'
-
-
-def _parse_dsml_tool_call(text: str) -> tuple[str, dict | None]:
-    """
-    Parse DeepSeek DSML-format tool call from response text.
-
-    DSML format (full-width pipes, not ASCII):
-        <｜DSML｜function_calls>
-          <｜DSML｜invoke name="read_file">
-            <｜DSML｜parameter name="file_path" string="true">.env</｜DSML｜parameter>
-          </｜DSML｜invoke>
-        </｜DSML｜function_calls>
-
-    Returns (clean_text_before_dsml, tool_call_dict | None).
-    """
-    if _DSML_START not in text:
-        return text, None
-
-    before, _, after = text.partition(_DSML_START)
-    clean_text = before.strip()
-
-    # Extract the first <invoke> block
-    invoke_pat = re.compile(
-        rf'<{_DSML_PIPE}DSML{_DSML_PIPE}invoke name="([^"]+)">(.*?)</{_DSML_PIPE}DSML{_DSML_PIPE}invoke>',
-        re.DOTALL,
-    )
-    param_pat = re.compile(
-        rf'<{_DSML_PIPE}DSML{_DSML_PIPE}parameter name="([^"]+)"[^>]*>(.*?)</{_DSML_PIPE}DSML{_DSML_PIPE}parameter>',
-        re.DOTALL,
-    )
-
-    m = invoke_pat.search(after)
-    if not m:
-        return clean_text, None
-
-    tool_name = m.group(1)
-    params: dict = {}
-    for pm in param_pat.finditer(m.group(2)):
-        params[pm.group(1)] = pm.group(2).strip()
-
-    return clean_text, {
-        'name': tool_name,
-        'input': params,
-        'tool_use_id': f'dsml-{uuid.uuid4().hex[:8]}',
-    }
+# Re-export under the legacy private names so existing tests/callers
+# (tests/test_deepseek_dsml.py imports `_has_dsml_markup` and
+# `_parse_dsml_tool_call` from this module) keep working. The actual
+# implementation lives in core.models.dsml — see that module's
+# docstring for the on-the-wire variants we tolerate.
+_has_dsml_markup = has_dsml_markup
+_parse_dsml_tool_call = parse_dsml_tool_call
 
 
 class DeepSeekClient:
@@ -157,9 +115,12 @@ class DeepSeekClient:
                 'input': json.loads(tc.function.arguments),
                 'tool_use_id': tc.id,
             }
-        elif _DSML_START in response_text:
-            # DeepSeek output DSML markup as plain text — parse it
-            response_text, tool_call = _parse_dsml_tool_call(response_text)
+        elif has_dsml_markup(response_text):
+            # DeepSeek emitted DSML markup as plain text instead of using
+            # the OpenAI-compatible tool_calls path — parse the markup
+            # so the agent loop runs the tool rather than showing the
+            # user raw <｜DSML｜…> tokens.
+            response_text, tool_call = parse_dsml_tool_call(response_text)
 
         usage = {
             'input_tokens': response.usage.prompt_tokens,
