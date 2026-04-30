@@ -178,14 +178,17 @@ def main() -> int:
                 break
 
     print()
-    print('───── bootstrap summary ─────')
+    # ASCII-only banner so the script runs on Windows cp1252 consoles
+    # (which choke on box-drawing ─ characters). Jo's PC will run this
+    # script too, and we don't want it crashing on the summary.
+    print('----- bootstrap summary -----')
     print(f'  uploaded:   {n_ok}')
     print(f'  skipped:    {n_skip}')
     print(f'  errored:    {n_err}')
     if not dry:
         print(f'  chunks total: {n_chunks}')
     if dry:
-        print('  (dry-run — re-run with --commit to actually upload.)')
+        print('  (dry-run -- re-run with --commit to actually upload.)')
     return 0 if n_err == 0 else 3
 
 

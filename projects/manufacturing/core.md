@@ -56,7 +56,7 @@ for per-machine identity cards (Layer 1 — brand, model, niche, aliases).
     Roland   = Roland MG-300 — UV roll-to-roll print-and-cut, 30" wide
     Epson    = Epson SC-F500 — dye sublimation
   Cut + engrave
-    Beast    = Thunderlaser Nova 64 — CO2 laser cutter/engraver
+    Beast    = Thunder Laser Nova 63 — CO2 laser cutter/engraver
     Fiber Laser = (model TBC) — fibre laser
   CNC routing
     Hulk     = Piranha 8'×4' — 9kW spindle, ATC, vacuum table

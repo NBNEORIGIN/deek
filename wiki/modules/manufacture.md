@@ -36,7 +36,7 @@ built to replace the master Excel workbook.
   - **Print + cut:** Rolf (Refine Color 6090, UV flatbed), Mao (Refine Color ZZ1S, UV small-format),
     Mimaki (Mimaki 6042 MkII, UV flatbed B&W, EOL), Mutoh (Mutoh XPJ-461UF, UV flatbed small-format, lease),
     Roland (Roland MG-300, UV roll-to-roll print-and-cut), Epson (Epson SC-F500, dye sublimation)
-  - **Cut + engrave:** Beast (Thunderlaser Nova 64 CO2 laser), Fiber Laser (model TBC)
+  - **Cut + engrave:** Beast (Thunder Laser Nova 63 CO2 laser), Fiber Laser (model TBC)
   - **CNC routing:** Hulk (Piranha 8'×4'), Avid (Avid Pro 8'×4')
   - **Additive:** Jeffrey (Bambu Labs H2S), Peter (Bambu Labs P1S)
   - **Application + finishing:** Application Table (EWS 3000×1750), LSealer (semi-auto L-sealer), Heat Tunnel
