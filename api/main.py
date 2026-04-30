@@ -3441,6 +3441,13 @@ app.include_router(voice_upload_router, prefix='/api/deek')
 from api.routes.users import router as users_router
 app.include_router(users_router, prefix='/api/deek')
 
+# Register Manuals admin router — drag-drop upload + ingestion of
+# machinery manuals/photos/maintenance records into chunk_type='manual'
+# rows in claw_code_chunks. Same parsing pipeline as
+# scripts/ingest_manuals.py; this is the always-on web surface.
+from api.routes.manuals import router as manuals_router
+app.include_router(manuals_router, prefix='/api/deek')
+
 # Register Telegram webhook — inbound-only public endpoint,
 # secret-token-guarded (see core.channels.nudge + docs).
 from api.routes.telegram import router as telegram_router
