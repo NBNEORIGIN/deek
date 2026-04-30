@@ -201,7 +201,22 @@ class DeekAgent:
             "get_sku_costs() once with the full list, then combine with "
             "revenue from the appropriate tool. If the user asks a profit "
             "question without M-numbers, ask which products they mean — "
-            "don't fish.\n\n"
+            "don't fish.\n"
+            "9. Machinery / equipment / maintenance questions go to "
+            "search_manuals(query, machine?), NOT search_wiki. The wiki holds "
+            "process SOPs and decisions; manuals hold equipment reference "
+            "material — operator guides, schematics, part numbers, torque "
+            "specs, photographed control panels, hand-written maintenance "
+            "logs. NBNE machines have nicknames (e.g. 'Hulk', 'Beast', "
+            "'Rolf', 'Mao') — pass the nickname as the `machine` argument "
+            "to scope the search to that one machine. If the user asks "
+            "about a machine you don't recognise, search_manuals() with "
+            "no machine filter and let semantic ranking surface the right "
+            "doc. If search_manuals returns nothing for a machine, the "
+            "manual hasn't been ingested yet — tell the user to drop the "
+            "PDF in D:\\Google Drive\\My Drive\\001 NBNE\\002 BLANKS under "
+            "the appropriate machine subfolder and re-run "
+            "scripts/ingest_manuals.py.\n\n"
         )
         return identity_prefix + tool_rules
 
@@ -2486,6 +2501,7 @@ class DeekAgent:
         from .tools.wiki_tools import write_wiki_tool
         from .tools.enquiry_analyzer import analyze_enquiry_tool
         from .tools.manufacture_tools import get_sku_costs_tool
+        from .tools.manuals_tools import search_manuals_tool
         for tool in [
             # File
             read_file_tool, edit_file_tool, create_file_tool,
@@ -2528,5 +2544,10 @@ class DeekAgent:
             # profit questions don't burn the tool-round budget fishing
             # in the wiki (regression seen 2026-04-30).
             get_sku_costs_tool,
+            # Machinery manuals — separate namespace from search_wiki,
+            # populated by scripts/ingest_manuals.py from PDFs/photos
+            # of operator manuals + maintenance records. Optional
+            # machine-name filter scopes to one machine's docs.
+            search_manuals_tool,
         ]:
             self.tools.register(tool)

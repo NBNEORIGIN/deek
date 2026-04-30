@@ -27,18 +27,18 @@ DEFAULT_PERMISSIONS = {
         'retrieve_similar_decisions', 'search_crm', 'analyze_enquiry',
         'write_crm_memory', 'mark_crm_actioned', 'set_crm_project_folder',
         'get_quote_context', 'search_similar_quotes', 'review_quote_draft',
-        'write_wiki', 'get_sku_costs',
+        'write_wiki', 'get_sku_costs', 'search_manuals',
     ],
     'readonly': [
         'read_file', 'search_code', 'query_amazon_intel',
         'get_module_snapshot', 'search_emails', 'search_wiki',
-        'get_sku_costs',
+        'get_sku_costs', 'search_manuals',
     ],
     'ops': [
         'read_file', 'search_code', 'run_command',
         'edit_file', 'create_file',
         'get_module_snapshot', 'search_emails', 'search_wiki',
-        'get_sku_costs',
+        'get_sku_costs', 'search_manuals',
     ],
     'creative': [
         'read_file', 'search_code', 'edit_file', 'create_file',
@@ -55,7 +55,7 @@ DEFAULT_PERMISSIONS = {
         'write_crm_memory', 'mark_crm_actioned', 'set_crm_project_folder',
         'get_quote_context', 'search_similar_quotes', 'review_quote_draft',
         'write_wiki',
-        'get_sku_costs',
+        'get_sku_costs', 'search_manuals',
     ],
 }
 
@@ -631,6 +631,32 @@ TOOL_SCHEMAS: dict[str, dict] = {
             },
         },
         'required': [],
+    },
+    'search_manuals': {
+        'type': 'object',
+        'properties': {
+            'query': {
+                'type': 'string',
+                'description': (
+                    'Free-text search — what part / spec / procedure '
+                    'you\'re trying to find in a manual.'
+                ),
+            },
+            'machine': {
+                'type': 'string',
+                'description': (
+                    'Optional machine nickname to scope the search '
+                    '(e.g. "Hulk", "Beast", "Rolf", "Mao"). Omit to '
+                    'search across all machines.'
+                ),
+            },
+            'limit': {
+                'type': 'integer',
+                'description': 'Max results to return (default 5, max 20)',
+                'default': 5,
+            },
+        },
+        'required': ['query'],
     },
 }
 
