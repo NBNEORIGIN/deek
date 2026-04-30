@@ -43,13 +43,42 @@ Blank: the physical substrate/template a product is printed on.
   HARRY   = specific rectangular format
   AILEEN  = specific format
 
-Machine names (also named, internal references):
-  ROLF    = UV flatbed printer (Mimaki UV)
-  MIMAKI  = sublimation/dye-sub printer
-  MUTOH   = wide format inkjet
-  ROLAND  = vinyl cutter / print-and-cut
-  EPSON   = sublimation printer (SC-F500)
-  HULKY   = specific large-format printer
+Machine names — canonical nicknames as used in chunk_name and search filters.
+RATIFIED 2026-04-30 by Toby + review-Claude. These are the spellings every doc
+should use; case-sensitive. See projects/manufacturing/machines/<nickname>.md
+for per-machine identity cards (Layer 1 — brand, model, niche, aliases).
+
+  Print + cut
+    Rolf     = Refine Color 6090 — UV flatbed, twin Epson i1600 (CMYK + white)
+    Mao      = Refine Color ZZ1S — UV small-format, Epson XP600 head
+    Mimaki   = Mimaki 6042 MkII — UV flatbed, B&W prints (live, EOL)
+    Mutoh    = Mutoh XPJ-461UF — UV flatbed, small-format rigid (lease)
+    Roland   = Roland MG-300 — UV roll-to-roll print-and-cut, 30" wide
+    Epson    = Epson SC-F500 — dye sublimation
+  Cut + engrave
+    Beast    = Thunderlaser Nova 64 — CO2 laser cutter/engraver
+    Fiber Laser = (model TBC) — fibre laser
+  CNC routing
+    Hulk     = Piranha 8'×4' — 9kW spindle, ATC, vacuum table
+    Avid     = Avid Pro 8'×4' — Clearpath servos, Masso controller
+  Additive
+    Jeffrey  = Bambu Labs H2S — FDM 3D printer
+    Peter    = Bambu Labs P1S — FDM 3D printer
+  Application + finishing
+    Application Table = EWS 3000×1750 — vinyl/graphics application
+    LSealer  = semi-automatic L-sealer (brand TBC) — shrink-wrap sealing
+    Heat Tunnel = (brand TBC) — shrink-wrap shrinking
+  Metal + coating
+    welder   = HITBOX HIM250DPP — double-pulse MIG (live, new)
+    brake    = box-and-pan brake (in-build)
+    oven     = IR-powered modular powder coating oven (planned)
+
+Common-noun nickname risk: Beast, Hulk, Mao, Peter, Jeffrey, brake, oven,
+welder, Fiber Laser all collide with everyday English. Each machine card MUST
+include brand + model + alias list so BM25 / semantic retrieval can disambiguate.
+
+Previous (now retired) listings: HULKY → Hulk (canonical). ROLF as Mimaki UV
+or as Roland — both wrong; ROLF is the Refine Color 6090.
 
 Production pipeline stages (in order):
   Designed → Printed → Processed → Cut → Labelled → Packed → Shipped

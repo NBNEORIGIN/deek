@@ -32,8 +32,17 @@ built to replace the master Excel workbook.
 - **Blank:** Physical substrate a product is printed on, named after infamous people:
   DONALD (circular), SAVILLE (aluminium), DICK (acrylic), STALIN (large format),
   MYRA, IDI, TOM (memorial stake), JOSEPH, HARRY, AILEEN
-- **Machine names:** ROLF (UV flatbed), MIMAKI (sublimation), MUTOH (wide-format),
-  ROLAND (vinyl cutter), EPSON (sublimation), HULKY (large-format)
+- **Machine names (RATIFIED 2026-04-30 — canonical, case-sensitive):**
+  - **Print + cut:** Rolf (Refine Color 6090, UV flatbed), Mao (Refine Color ZZ1S, UV small-format),
+    Mimaki (Mimaki 6042 MkII, UV flatbed B&W, EOL), Mutoh (Mutoh XPJ-461UF, UV flatbed small-format, lease),
+    Roland (Roland MG-300, UV roll-to-roll print-and-cut), Epson (Epson SC-F500, dye sublimation)
+  - **Cut + engrave:** Beast (Thunderlaser Nova 64 CO2 laser), Fiber Laser (model TBC)
+  - **CNC routing:** Hulk (Piranha 8'×4'), Avid (Avid Pro 8'×4')
+  - **Additive:** Jeffrey (Bambu Labs H2S), Peter (Bambu Labs P1S)
+  - **Application + finishing:** Application Table (EWS 3000×1750), LSealer (semi-auto L-sealer), Heat Tunnel
+  - **Metal + coating:** welder (HITBOX HIM250DPP MIG, new), brake (box-and-pan, in-build), oven (IR powder coat, planned)
+  - Earlier docs listed ROLF as a Mimaki UV or as a Roland — both wrong. ROLF is the Refine Color 6090.
+    HULKY → Hulk (canonical). See `projects/manufacturing/machines/<nickname>.md` for full identity cards.
 - **Production pipeline:** Designed → Printed → Processed → Cut → Labelled → Packed → Shipped
 - **Sales channels:** UK, US, CA, AU, EBAY, ETSY, FR
 - **FBA:** Fulfilled By Amazon — stock held in Amazon warehouse DIP1

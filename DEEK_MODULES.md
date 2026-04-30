@@ -143,24 +143,24 @@ during the rename transition window.
     }
   ],
   "machine_status": [
-    {
-      "name": "ROLF",
-      "status": "available|running|maintenance",
-      "current_job": null,
-      "queue_depth": 0
-    },
-    {
-      "name": "MIMAKI",
-      "status": "running",
-      "current_job": "M2280 batch x48",
-      "queue_depth": 2
-    },
-    {
-      "name": "EPSON",
-      "status": "available",
-      "current_job": null,
-      "queue_depth": 0
-    }
+    { "id": "rolf",              "name": "Rolf",              "status": "available|running|maintenance|offline", "current_job": null, "queue_depth": 0 },
+    { "id": "mao",               "name": "Mao",               "status": "available", "current_job": null, "queue_depth": 0 },
+    { "id": "mimaki",            "name": "Mimaki",            "status": "running",   "current_job": "M2280 batch x48", "queue_depth": 2 },
+    { "id": "mutoh",             "name": "Mutoh",             "status": "available", "current_job": null, "queue_depth": 0 },
+    { "id": "roland",            "name": "Roland",            "status": "available", "current_job": null, "queue_depth": 0 },
+    { "id": "epson",             "name": "Epson",             "status": "available", "current_job": null, "queue_depth": 0 },
+    { "id": "beast",             "name": "Beast",             "status": "available", "current_job": null, "queue_depth": 0 },
+    { "id": "fiber_laser",       "name": "Fiber Laser",       "status": "available", "current_job": null, "queue_depth": 0 },
+    { "id": "hulk",              "name": "Hulk",              "status": "available", "current_job": null, "queue_depth": 0 },
+    { "id": "avid",              "name": "Avid",              "status": "available", "current_job": null, "queue_depth": 0 },
+    { "id": "jeffrey",           "name": "Jeffrey",           "status": "available", "current_job": null, "queue_depth": 0 },
+    { "id": "peter",             "name": "Peter",             "status": "available", "current_job": null, "queue_depth": 0 },
+    { "id": "application_table", "name": "Application Table", "status": "available", "current_job": null, "queue_depth": 0 },
+    { "id": "lsealer",           "name": "LSealer",           "status": "available", "current_job": null, "queue_depth": 0 },
+    { "id": "heat_tunnel",       "name": "Heat Tunnel",       "status": "available", "current_job": null, "queue_depth": 0 },
+    { "id": "welder",            "name": "welder",            "status": "available", "current_job": null, "queue_depth": 0 },
+    { "id": "brake",             "name": "brake",             "status": "in_build",  "current_job": null, "queue_depth": 0 },
+    { "id": "oven",              "name": "oven",              "status": "planned",   "current_job": null, "queue_depth": 0 }
   ],
   "stock_alerts": [
     {
@@ -170,14 +170,32 @@ during the rename transition window.
       "alert": "reorder_required"
     }
   ],
-  "summary": "14 products below target. MIMAKI busy. ROLF and EPSON available. 2 blank reorders required."
+  "summary": "14 products below target. Mimaki busy. Rolf, Mao, Epson available. 2 blank reorders required."
 }
 ```
+
+Schema notes:
+
+- ``id`` is the stable machine identifier — snake_case, never changes. Consumers
+  key on ``id``. Adding a status (``in_build`` / ``planned``) is additive; existing
+  consumers unaware of those just treat the machine as not-yet-routable.
+- ``name`` is the display nickname — case-sensitive, matches the canonical
+  spelling in ``projects/manufacturing/core.md`` and the ``machine`` filter on
+  Deek's ``search_manuals`` tool. Renames are a coordinated change (every
+  consumer + ingested manual chunk uses this string).
+- The list above is the full live + planned set as of 2026-04-30. Earlier
+  versions of this schema only listed three machines (ROLF, MIMAKI, EPSON);
+  consumers should now expect ~18 entries with statuses spanning the full
+  ``available|running|maintenance|offline|in_build|planned`` range.
 
 ### Domain Vocabulary (use verbatim in all code and docs)
 
 Blank names: DONALD, SAVILLE, DICK, STALIN, BARZAN, BABY_JESUS
-Machine names: ROLF, MIMAKI, EPSON
+Machine nicknames (RATIFIED 2026-04-30, canonical case): Rolf, Mao, Mimaki,
+  Mutoh, Roland, Epson, Beast, Fiber Laser, Hulk, Avid, Jeffrey, Peter,
+  Application Table, LSealer, Heat Tunnel, welder, brake, oven.
+  Full identity cards in ``projects/manufacturing/machines/<id>.md`` in
+  the deek repo. Earlier abbreviated list (ROLF, MIMAKI, EPSON) was stale.
 Product identifier: M-number (e.g. M2280)
 QA states: pending, approved, rejected
 

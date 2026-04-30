@@ -35,7 +35,11 @@ Design → Print → Cut → Laminate → Clean → Pack → Stock → Ship
 - M-number (e.g. M2280) — internal product ID
 - SKU — channel-specific variant
 - Blank names: DONALD, SAVILLE, DICK, STALIN, BARZAN, BABY_JESUS
-- Machine names: ROLF, MIMAKI, EPSON
+- Machine nicknames (RATIFIED 2026-04-30, canonical case): Rolf, Mao, Mimaki, Mutoh,
+  Roland, Epson, Beast, Fiber Laser, Hulk, Avid, Jeffrey, Peter, Application Table,
+  LSealer, Heat Tunnel, welder, brake, oven. Full identity cards in
+  `projects/manufacturing/machines/<nickname>.md`. Previous abbreviated list
+  (ROLF, MIMAKI, EPSON) was stale.
 
 ## Connected business modules — use your tools, not URLs
 

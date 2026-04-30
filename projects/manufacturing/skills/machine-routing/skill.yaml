@@ -1,12 +1,39 @@
 skill_id: machine-routing
 project_id: manufacturing
 display_name: Machine Routing
-description: Print machine assignment — ROLF, MIMAKI, MUTOH routing logic
+description: >
+  Print machine assignment — which physical machine should run a given job
+  based on substrate, size, and process. Covers UV flatbeds, vinyl + roll
+  print-and-cut, dye-sub, lasers, CNC routers, additive, application,
+  finishing, and metal kit. Canonical nicknames per
+  projects/manufacturing/core.md (RATIFIED 2026-04-30).
 subproject_id: null
 triggers:
+  # Print + cut
   - rolf
+  - mao
   - mimaki
   - mutoh
+  - roland
+  - epson
+  # Cut + engrave
+  - beast
+  - fiber laser
+  # CNC routing
+  - hulk
+  - avid
+  # Additive
+  - jeffrey
+  - peter
+  # Application + finishing
+  - application table
+  - lsealer
+  - heat tunnel
+  # Metal + coating
+  - welder
+  - brake
+  - oven
+  # Generic phrases
   - machine routing
   - print queue
   - which machine
@@ -17,12 +44,42 @@ tools_allowed:
   - edit_file
   - run_tests
 key_rules:
-  - ROLF is the Roland — vinyl/wide format
-  - MIMAKI is UV flatbed — rigid substrates
-  - MUTOH is the XPJ-461UF flatbed UV — small format rigid
-  - Machine routing is based on substrate type and size
-  - Never route jobs exceeding machine bed size
+  # ── Canonical machine identities — RATIFIED 2026-04-30 ──
+  # Print + cut
+  - Rolf is the Refine Color 6090 — UV flatbed, twin Epson i1600 (CMYK + white).
+    Used to be incorrectly documented as a Mimaki UV or a Roland; both wrong.
+  - Mao is the Refine Color ZZ1S — UV small-format with single Epson XP600 head.
+  - Mimaki is the Mimaki 6042 MkII — UV flatbed, primarily for black & white prints. Live but EOL.
+  - Mutoh is the Mutoh XPJ-461UF — UV flatbed, small-format rigid (lease).
+  - Roland is the Roland MG-300 — UV roll-to-roll print-and-cut, 30" wide.
+    NOT a vinyl cutter (the old skill rule "ROLF is the Roland — vinyl/wide format" was wrong).
+  - Epson is the Epson SC-F500 — dye sublimation.
+  # Cut + engrave
+  - Beast is the Thunderlaser Nova 64 — CO2 laser cutter/engraver.
+  - Fiber Laser is the (model TBC) fibre laser.
+  # CNC routing
+  - Hulk is the Piranha 8'×4' CNC router — 9kW spindle, ATC, vacuum table, extraction.
+    HULKY is a stale alias; canonical nickname is Hulk.
+  - Avid is the Avid Pro 8'×4' CNC router — Clearpath servos, Masso controller.
+  # Additive
+  - Jeffrey is the Bambu Labs H2S — FDM 3D printer.
+  - Peter is the Bambu Labs P1S — FDM 3D printer.
+  # Application + finishing
+  - Application Table is the EWS 3000×1750 — vinyl/graphics application surface.
+  - LSealer is the semi-automatic L-sealer (brand TBC) — shrink-wrap sealing.
+  - Heat Tunnel is the (brand TBC) heat tunnel — shrink-wrap shrinking.
+  # Metal + coating
+  - welder is the HITBOX HIM250DPP — double-pulse MIG welder. Live, new.
+  - brake is the box-and-pan brake — sheet metal forming. In-build.
+  - oven is the IR-powered modular powder coating oven. Planned, not yet operational.
+  # ── Routing logic ──
+  - Machine routing is based on substrate type, size, and process (cut vs print vs form vs finish).
+  - Never route jobs exceeding machine bed size.
+  - For "Mao", "Hulk", "Beast", "Peter", "Jeffrey", "brake", "oven" — these are
+    common English words; always disambiguate by checking brand + niche before
+    answering, not just the nickname token.
 escalate_to_opus_keywords:
   - change routing logic
   - update machine spec
+  - rename machine
 context_budget_override: null
