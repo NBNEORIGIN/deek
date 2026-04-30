@@ -885,6 +885,37 @@ export default function VoicePage() {
           </div>
         </div>
 
+        {/* QUICK START — only shown on a fresh chat. Same set as the
+            legacy ChatWindow surface (which `/` now redirects to here)
+            so existing muscle memory keeps working. Hidden once any
+            turns land. */}
+        {!busy && transcript.length === 0 && (
+          <div className="flex flex-shrink-0 flex-wrap items-center gap-2 border-t border-gray-100 bg-white px-4 py-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+              Quick start
+            </span>
+            {[
+              { label: 'Amazon Sales',   prompt: 'Show me the latest Amazon sales analytics — revenue, top sellers, and velocity trends' },
+              { label: 'Etsy Analytics', prompt: 'Show me Etsy shop performance — active listings, recent sales, and traffic' },
+              { label: 'Analyse Enquiry', prompt: 'Analyse this enquiry: ' },
+              { label: 'Email Triage',   prompt: 'Show me the email triage summary — what new enquiries and project replies have come in?' },
+              { label: 'Social Draft',   prompt: 'Draft a social media post about ' },
+            ].map(action => (
+              <button
+                key={action.label}
+                type="button"
+                onClick={() => {
+                  setInput(action.prompt)
+                  textareaRef.current?.focus()
+                }}
+                className="rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-gray-300 hover:text-gray-900"
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Composer */}
         <form
           onSubmit={handleSubmit}

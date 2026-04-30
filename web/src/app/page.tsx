@@ -1,9 +1,16 @@
-import { ChatWindow } from '@/components/ChatWindow'
+import { redirect } from 'next/navigation'
 
+/**
+ * Root → /voice.
+ *
+ * The legacy ChatWindow component used to render here, but it has
+ * diverged from the maintained chat surface at /voice — no paperclip,
+ * no projects/archive, no file upload. Rather than maintain two
+ * parallel chat UIs (and add file-vision wiring to both), the root
+ * now redirects to /voice. ChatWindow is left in place for one
+ * release cycle in case anything else imports it; can be deleted
+ * after that.
+ */
 export default function Home() {
-  return (
-    <main className="flex min-h-0 flex-1 flex-col bg-slate-50">
-      <ChatWindow />
-    </main>
-  )
+  redirect('/voice')
 }
