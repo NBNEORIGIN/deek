@@ -26,6 +26,8 @@ spindle_max_rpm: 24000   # confirm — typical for HSD ES 929 series
 servo_drives: Yaskawa (Sigma series typical for class). Confirmed 2026-05-01 by operator inspection (NOT Delta as originally assumed)
 servo_motors: Yaskawa (Sigma series typical)
 atc_mechanism: carousel — confirmed 2026-05-01 by operator inspection (NOT linear-rack)
+atc_positions: 12 — confirmed 2026-05-01 by operator inspection
+cam_software: VCarve Pro (Vectric) — confirmed 2026-05-01 as NBNE's CAM
 toolholder_standard: ISO30 (HSD ES 929 standard; confirm)
 collet_standard: ER32 (typical for ISO30 ATC class)
 table: vacuum + extraction
@@ -127,7 +129,7 @@ controller parameter restore, ATC alignment, etc.)._
 2. Syntec controller exact model (6MB-E? 6MD? 60W-E?) — visible on bezel or system info screen
 3. ~~Spindle confirmation — definitely HQD GDL70-24Z? Check spindle plate~~ **CLOSED 2026-05-01: HSD ES 929A (Italian premium spindle, NOT HQD).** See `hulk-provenance.md`.
 4. ~~Servo brand confirmation — Delta? Yaskawa? Estun?~~ **CLOSED 2026-05-01: Yaskawa.**
-5. ~~ATC type — linear rack vs carousel? How many positions?~~ **PARTIALLY CLOSED 2026-05-01: carousel.** Number of positions still TBD.
+5. ~~ATC type — linear rack vs carousel? How many positions?~~ **CLOSED 2026-05-01: carousel, 12 positions.**
 6. Toolholder standard confirmed — ISO30 vs BT30 (HSD ES 929 typically ships ISO30 — confirm)
 7. Vacuum pump make/model — Becker? Other? Capacity?
 8. Year of manufacture — Opus CNC may know
