@@ -58,11 +58,24 @@ BATCH_SIZE = 20                  # Amazon hard cap per feesEstimate call
 RATE_LIMIT_SLEEP_SEC = 1.1       # 1 req/sec burst 2; stay under the burst
 
 
-def get_price_points(marketplace: str, lookback_days: int = 30) -> list[tuple[str, Decimal]]:
+def get_price_points(
+    marketplace: str, lookback_days: int = 30,
+) -> list[tuple[str, Decimal, bool]]:
     """
-    Return [(asin, median_price), ...] for ASINs with orders in the given
-    marketplace in the last `lookback_days`. Orders without an ASIN or a
-    price are excluded.
+    Return [(asin, median_price, is_fba), ...] for ASINs with orders in the
+    given marketplace in the last `lookback_days`. Orders without an ASIN
+    or a price are excluded.
+
+    `is_fba` is the dominant fulfillment channel for the ASIN over the
+    lookback window: True if the ASIN's orders are mostly Amazon-fulfilled
+    (FBA), False if mostly Merchant-fulfilled (FBM). The SP-API
+    getMyFeesEstimate endpoint REQUIRES the right IsAmazonFulfilled value
+    in the request — passing IsAmazonFulfilled=true for an FBM listing
+    returns ClientError InvalidParameterValue. Bug surfaced 2026-05-02:
+    28% of UK ASINs were failing because the code hardcoded
+    IsAmazonFulfilled=True regardless of the listing's actual fulfillment
+    channel. Fixed to derive from ami_orders.fulfillment_channel
+    (Amazon = FBA, Merchant = FBM).
 
     Uses MARKETPLACE_ALIASES so that passing "UK" also matches ami_orders
     rows tagged "GB" (ami_orders uses ISO country codes).
@@ -71,8 +84,11 @@ def get_price_points(marketplace: str, lookback_days: int = 30) -> list[tuple[st
     codes = MARKETPLACE_ALIASES.get(marketplace.upper(), [marketplace.upper()])
     # item_price_amount is the ORDER LINE total (unit_price × quantity).
     # Divide by quantity to get per-unit price for fee estimation.
+    # fulfillment_channel: 'Amazon' = FBA, 'Merchant' = FBM in NBNE's data.
     sql = """
-        SELECT asin, item_price_amount / NULLIF(quantity, 0) AS unit_price
+        SELECT asin,
+               item_price_amount / NULLIF(quantity, 0) AS unit_price,
+               fulfillment_channel
         FROM ami_orders
         WHERE marketplace = ANY(%s)
           AND asin IS NOT NULL AND asin <> ''
@@ -81,17 +97,35 @@ def get_price_points(marketplace: str, lookback_days: int = 30) -> list[tuple[st
           AND quantity > 0
           AND order_date >= (CURRENT_DATE - (%s || ' days')::interval)
     """
-    rows_by_asin: dict[str, list[float]] = {}
+    rows_by_asin: dict[str, dict] = {}
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, (codes, lookback_days))
-            for asin, price in cur.fetchall():
-                if price is not None:
-                    rows_by_asin.setdefault(asin, []).append(float(price))
-    result: list[tuple[str, Decimal]] = []
-    for asin, prices in rows_by_asin.items():
-        med = statistics.median(prices)
-        result.append((asin, Decimal(str(med)).quantize(Decimal('0.01'))))
+            for asin, price, channel in cur.fetchall():
+                if price is None:
+                    continue
+                bucket = rows_by_asin.setdefault(asin, {'prices': [], 'channels': []})
+                bucket['prices'].append(float(price))
+                if channel:
+                    bucket['channels'].append(channel)
+
+    result: list[tuple[str, Decimal, bool]] = []
+    for asin, b in rows_by_asin.items():
+        med = statistics.median(b['prices'])
+        # Dominant channel via simple count. If no channel info at all,
+        # default to FBA (the historical assumption — keeps behaviour
+        # backward-compatible for ASINs we've not seen orders for).
+        if b['channels']:
+            fba_count = sum(1 for c in b['channels'] if (c or '').lower() in ('amazon', 'afn'))
+            mfn_count = len(b['channels']) - fba_count
+            is_fba = fba_count >= mfn_count  # tie → FBA
+        else:
+            is_fba = True
+        result.append((
+            asin,
+            Decimal(str(med)).quantize(Decimal('0.01')),
+            is_fba,
+        ))
     return result
 
 
@@ -100,6 +134,7 @@ def _build_fees_request(
     currency: str,
     asin: str,
     price: Decimal,
+    is_fba: bool = True,
 ) -> dict:
     """
     One entry in FeesEstimateByIdRequestList for the batch feesEstimate call.
@@ -108,15 +143,35 @@ def _build_fees_request(
     sibling IdType/IdValue — NOT a flat dict. The ASIN is echoed back in
     FeesEstimateIdentifier.SellerInputIdentifier so callers can match up
     results to requests.
+
+    Two payload requirements that aren't obvious from the spec but matter
+    in practice (both surfaced 2026-05-02 as the cause of a 28%
+    InvalidParameterValue failure rate on UK ASINs):
+
+      1. PriceToEstimateFees needs `Shipping` populated, even if zero,
+         for some categories (most apparel + media listings). Sending
+         only ListingPrice returned ClientError. Shipping=0.00 is a
+         safe idiomatic value across categories.
+      2. IsAmazonFulfilled must match the ACTUAL fulfillment channel
+         of the listing. Passing True for an FBM listing returns
+         InvalidParameterValue. The caller derives is_fba from
+         ami_orders.fulfillment_channel — see get_price_points().
+
+    Points (Japan-only rewards/cashback structure) is omitted entirely
+    rather than passed as null — the SP-API treats absence as null.
     """
     return {
         'FeesEstimateRequest': {
             'MarketplaceId': marketplace_id,
-            'IsAmazonFulfilled': True,
+            'IsAmazonFulfilled': bool(is_fba),
             'PriceToEstimateFees': {
                 'ListingPrice': {
                     'CurrencyCode': currency,
                     'Amount': float(price),
+                },
+                'Shipping': {
+                    'CurrencyCode': currency,
+                    'Amount': 0.00,
                 },
             },
             'Identifier': asin,
@@ -251,8 +306,8 @@ def sync_fees_for_marketplace(marketplace: str, lookback_days: int = 30) -> dict
         # FeesEstimateByIdRequestList returned "Missing PriceToEstimateFees"
         # while the top-level array returned 200 with per-ASIN results.
         body = [
-            _build_fees_request(marketplace_id, currency, asin, price)
-            for asin, price in batch
+            _build_fees_request(marketplace_id, currency, asin, price, is_fba)
+            for asin, price, is_fba in batch
         ]
         try:
             resp = spapi_post(region, '/products/fees/v0/feesEstimate', body)
@@ -281,7 +336,7 @@ def sync_fees_for_marketplace(marketplace: str, lookback_days: int = 30) -> dict
         # Match results back to the ASINs we sent. Amazon echoes the Identifier
         # as `FeesEstimateIdentifier.SellerInputIdentifier` (or similar).
         # We trust the ordering Amazon returns matches request ordering.
-        for (asin, price), result in zip(batch, results):
+        for (asin, price, _is_fba), result in zip(batch, results):
             fees = _extract_fees(result)
             try:
                 _upsert_snapshot(asin, marketplace, region, price, currency, fees)
